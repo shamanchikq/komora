@@ -79,7 +79,8 @@ silpo-chat/
 ├── backend/                  Python 3.12, uv
 │   ├── core/                 pure domain. NO fastapi/aiogram/http imports
 │   │   ├── mcp/              Silpo MCP client: typed wrappers, retry, cache
-│   │   ├── agent/            LLM loop (Anthropic SDK), conversation state
+│   │   ├── agent/            LLM loop behind a provider-agnostic LLMClient
+│   │                         protocol; Gemini impl v1 (see §4.1)
 │   │   ├── intents/          usual · mealplan · budget · deals · event
 │   │   ├── passes/           restrictions · availability · promos · budget
 │   │   └── habits/           cadence + confidence engine
@@ -110,6 +111,56 @@ server, a bot, or the network.
 **Data flow:** intent handler (LLM-assisted) → `DraftBasket` (descriptions +
 quantities, no SKUs) → passes (deterministic) → `ResolvedCart` (SKUs, prices,
 coupons, substitution notes) → user confirmation → append to Silpo cart.
+
+### 4.1 LLM provider (decided)
+
+`core/agent/` defines an `LLMClient` protocol (`complete(messages, tools) ->
+Response`). Providers are implementations; switching is config, not a refactor.
+
+Two tiers, both Gemini (one SDK, one auth, trivial escalation):
+
+| Use | Model | Price /1M in-out |
+|---|---|---|
+| Intent routing, ordinary conversation | **Gemini 3.1 Flash-Lite** | $0.25 / $1.50 |
+| Meal planning, multi-step tool loops | **Gemini 3.6 Flash** | $1.50 / $7.50 |
+
+- **Do not use Gemini 2.5 Flash-Lite** despite being cheapest ($0.10/$0.40) — it
+  retires **16 Oct 2026**, mid-build.
+- Gemini 3.5 Flash is superseded by 3.6 (same input, worse output price). Skip.
+- DeepSeek V4 Flash is cheaper ($0.14/$0.28) but rejected: users' real receipt
+  histories would leave for a jurisdiction we don't want to explain in a public
+  README, and its peak/off-peak policy doubles prices unpredictably.
+- **Context caching is mandatory, not an optimization.** System prompt + ~20
+  read-tool schemas are byte-identical every call; caching cuts input up to 90%.
+  Build it in M0.
+- Cost estimate: ~25k in / 2k out per cart session ≈ **1¢ (Flash-Lite) / 5¢
+  (3.6 Flash)**. Mixed, ~20 carts/day ≈ **$10/mo**. AI Studio free tier covers
+  most development.
+- **Integration risk (verify in M0, not M2):** Gemini declares functions with an
+  OpenAPI-schema subset; MCP ships JSON Schema. Mapping is mostly mechanical but
+  has edge cases around union types.
+
+### 4.2 Hosting (decided)
+
+**Hetzner CX22 (~€4/mo), Falkenstein or Nuremberg.** Docker Compose + Caddy
+(automatic TLS). 2 vCPU / 4 GB; ~30–40 ms to Ukraine.
+
+Deciding constraint: **the scheduler must run continuously.** Komora is
+proactive — if the nightly habit recompute and deal scan don't fire, the core
+feature is dead. This rules out every free tier that sleeps on idle (Render
+free, anything scale-to-zero). Fly.io is an acceptable alternative if it never
+scales to zero; Oracle always-free ARM is a fallback if capacity is obtainable.
+
+**Development:** run the bot on **long polling** (aiogram supports it) — no
+public URL needed for the bot at all. Only the OAuth callback needs a tunnel
+(ngrok / Cloudflare Tunnel).
+
+**Domain:** a `.app` domain (~$14/yr) — HSTS-preloaded, so HTTPS is forced,
+which Telegram Mini Apps require regardless. Check `komora.app`; fallbacks
+`mykomora.app`, `komora.food`. Free alternative: `.pp.ua` (Ukrainian
+individuals), reads more hobbyist. Dynamic Client Registration means a changed
+redirect URI just means re-registering — not a blocker to start, but pick
+before M1.
 
 ## 5. Data model
 
@@ -357,8 +408,14 @@ is a competitive demo; decision deferred.
 
 ## 15. Open questions
 
-1. Hosting for the public HTTPS callback + bot (Fly.io / Hetzner VPS / other?).
-2. Anthropic API budget & default model (suggest claude-sonnet-5 for the loop,
-   opus/fable only if meal-plan quality demands it).
-3. Domain name for the Mini App + OAuth callback.
-4. Whether to register for the hackathon (needed before 31 Aug).
+**Resolved 2026-08-10:** hosting → Hetzner CX22 (§4.2); LLM → Gemini 3.1
+Flash-Lite + 3.6 Flash behind an `LLMClient` protocol (§4.1); domain → buy a
+`.app` before M1 (§4.2).
+
+**Open:**
+
+1. Exact domain — `komora.app` availability unchecked.
+2. Hackathon registration (closes **31 Aug 2026**). Deferred by owner; M0–M3
+   would make a competitive entry if taken up.
+3. Postgres from the start vs SQLite-then-migrate. Spec assumes SQLite with a
+   Postgres-compatible schema; revisit if multi-user load appears early.
