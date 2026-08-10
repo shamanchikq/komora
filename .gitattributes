@@ -1,0 +1,21 @@
+# Normalise to LF in the repository. CI runs on Linux; development is on Windows.
+* text=auto eol=lf
+
+# Windows-only files keep CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary — never touch.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.pdf binary
+*.woff binary
+*.woff2 binary
+
+# Generated; collapse in diffs and exclude from language stats.
+uv.lock -diff linguist-generated=true
