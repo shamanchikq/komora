@@ -33,6 +33,9 @@ target-version = "py314"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "ASYNC", "RUF"]
+# Komora's UI language is Ukrainian, so Cyrillic in strings, docstrings and comments is
+# the norm, not a homoglyph attack. Without these the whole UI copy layer fails lint.
+ignore = ["RUF001", "RUF002", "RUF003"]
 
 [tool.mypy]
 python_version = "3.14"

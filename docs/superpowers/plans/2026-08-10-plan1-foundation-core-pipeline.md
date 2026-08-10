@@ -197,10 +197,30 @@ class Settings(BaseSettings):
     public_base_url: str               # tunnel URL, no trailing slash
     silpo_mcp_url: str = "https://mcp.silpo.ua/mcp"
     database_url: str = "sqlite+aiosqlite:///./komora.db"
-    gemini_model_lite: str = "gemini-3.1-flash-lite"
-    gemini_model_full: str = "gemini-3.6-flash"
+
+    # "provider/model" refs — switching model OR provider is config, never code.
+    # gemini/gemini-2.5-flash-lite  $0.10/$0.40   cost floor, no shutdown date
+    # gemini/gemini-3.1-flash-lite  $0.25/$1.50   default; EOL 2027-05-07
+    # gemini/gemini-3.5-flash-lite  $0.30/$2.50   newest lite (not cheaper)
+    # gemini/gemini-3.6-flash       $1.50/$7.50   default full
+    # ollama/gemma4:12b             free          local dev; verified working
+    llm_lite: str = "gemini/gemini-3.1-flash-lite"
+    llm_full: str = "gemini/gemini-3.6-flash"
+    ollama_base_url: str = "http://localhost:11434"
+    gemini_api_key: str = ""      # required only when a tier uses gemini/*
+
     model_config = SettingsConfigDict(env_file=".env", env_prefix="KOMORA_")
 ```
+
+  Note `gemini_api_key` is no longer unconditionally required — an all-Ollama config must
+  boot without one. Add a validator: a tier ref starting with `gemini/` requires the key;
+  raise a clear error naming which tier if it's missing.
+- [ ] **Step 2b:** Failing tests for a `parse_model_ref(ref) -> tuple[str, str]` helper:
+  `"gemini/gemini-3.1-flash-lite"` → `("gemini", "gemini-3.1-flash-lite")`;
+  **`"ollama/gemma4:12b"` → `("ollama", "gemma4:12b")`** (split on the *first* `/` only —
+  Ollama tags contain colons, and future refs may contain slashes);
+  a ref with no `/` raises; an unknown provider raises listing the known ones.
+  Implement as a pure function. PASS.
 
 - [ ] **Step 3:** Run → PASS. Commit `feat: settings`.
 
@@ -365,15 +385,33 @@ class SilpoClient(Protocol):
 
 ### Task 8: JSON Schema → Gemini declarations (A2)
 
-**Files:** Create `komora/core/llm/schema_map.py`, `tests/test_schema_map.py`
+**Files:** Create `komora/core/llm/gemini/schema_map.py`, `tests/test_schema_map.py`
+
+**Scope note:** this rewrite is **Gemini-specific** and lives inside the Gemini provider
+package — Ollama takes raw JSON Schema and must not be routed through it. The exact
+rewrite rules were measured against the SDK's own converter; see
+[verified external facts §4](../specs/2026-08-10-verified-external-facts.md).
 
 - [ ] **Step 1:** Failing tests using **real captured schemas** from `tests/fixtures/mcp/tools.json`: every read-tool schema converts without raising; properties/required/enum/items/description preserved; `anyOf: [{type: X}, {type: "null"}]` → nullable X; other unions → `type: "string"` with the union described in `description`; `$ref` inlined; unsupported keywords (`additionalProperties`, `$schema`, `const`) stripped (`const` → single-value `enum`).
 - [ ] **Step 2:** Implement `json_schema_to_gemini(schema: dict) -> dict` as a pure recursive function (~60 lines). Run → PASS.
 - [ ] **Step 3:** Commit `feat: schema mapper verified against live Silpo schemas (A2)`.
 
-### Task 9: LLMClient protocol + Gemini implementation
+### Task 9: LLMClient protocol + Gemini and Ollama implementations
 
-**Files:** Create `komora/core/llm/protocol.py`, `komora/core/llm/gemini.py`, `tests/test_gemini_client.py`
+**Files:** Create `komora/core/llm/protocol.py`, `komora/core/llm/factory.py`, `komora/core/llm/gemini/client.py`, `komora/core/llm/ollama/client.py`, `tests/test_gemini_client.py`, `tests/test_ollama_client.py`, `tests/test_llm_factory.py`
+
+**Two providers, one protocol.** Gemini is the production default; Ollama makes the dev
+loop free, offline and API-key-less, and is the privacy story. Verified working locally
+2026-08-10 (`gemma4:12b`: correct tool from 21, valid nested schema, Ukrainian, 3.3 s).
+
+Ollama specifics: `POST {ollama_base_url}/api/chat` with `stream: false`, OpenAI-shaped
+`tools: [{"type":"function","function":{name, description, parameters}}]` taking **raw
+JSON Schema — no Gemini rewrite**, `options: {"num_ctx": …}`, and `think: false` (these
+models are thinking-capable; leaving it on adds latency for nothing here). Tool calls
+come back on `message.tool_calls[].function.{name,arguments}`, where `arguments` may be
+a dict *or* a JSON string — handle both.
+
+- [ ] **Step 0:** Failing test for `make_llm(ref, settings)`: returns a `GeminiClient` for `gemini/*`, an `OllamaClient` for `ollama/*`, raises on unknown provider. Both must satisfy `LLMClient` (assert via `isinstance` against the runtime-checkable protocol).
 
 - [ ] **Step 1:** `protocol.py`:
 

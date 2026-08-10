@@ -115,15 +115,66 @@ coupons, substitution notes) → user confirmation → append to Silpo cart.
 
 ### 4.1 LLM provider (decided)
 
-`core/agent/` defines an `LLMClient` protocol (`complete(messages, tools) ->
-Response`). Providers are implementations; switching is config, not a refactor.
+`core/llm/` defines an `LLMClient` protocol (`complete(messages, tools) -> Response`).
+Providers are implementations behind a `make_llm("provider/model")` factory; switching
+is config, not a refactor.
 
-Two tiers, both Gemini (one SDK, one auth, trivial escalation):
+**Schema conversion is provider-scoped, not shared.** Gemini needs the lossy
+OpenAPI-subset rewrite (`const`→`enum`, `$ref` inlining, `anyOf`-null→`nullable`);
+Ollama accepts near-raw JSON Schema. Each provider owns its own conversion:
 
-| Use | Model | Price /1M in-out |
+```
+core/llm/
+├── protocol.py          LLMClient, Message, ToolDecl, ToolCall, LLMResponse
+├── factory.py           make_llm(ref) -> LLMClient
+├── gemini/client.py     + gemini/schema_map.py  (the lossy rewrite)
+└── ollama/client.py     JSON Schema passthrough, /api/chat
+```
+
+**Two tiers, any provider.** Tiers are `lite` (intent routing, ordinary conversation)
+and `full` (meal planning, multi-step tool loops). Each tier is bound to a model by a
+`provider/model` reference in config, so changing model — or provider — is an env var,
+never a code change:
+
+```
+KOMORA_LLM_LITE=gemini/gemini-3.1-flash-lite     # production default
+KOMORA_LLM_FULL=gemini/gemini-3.6-flash
+# local development — free, offline, no API key:
+KOMORA_LLM_LITE=ollama/gemma4:12b
+KOMORA_LLM_FULL=ollama/gemma4:12b
+```
+
+Supported values (all verified 2026-08-10):
+
+| Ref | Price /1M in-out | Notes |
 |---|---|---|
-| Intent routing, ordinary conversation | **Gemini 3.1 Flash-Lite** | $0.25 / $1.50 |
-| Meal planning, multi-step tool loops | **Gemini 3.6 Flash** | $1.50 / $7.50 |
+| `gemini/gemini-2.5-flash-lite` | $0.10 / $0.40 | cost floor; no shutdown date |
+| `gemini/gemini-3.1-flash-lite` | $0.25 / $1.50 | **default lite**; EOL 2027-05-07 |
+| `gemini/gemini-3.5-flash-lite` | $0.30 / $2.50 | newest lite; speed/quality, not cheaper |
+| `gemini/gemini-3.6-flash` | $1.50 / $7.50 | **default full** |
+| `ollama/<any local tag>` | free | development, offline, and the privacy story |
+
+**Ollama is a first-class provider, not a toy.** Probed live against the local daemon
+on 2026-08-10 with Komora's real shape — 21 tool declarations, a nested `propose_basket`
+schema, prompted in Ukrainian:
+
+| Model | Picked right tool | Nested schema valid | Ukrainian reasons | Latency |
+|---|---|---|---|---|
+| `gemma4:12b` | ✅ | ✅ 3 lines | 3/3 | 3.3 s |
+| `gemma4:e4b` (8B) | ✅ | ✅ 3 lines | 3/3 | 26 s |
+
+This works *because of* the §4.1 read/write split, not in spite of it. The LLM's only
+job is to emit a `DraftBasket` of **descriptions**; resolving SKUs, checking stock and
+optimizing coupons is deterministic Python. We never asked the model to do the hard
+part, so a 12B local model clears the bar in ~3 seconds.
+
+Notably, `qwen3.6:27b` and a locally-tuned `gemma4-agent` both chose to *search* before
+proposing — reasonable agent behaviour in general, but wrong for Komora, where searching
+is the resolve pass's job. Prefer the base instruct models here.
+
+Caveat: this was a two-prompt smoke test, not an eval. It establishes plausibility for
+the M1 stated-basket intent, not production parity — meal planning and long multi-step
+loops are untested locally. Gemini stays the production default.
 
 - ~~**Do not use Gemini 2.5 Flash-Lite** — it retires 16 Oct 2026.~~
   **CORRECTED 2026-08-10:** this was wrong, sourced from a third-party blog. The
