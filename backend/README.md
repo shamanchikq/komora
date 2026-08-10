@@ -54,6 +54,20 @@ cloudflared tunnel --url http://localhost:8000
 
 Put the resulting URL in `KOMORA_PUBLIC_BASE_URL`.
 
+## Running against a local model
+
+Komora binds each LLM tier to a `provider/model` ref, so switching to a local Ollama model
+is one env var — free, offline, no API key:
+
+```bash
+KOMORA_LLM_LITE=ollama/gemma4:12b
+KOMORA_LLM_FULL=ollama/gemma4:12b
+```
+
+**Development only.** See [docs/local-models-ollama-gemma.md](../docs/local-models-ollama-gemma.md)
+for the integration traps (they bite before model quality does), the measured evidence, and
+the gate a local model must clear before going anywhere near production.
+
 ## Layout
 
 ```
