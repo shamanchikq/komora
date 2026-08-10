@@ -154,27 +154,68 @@ Supported values (all verified 2026-08-10):
 | `gemini/gemini-3.6-flash` | $1.50 / $7.50 | **default full** |
 | `ollama/<any local tag>` | free | development, offline, and the privacy story |
 
-**Ollama is a first-class provider, not a toy.** Probed live against the local daemon
-on 2026-08-10 with Komora's real shape — 21 tool declarations, a nested `propose_basket`
-schema, prompted in Ukrainian:
+**Ollama: development and privacy, explicitly NOT a production default.**
 
-| Model | Picked right tool | Nested schema valid | Ukrainian reasons | Latency |
-|---|---|---|---|---|
-| `gemma4:12b` | ✅ | ✅ 3 lines | 3/3 | 3.3 s |
-| `gemma4:e4b` (8B) | ✅ | ✅ 3 lines | 3/3 | 26 s |
+A live probe on 2026-08-10 (21 tool declarations, nested `propose_basket`, Ukrainian
+prompt) showed `gemma4:12b` picking the right tool, filling the nested schema, and
+writing Ukrainian reasons in 3.3 s; `gemma4:e4b` the same in 26 s.
 
-This works *because of* the §4.1 read/write split, not in spite of it. The LLM's only
-job is to emit a `DraftBasket` of **descriptions**; resolving SKUs, checking stock and
-optimizing coupons is deterministic Python. We never asked the model to do the hard
-part, so a 12B local model clears the bar in ~3 seconds.
+**That probe proved less than it appeared to, and the initial reading of it here was
+too generous.** Both of its pass criteria are metrics that pass unconditionally:
 
-Notably, `qwen3.6:27b` and a locally-tuned `gemma4-agent` both chose to *search* before
-proposing — reasonable agent behaviour in general, but wrong for Komora, where searching
-is the resolve pass's job. Prefer the base instruct models here.
+- *Single-call tool selection is saturated* — it does not distinguish a 4B local model
+  from a frontier model. Komora's workload lives on the **multi-turn** axis, which the
+  probe never exercised.
+- *"Nested schema valid"* passes under any grammar-constrained backend regardless of
+  model quality. The real failure mode is a **well-formed basket containing the wrong
+  items** — silent, plausible, and worse than a hard error.
+- Gemma is the most **prompt-format-fragile** family on BFCL; reformatting alone moves
+  accuracy 34–67 points, so a two-prompt result is close to non-evidence.
 
-Caveat: this was a two-prompt smoke test, not an eval. It establishes plausibility for
-the M1 stated-basket intent, not production parity — meal planning and long multi-step
-loops are untested locally. Gemini stays the production default.
+On the axis that actually matters, the best measured local candidate (Gemma 4 26B-A4B)
+scores **~45% BFCL multi-turn** against 61–68% for frontier hosted models. That number
+is episode-level: roughly **one basket flow in two completes correctly**, before any
+Ukrainian penalty (~25pp measured on comparable models for non-English tool selection)
+and before quantization. For a shopping cart, the failure is a silently wrong order.
+
+> **Gate:** no local model is promoted past `lite`, and never to `full`, without 50–100
+> scored **Ukrainian multi-step episodes** measuring episode completion — not tool-pick
+> accuracy. No such benchmark exists publicly; we would have to build it.
+
+**Cost is not a valid reason to pursue local.** At ~$10/mo hosted, the engineering to
+close a 16–23 point multi-turn gap (eval harness, template patching, likely fine-tuning)
+costs many years of that bill. The defensible reasons are the **privacy/data-residency
+story** (Ukrainian users' receipt histories never leaving the machine) and **free,
+offline development**.
+
+What the probe *does* legitimately support: the §4.1 read/write split is what makes any
+local path arguable. The LLM only emits a `DraftBasket` of **descriptions**; resolving
+SKUs, checking stock and optimizing coupons is deterministic Python. Tool count is also
+a non-issue — collapse begins around 200 tools, far above our 21, so tool-RAG or
+subsetting would be wasted effort.
+
+Three integration facts that bite before model quality ever does:
+
+1. **The Ollama/llama.cpp Gemma 4 chat template can silently drop tool-result messages**,
+   producing an infinite re-call loop that looks like model stupidity and is actually an
+   integration bug. Assert tool results round-trip into the next prompt before trusting
+   any local multi-step result.
+2. **`think: false` combined with `format` silently disabled schema constraints** on
+   gemma4 (ollama#15260, fixed after 0.20.0). Require Ollama > 0.20.0 and validate every
+   `propose_basket` payload regardless — malformed output is a retry, not a crash.
+3. **Native `tools` only, never prompt-embedded JSON instructions.** Prompt-mode collapses
+   multi-turn performance even for frontier models — worth more than three model
+   generations.
+
+Model notes: **drop `gemma4:e4b`** — at 5–8 sequential steps it is 2–3.5 minutes per user
+turn, disqualifying for a chat bot irrespective of accuracy. `gemma4:12b` is ~16–26 s per
+turn under the same load. Prefer **base instruct** models: `qwen3.6:27b` and a tuned
+`gemma4-agent` both searched instead of proposing, which is not reasoning but the known
+"Always-Call" pathology — and searching is the resolve pass's job. If a local production
+default were ever genuinely required, the evidence points **away from Gemma** (xLAM-2-8B
+reaches 70% multi-turn) — but those specialists have no Ukrainian, while the Ukrainian
+specialists (MamayLM) sit on Gemma 2/3 bases scoring 5–11% multi-turn. **No open model
+currently occupies both axes.** Plan for the hybrid, not for a single local model.
 
 - ~~**Do not use Gemini 2.5 Flash-Lite** — it retires 16 Oct 2026.~~
   **CORRECTED 2026-08-10:** this was wrong, sourced from a third-party blog. The
