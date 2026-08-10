@@ -1,0 +1,76 @@
+# Komora — backend
+
+Personal grocery agent for the Ukrainian supermarket chain Silpo, built on their
+official [MCP server](https://ai-factory.silpo.ua/docs/mcp). Telegram bot + Mini App.
+
+Komora learns a household's shopping patterns from real Silpo receipt history and turns
+any shopping intent into a reviewed, in-stock, optimized cart. Checkout itself happens in
+Silpo — Komora prepares the cart and hands off.
+
+> **Komora is a third-party project.** It is not affiliated with, endorsed by, or operated
+> by Silpo or Fozzy Group.
+
+## Status
+
+Early implementation. See [the spec](../docs/superpowers/specs/2026-08-10-komora-design.md)
+and [Plan 1](../docs/superpowers/plans/2026-08-10-plan1-foundation-core-pipeline.md).
+
+## Requirements
+
+- Python 3.14 (pinned in `.python-version`; [uv](https://docs.astral.sh/uv/) installs it)
+- A Telegram bot token from [@BotFather](https://t.me/BotFather)
+- A Gemini API key from [Google AI Studio](https://aistudio.google.com/)
+- A Silpo account (OAuth is per-user, at runtime)
+
+## Setup
+
+```bash
+cd backend
+uv sync
+cp .env.example .env   # then fill it in
+```
+
+Generate a token encryption key:
+
+```bash
+uv run python -c "import base64,os;print(base64.urlsafe_b64encode(os.urandom(32)).decode())"
+```
+
+## Development
+
+```bash
+uv run pytest          # tests
+uv run ruff check .    # lint
+uv run ruff format .   # format
+uv run mypy komora     # types
+```
+
+The Silpo OAuth callback needs a public HTTPS URL. The bot itself uses long polling, so
+only the callback needs tunnelling in development:
+
+```bash
+cloudflared tunnel --url http://localhost:8000
+```
+
+Put the resulting URL in `KOMORA_PUBLIC_BASE_URL`.
+
+## Layout
+
+```
+komora/
+├── core/      pure domain — no web framework imports
+│   ├── mcp/   Silpo MCP client: typed wrappers, retry, per-user OAuth
+│   ├── llm/   provider-agnostic LLM client (Gemini implementation)
+│   ├── agent/ the agent loop; read-only tool access
+│   └── passes/ deterministic pipeline: restrictions, resolve, promos, budget
+├── db/        SQLAlchemy models and repositories
+├── api/       FastAPI — OAuth callback and health
+└── bot/       aiogram adapter — conversation and push
+```
+
+`core/` imports no web framework and receives its dependencies as protocols, so the whole
+pipeline is testable without a server, a bot, or the network.
+
+## License
+
+Not yet chosen.
