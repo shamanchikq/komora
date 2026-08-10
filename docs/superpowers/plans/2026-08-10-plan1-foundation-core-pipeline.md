@@ -258,13 +258,81 @@ def test_nonce_uniqueness():
 
 **Files:** Create `komora/core/mcp/auth.py`, `komora/core/mcp/errors.py`, `komora/core/mcp/client.py`, `komora/core/mcp/protocol.py`, `komora/api/app.py`, `tests/test_mcp_auth.py`
 
-This is the riskiest task; the `mcp` SDK's `OAuthClientProvider` targets single-user interactive use — we adapt it per-user.
+This is the riskiest task. **Amended 2026-08-10 after live verification** — see
+[verified external facts §1–2](../specs/2026-08-10-verified-external-facts.md). The SDK
+surface below is confirmed against the installed `mcp==2.0.0`, and Silpo's OAuth server was
+probed directly. Do **not** consult any 1.x example: the names below are the real ones.
 
-- [ ] **Step 1:** Pin `mcp` version; read `mcp/client/auth.py` in the installed venv to confirm the exact constructor contract (`TokenStorage` interface: `get_tokens/set_tokens/get_client_info/set_client_info`; `redirect_handler`, `callback_handler`). Record findings as comments in `auth.py`. (Discovery step — SDK surface may have drifted from this plan; adapt names, keep the design.)
-- [ ] **Step 2:** Failing test for `DBTokenStorage`: stores/loads OAuth tokens per `telegram_id`, encrypted via `TokenCipher` (assert raw DB bytes ≠ plaintext JSON; round-trip works). Client registration info (from DCR) stored globally (single row / file — one client registration serves all users).
-- [ ] **Step 3:** Implement `DBTokenStorage(user_repo, cipher, telegram_id)`. Run → PASS.
-- [ ] **Step 4:** Callback bridge: module-level `dict[str, asyncio.Future[str]]` keyed by OAuth `state`. `redirect_handler` → returns the authorization URL (we send it to the user in chat, we do NOT open a browser). `callback_handler` → awaits the future. FastAPI `GET /auth/silpo/callback?code&state` resolves the future, returns a tiny "Готово — поверніться в Telegram" HTML page. `GET /auth/silpo/start/{telegram_id}` kicks off the flow and redirects to the authorization URL. Failing test: simulate callback resolving a pending future; state mismatch → 400.
-- [ ] **Step 5:** `errors.py`: `NotAuthenticated`, `RateLimited(retry_after)`, `McpUnavailable`. `client.py`: `SilpoMcp` — an async context manager that opens a `streamablehttp_client(url, auth=oauth_provider)` + `ClientSession`, exposes `call(tool_name, args) -> dict` with: 429 → `RateLimited` + exponential backoff retry (3 attempts, jitter, honor Retry-After), 5xx → retry, connection failure → `McpUnavailable`. Unit-test retry logic with a fake transport (respx or hand stub); no live calls.
+Confirmed API (introspected, not remembered):
+
+```python
+from mcp.client.auth import OAuthClientProvider, TokenStorage, AuthorizationCodeResult
+from mcp.client.streamable_http import streamable_http_client   # NOT streamablehttp_client
+import httpx2                                                    # NOT httpx
+
+streamable_http_client(url, *, http_client: httpx2.AsyncClient | None = None,
+                       terminate_on_close: bool = True)          # yields 2-tuple (read, write)
+OAuthClientProvider(server_url, client_metadata, storage,
+                    redirect_handler=None, callback_handler=None, ...)
+```
+
+Silpo's server (probed): DCR at `/register`, `refresh_token` supported, PKCE S256, all
+endpoints at the origin, no `scopes_supported` — so send no `scope`, and upstream bug #3240
+(pathful authorization servers) does not apply to us.
+
+- [ ] **Step 1:** Pin `mcp==2.0.0` **exactly** in `pyproject.toml` (OAuth in 2.0 has ~12 open bugs; floating the version is how we inherit a new one). Re-introspect to confirm the surface still matches the block above:
+
+```bash
+uv run python -c "
+import inspect, mcp.client.streamable_http as sh
+from mcp.client.auth import OAuthClientProvider, TokenStorage, AuthorizationCodeResult
+print(hasattr(sh,'streamable_http_client'), hasattr(sh,'streamablehttp_client'))
+print(inspect.signature(sh.streamable_http_client))
+print(inspect.signature(OAuthClientProvider.__init__))
+print(sorted(m for m in dir(TokenStorage) if not m.startswith('_')))
+print(list(AuthorizationCodeResult.model_fields))"
+```
+
+Expected: `True False`, then the signatures above, `['get_client_info','get_tokens','set_client_info','set_tokens']`, `['code','state','iss']`. **If this disagrees, stop and re-verify before writing code.**
+- [ ] **Step 2:** Failing tests for `DBTokenStorage` — three distinct behaviours, all load-bearing:
+  1. tokens round-trip per `telegram_id` and are encrypted (assert raw DB bytes ≠ plaintext JSON);
+  2. **`get_client_info`/`set_client_info` hit ONE shared row, not a per-user row** — write client info as user A, read it back as user B and assert it is the same registration. Without this, every Telegram user triggers a fresh Dynamic Client Registration against `mcp.silpo.ua`, which gets us rate-limited or banned;
+  3. an absolute **`expires_at`** is persisted on `set_tokens` and exposed for reload — `OAuthToken` carries only relative `expires_in`, so expiry is unreconstructable after a restart.
+- [ ] **Step 3:** Implement `DBTokenStorage(user_repo, cipher, telegram_id)` with `loaded_expires_at` retained after `get_tokens`. Run → PASS.
+- [ ] **Step 3b (MANDATORY — works around open upstream bug #3250):** `OAuthClientProvider._initialize()` restores tokens but **not** `token_expiry_time`. Left as-is, `is_token_valid()` returns `True` for an expired token, the refresh branch is skipped, Silpo 401s, and the SDK runs the *full interactive flow* — meaning users get spammed with re-login links even though we hold a good refresh token. Fatal here because we build a provider per user per request.
+
+```python
+class PersistentOAuthClientProvider(OAuthClientProvider):
+    """Restores absolute expiry that upstream _initialize() drops (bug #3250)."""
+
+    async def _initialize(self) -> None:
+        await super()._initialize()
+        expires_at = getattr(self.context.storage, "loaded_expires_at", None)
+        if self.context.current_tokens is not None and expires_at is not None:
+            self.context.token_expiry_time = expires_at
+```
+
+  Failing test first: construct the provider with storage holding an *expired* token, call `_initialize()`, assert `context.token_expiry_time` is set and `is_token_valid()` is `False`. Assert the stock class fails this test — that comment must stay honest as the SDK evolves.
+- [ ] **Step 4:** Callback bridge. The SDK generates OAuth `state` **internally and we cannot inject it**, but it hands us the full authorization URL in `redirect_handler` *before* awaiting `callback_handler` — so parse `state` out of that URL and use it as the correlation key. This is the linchpin of the multi-user design, since `callback_handler` takes zero arguments.
+  - `redirect_handler(url)` → register `PENDING[state]`, send the URL to the user as a Telegram message. **Never** `webbrowser.open` (the SDK core never opens a browser; only its example CLI does).
+  - `callback_handler()` → await that entry, return **`AuthorizationCodeResult(code, state, iss)`** — a pydantic model, *not* the 1.x tuple. Forward `iss` (RFC 9207) or validation may fail.
+  - FastAPI `GET /auth/silpo/callback?code&state&iss` resolves the pending entry, returns a small "Готово — поверніться в Telegram" page. `GET /auth/silpo/start/{telegram_id}` kicks off the flow.
+  - Client metadata **must** set `application_type="web"` — it defaults to `"native"` (loopback CLI), which a strict AS may reject for an HTTPS redirect URI.
+  - Failing tests: callback resolves a waiting future; unknown `state` → 400; timeout path cleans up `PENDING`.
+  - Document in a module docstring that `PENDING` is in-process and therefore single-worker only.
+- [ ] **Step 4b:** Guard against the concurrency trap: the SDK's interactive flow runs inside `context.lock` *inside the HTTP request lifecycle*, so a tool call that triggers re-auth blocks a coroutine for the full human login time. Account linking must be its own explicit flow; any MCP call made from the agent path raises `NotAuthenticated` immediately instead of starting an interactive login. Failing test: an unauthenticated MCP call from the agent path raises rather than invoking `redirect_handler`.
+- [ ] **Step 5:** `errors.py`: `NotAuthenticated`, `RateLimited(retry_after)`, `McpUnavailable`, `OAuthRecoveryNeeded`. `client.py`: `SilpoMcp` — async context manager wiring the **2.0** shapes:
+
+```python
+async with httpx2.AsyncClient(auth=provider, follow_redirects=True) as http_client:
+    async with streamable_http_client(MCP_URL, http_client=http_client) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+```
+
+  Three things the 1.x-shaped plan got wrong and this step must respect: auth rides on the **httpx2** client (the transport has no `auth=`/`headers=`/`timeout=` kwargs), the transport yields a **2-tuple** (1.x had 3), and `httpx2` is a *different library* from the `httpx` we depend on elsewhere — never hand an `httpx.AsyncClient` to it. Do not import `create_mcp_http_client`; it lives in the private `mcp.shared._httpx_utils`.
+
+  `call(tool_name, args) -> dict` with: 429 → `RateLimited` + exponential backoff (3 attempts, jitter, honour Retry-After), 5xx → retry, connection failure → `McpUnavailable`, and on `OAuthRegistrationError`/`invalid_client` → wipe the shared `client_info` row and raise `OAuthRecoveryNeeded` (upstream #3256: the client can otherwise never recover from an expired DCR secret). Unit-test retry and the recovery path with a stubbed transport; no live calls.
 - [ ] **Step 6:** `protocol.py` — the `SilpoClient` Protocol used by everything downstream (typed methods will be finalized against fixtures in Task 7):
 
 ```python

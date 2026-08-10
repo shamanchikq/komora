@@ -61,7 +61,8 @@ native mobile apps, any checkout/payment handling.
 | Constraint | Consequence |
 |---|---|
 | No order-placement tool; flow ends at cart + `checkoutWebLink`/`checkoutMobileLink` | We are a cart-preparation surface. Success state = handoff. |
-| OAuth 2.1 + PKCE, dynamic client registration, tokens must be stored server-side | Backend + public HTTPS callback required regardless of surface. |
+| OAuth 2.1 + PKCE, dynamic client registration, tokens must be stored server-side | Backend + public HTTPS callback required regardless of surface. **Probed live 2026-08-10:** RFC 9728 metadata is published, `/register` (DCR) exists, `refresh_token` is supported, PKCE S256 available, all endpoints at the origin, no `scopes_supported`. See [verified external facts §1](2026-08-10-verified-external-facts.md). |
+| `mcp` SDK 2.0 renamed/reshaped its OAuth + transport API, and ships an open blocker (#3250) that breaks silent token refresh | Task 6 must subclass `OAuthClientProvider` to restore `token_expiry_time`, keep DCR client info in **one shared row** (not per-user), persist an absolute `expires_at`, and set `application_type="web"`. See [§2](2026-08-10-verified-external-facts.md). |
 | One persistent cart per user (`silpo_get_my_shopping_cart` — "always the first step") | We must read the existing cart and append; never replace. |
 | `silpo_add_or_update_cart_products` upserts by `productId+companyId+branchId` | Append semantics inferred from docs, **must be verified against live MCP on day 1**. |
 | `silpo_clear_shopping_cart` exists | Never called except on explicit user request ("почати заново"). |
@@ -124,21 +125,39 @@ Two tiers, both Gemini (one SDK, one auth, trivial escalation):
 | Intent routing, ordinary conversation | **Gemini 3.1 Flash-Lite** | $0.25 / $1.50 |
 | Meal planning, multi-step tool loops | **Gemini 3.6 Flash** | $1.50 / $7.50 |
 
-- **Do not use Gemini 2.5 Flash-Lite** despite being cheapest ($0.10/$0.40) — it
-  retires **16 Oct 2026**, mid-build.
+- ~~**Do not use Gemini 2.5 Flash-Lite** — it retires 16 Oct 2026.~~
+  **CORRECTED 2026-08-10:** this was wrong, sourced from a third-party blog. The
+  official deprecations table lists `gemini-2.5-flash-lite` as **"No shutdown date
+  announced"**. It stays a legitimate cost-floor fallback ($0.10/$0.40 — 6× cheaper
+  on output), one env var away. Conversely `gemini-3.1-flash-lite` *does* carry an
+  announced EOL of **2027-05-07**. We keep it anyway (best price/quality point in
+  the Gemini 3 family, ~9 months out), but model IDs must be env-overridable
+  settings, never literals at call sites. See
+  [verified external facts §3](2026-08-10-verified-external-facts.md).
+- Model IDs are **bare** — no `-001` suffixes exist on Gemini 3.x.
 - Gemini 3.5 Flash is superseded by 3.6 (same input, worse output price). Skip.
 - DeepSeek V4 Flash is cheaper ($0.14/$0.28) but rejected: users' real receipt
   histories would leave for a jurisdiction we don't want to explain in a public
   README, and its peak/off-peak policy doubles prices unpredictably.
-- **Context caching is mandatory, not an optimization.** System prompt + ~20
-  read-tool schemas are byte-identical every call; caching cuts input up to 90%.
-  Build it in M0.
+- **Use the `generateContent` API, not the newer Interactions API.** Interactions
+  has no explicit caching and stores conversation history server-side by default
+  (`store=True`) — a privacy decision we will not drift into with users' receipt data.
+- **Never set `temperature`** on Gemini 3 (Google warns it risks looping/degradation;
+  deprecated on 3.6). Set `thinking_level` explicitly — it defaults to `high`, which
+  bills thinking tokens at the output rate.
+- **Context caching: measure before optimizing.** Implicit caching needs a byte-stable
+  prefix *and* a ~4096-token minimum our system prompt may not reach. Assemble the
+  prompt cache-friendly from the start (stable content first), but verify hits via
+  usage telemetry rather than assuming a 90% saving.
 - Cost estimate: ~25k in / 2k out per cart session ≈ **1¢ (Flash-Lite) / 5¢
   (3.6 Flash)**. Mixed, ~20 carts/day ≈ **$10/mo**. AI Studio free tier covers
   most development.
-- **Integration risk (verify in M0, not M2):** Gemini declares functions with an
-  OpenAPI-schema subset; MCP ships JSON Schema. Mapping is mostly mechanical but
-  has edge cases around union types.
+- **Integration risk — now characterised, not speculative.** The SDK does *not*
+  normalise hand-built function declarations, so the JSON Schema → Gemini converter
+  is entirely ours and a bad schema simply 400s server-side. Exact rewrite rules
+  (`anyOf`-null → `nullable`, `const` → `enum` and string-only, `$ref` inlining,
+  `additionalProperties: true` rejected, `oneOf`/`allOf` fail server-side) are in
+  [verified external facts §4](2026-08-10-verified-external-facts.md).
 
 ### 4.2 Hosting (decided)
 
