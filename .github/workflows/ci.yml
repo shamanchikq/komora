@@ -43,3 +43,12 @@ jobs:
 
       - name: Test
         run: uv run pytest
+
+      # Catches a tables.py edit that never got a migration. `check` exits non-zero
+      # when autogenerate would produce operations.
+      - name: Schema matches migrations
+        env:
+          KOMORA_DATABASE_URL: sqlite+aiosqlite:///./ci-drift-check.db
+        run: |
+          uv run alembic upgrade head
+          uv run alembic check
