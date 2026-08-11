@@ -1,0 +1,1 @@
+"MCP error -32602: Input validation error: Invalid arguments for tool silpo_get_shopping_cart_by_id: [\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"shoppingCartId\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  }\n]"

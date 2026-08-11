@@ -8,14 +8,19 @@ shapes as test fixtures.
   A2  Real tool JSON Schemas, captured so the Gemini converter (Task 8) can be
       tested against what Silpo actually sends rather than what we imagine.
 
+Parameter names below come from the captured schemas, not from guesses. Learned the
+hard way on the first run, when every one of them was wrong:
+  shoppingCartId (not cartId) · products (not queries / productIds)
+Product search also needs branch and delivery context, which only exists on the cart —
+so the order is: get cart id -> read cart -> search -> mutate.
+
 SAFETY. The A1 probe mutates your real Silpo cart, so it is opt-in via --probe-cart.
-It records the cart first, adds the cheapest item it can find, then removes it and
-verifies the cart matches the original. `silpo_clear_shopping_cart` is never called.
+It records the cart first, adds two cheap items, then removes them and verifies the
+cart matches the original. `silpo_clear_shopping_cart` is never called.
 
 NO TUNNEL NEEDED. Silpo's Dynamic Client Registration accepts a loopback redirect
-(verified 2026-08-10: POST /register with http://localhost:8000/... returned 201), and
-a loopback callback registers as a `native` client per RFC 8252. A deployed Komora
-still needs a public HTTPS callback; this script does not.
+(verified 2026-08-10), and a loopback callback registers as a `native` client per
+RFC 8252. A deployed Komora still needs a public HTTPS callback; this script does not.
 
 USAGE
     Configuration comes from backend/.env — no shell exports, so this works the same
@@ -32,7 +37,6 @@ import contextlib
 import json
 import os
 import sys
-from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -57,7 +61,7 @@ LOCAL_USER = 1  # this script serves a single operator
 
 # Product names are Ukrainian and the Windows console defaults to cp1252, which would
 # raise UnicodeEncodeError partway through — potentially between adding and removing
-# the probe item.
+# a probe item.
 for stream in (sys.stdout, sys.stderr):
     with contextlib.suppress(AttributeError):
         stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
@@ -70,52 +74,6 @@ def check(label: str, ok: bool, detail: str = "") -> bool:
     _results.append((PASS if ok else FAIL, label))
     print(f"[{PASS if ok else FAIL}] {label}" + (f"\n{INFO} {detail}" if detail else ""))
     return ok
-
-
-def dump(name: str, payload: Any) -> None:
-    FIXTURES.mkdir(parents=True, exist_ok=True)
-    path = FIXTURES / f"{name}.json"
-    path.write_text(
-        json.dumps(sanitize(payload), ensure_ascii=False, indent=2, default=str) + "\n",
-        encoding="utf-8",
-    )
-    print(f"{INFO} wrote {path.relative_to(Path.cwd())}")
-
-
-def unwrap(result: Any) -> Any:
-    """Pull the payload out of an MCP CallToolResult."""
-    # Attributes are snake_case; the camelCase names are pydantic aliases only.
-    structured = getattr(result, "structured_content", None)
-    if structured is not None:
-        return structured
-    for block in getattr(result, "content", []) or []:
-        text = getattr(block, "text", None)
-        if text:
-            with contextlib.suppress(json.JSONDecodeError):
-                return json.loads(text)
-            return text
-    return None
-
-
-def line_items(cart: Any) -> list[dict[str, Any]]:
-    """Best-effort extraction of cart lines; the real key is confirmed by this run."""
-    if not isinstance(cart, dict):
-        return []
-    for key in ("products", "items", "cartProducts", "lines"):
-        value = cart.get(key)
-        if isinstance(value, list):
-            return [item for item in value if isinstance(item, dict)]
-    return []
-
-
-def fingerprint(cart: Any) -> list[tuple[str, Any]]:
-    """A comparable summary of a cart, so 'unchanged' can be asserted."""
-    out = []
-    for item in line_items(cart):
-        pid = item.get("productId") or item.get("product_id") or item.get("id")
-        qty = item.get("quantity") or item.get("qty") or item.get("amount")
-        out.append((str(pid), qty))
-    return sorted(out)
 
 
 def summarise() -> int:
@@ -131,26 +89,95 @@ def summarise() -> int:
 
 
 def root_causes(exc: BaseException) -> list[BaseException]:
-    """Flatten nested ExceptionGroups.
-
-    The MCP transport nests task groups, so a single failure surfaces as an
-    ExceptionGroup inside an ExceptionGroup. Printing that raw buries the one line
-    that matters under four tracebacks.
-    """
+    """Flatten nested ExceptionGroups — the MCP transport nests task groups, so one
+    failure otherwise surfaces as four stacked tracebacks."""
     if isinstance(exc, BaseExceptionGroup):
         return [cause for sub in exc.exceptions for cause in root_causes(sub)]
     return [exc]
 
 
-async def serve_callback(bridge: AuthorizationBridge, port: int) -> asyncio.Task[None]:
-    config = uvicorn.Config(create_app(bridge), host="127.0.0.1", port=port, log_level="warning")
-    server = uvicorn.Server(config)
-    task = asyncio.create_task(server.serve())
-    for _ in range(100):
-        if server.started:
-            return task
-        await asyncio.sleep(0.05)
-    raise RuntimeError("callback server did not start")
+def dump(name: str, payload: Any) -> None:
+    FIXTURES.mkdir(parents=True, exist_ok=True)
+    path = FIXTURES / f"{name}.json"
+    path.write_text(
+        json.dumps(sanitize(payload), ensure_ascii=False, indent=2, default=str) + "\n",
+        encoding="utf-8",
+    )
+    print(f"{INFO} wrote {path.relative_to(Path.cwd())}")
+
+
+def unwrap(result: Any) -> Any:
+    """Pull the payload out of an MCP CallToolResult.
+
+    Attributes are snake_case; the camelCase names are pydantic aliases only.
+    """
+    structured = getattr(result, "structured_content", None)
+    if structured is not None:
+        return structured
+    for block in getattr(result, "content", []) or []:
+        text = getattr(block, "text", None)
+        if text:
+            with contextlib.suppress(json.JSONDecodeError):
+                return json.loads(text)
+            return text
+    return None
+
+
+def error_of(payload: Any) -> str | None:
+    """Return the error message if this payload is an MCP failure, else None.
+
+    Essential: a validation error arrives as an ordinary string, so a bare
+    `payload is not None` check reports failures as passes. The first run did exactly
+    that — two calls "passed" while returning -32602 validation errors.
+    """
+    if isinstance(payload, str) and payload.lstrip().startswith("MCP error"):
+        return payload.strip()
+    if isinstance(payload, dict) and payload.get("success") is False:
+        return json.dumps(payload, ensure_ascii=False)[:300]
+    return None
+
+
+def cart_context(cart: Any) -> dict[str, Any]:
+    """Extract the branch and delivery context that product search requires.
+
+    `silpo_find_products_batch` needs branchId, deliveryType, timeslotStart and
+    timeslotEnd, and the schema says the branch comes from the cart — which is why
+    Silpo's docs call reading the cart "always the first step".
+    """
+    if not isinstance(cart, dict):
+        return {}
+    flat: dict[str, Any] = {}
+
+    def walk(node: Any, depth: int = 0) -> None:
+        if depth > 3 or not isinstance(node, dict):
+            return
+        for key, value in node.items():
+            if key in {"branchId", "deliveryType", "timeslotStart", "timeslotEnd"}:
+                flat.setdefault(key, value)
+            elif isinstance(value, dict):
+                walk(value, depth + 1)
+
+    walk(cart)
+    return flat
+
+
+def line_items(cart: Any) -> list[dict[str, Any]]:
+    if not isinstance(cart, dict):
+        return []
+    for key in ("products", "items", "cartProducts", "lines"):
+        value = cart.get(key)
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+    return []
+
+
+def fingerprint(cart: Any) -> dict[str, Any]:
+    """productId -> quantity, so 'unchanged' can be asserted."""
+    out: dict[str, Any] = {}
+    for item in line_items(cart):
+        pid = item.get("productId") or item.get("product_id") or item.get("id")
+        out[str(pid)] = item.get("quantity") or item.get("qty") or item.get("amount")
+    return out
 
 
 async def main(probe_cart: bool, port: int) -> int:
@@ -172,7 +199,13 @@ async def main(probe_cart: bool, port: int) -> int:
     sessions = make_session_factory(engine)
 
     bridge = AuthorizationBridge()
-    server_task = await serve_callback(bridge, port)
+    config = uvicorn.Config(create_app(bridge), host="127.0.0.1", port=port, log_level="error")
+    server = uvicorn.Server(config)
+    server_task = asyncio.create_task(server.serve())
+    for _ in range(100):
+        if server.started:
+            break
+        await asyncio.sleep(0.05)
 
     async def show_url(telegram_id: int, url: str) -> None:
         print("\n" + "=" * 70)
@@ -198,6 +231,13 @@ async def main(probe_cart: bool, port: int) -> int:
         async with open_session(server_url, provider) as session:
             check("OAuth round-trip through our callback endpoint", True)
 
+            async def call(tool: str, args: dict[str, Any]) -> Any:
+                return unwrap(await session.call_tool(tool, args))
+
+            def call_ok(label: str, payload: Any) -> bool:
+                problem = error_of(payload)
+                return check(label, problem is None, problem or "")
+
             # --- A2: capture the real tool schemas ---
             tools = await session.list_tools()
             declarations = [
@@ -221,116 +261,155 @@ async def main(probe_cart: bool, port: int) -> int:
             ):
                 check(f"tool present: {expected}", expected in names)
 
-            # --- reads ---
-            found = unwrap(
-                await session.call_tool(
-                    "silpo_find_products_batch", {"queries": ["молоко", "хліб"]}
-                )
-            )
-            check("find_products_batch returned data", found is not None)
-            dump("find_products_batch", found)
-
-            cart_id_raw = unwrap(await session.call_tool("silpo_get_my_shopping_cart", {}))
-            cart_id = cart_id_raw if isinstance(cart_id_raw, str) else json.dumps(cart_id_raw)
-            check("get_my_shopping_cart returned an id", bool(cart_id), f"cart id: {cart_id}")
+            # --- cart first: it carries the branch and delivery context search needs ---
+            cart_id_raw = await call("silpo_get_my_shopping_cart", {})
             dump("my_shopping_cart_id", cart_id_raw)
+            if not call_ok("silpo_get_my_shopping_cart", cart_id_raw):
+                return summarise()
 
-            if isinstance(cart_id_raw, dict):
-                cart_id = str(
-                    cart_id_raw.get("id") or cart_id_raw.get("cartId") or cart_id_raw.get("guid")
-                )
-
-            before = unwrap(
-                await session.call_tool("silpo_get_shopping_cart_by_id", {"cartId": cart_id})
+            cart_id = (
+                cart_id_raw.get("shoppingCartId") if isinstance(cart_id_raw, dict) else cart_id_raw
             )
-            dump("shopping_cart", before)
-            before_print = fingerprint(before)
-            print(f"{INFO} cart currently holds {len(before_print)} line(s)")
+            if not check("cart id extracted", bool(cart_id), f"shoppingCartId={cart_id}"):
+                return summarise()
+
+            before_cart = await call("silpo_get_shopping_cart_by_id", {"shoppingCartId": cart_id})
+            dump("shopping_cart", before_cart)
+            if not call_ok("silpo_get_shopping_cart_by_id", before_cart):
+                return summarise()
+
+            before = fingerprint(before_cart)
+            print(f"{INFO} cart currently holds {len(before)} line(s)")
+
+            context = cart_context(before_cart)
+            missing = [
+                k
+                for k in ("branchId", "deliveryType", "timeslotStart", "timeslotEnd")
+                if k not in context
+            ]
+            if not check(
+                "search context found on the cart",
+                not missing,
+                f"missing {missing}; have {list(context)}. See shopping_cart.json.",
+            ):
+                return summarise()
+
+            found = await call(
+                "silpo_find_products_batch",
+                {**context, "products": ["молоко", "хліб"], "limit": 5},
+            )
+            dump("find_products_batch", found)
+            if not call_ok("silpo_find_products_batch", found):
+                return summarise()
 
             if not probe_cart:
                 print("\nRead-only run complete. Re-run with --probe-cart to verify A1.")
                 return summarise()
 
-            # --- A1: does add append, or replace? ---
+            # --- A1 ---
+            pool = found if isinstance(found, list) else []
+            if isinstance(found, dict):
+                for value in found.values():
+                    if isinstance(value, list):
+                        pool.extend(v for v in value if isinstance(v, dict))
             candidates = [
-                p
-                for p in (found if isinstance(found, list) else found.get("products", []))
-                if isinstance(p, dict) and p.get("productId") and p.get("price")
+                p for p in pool if isinstance(p, dict) and p.get("productId") and p.get("companyId")
             ]
-            if not candidates:
-                check(
-                    "A1: found a product to test with", False, "no usable product in search results"
-                )
+            if not check(
+                "A1: two products available to test with",
+                len(candidates) >= 2,
+                f"found {len(candidates)}; see find_products_batch.json",
+            ):
                 return summarise()
-            item = min(candidates, key=lambda p: Decimal(str(p["price"])))
-            payload = {
-                "productId": item["productId"],
-                "companyId": item.get("companyId"),
-                "branchId": item.get("branchId"),
-                "quantity": 1,
-            }
-            print(f"{INFO} probing with: {item.get('name')} ({item['price']})")
 
-            async def read_cart() -> list[tuple[str, Any]]:
-                return fingerprint(
-                    unwrap(
-                        await session.call_tool(
-                            "silpo_get_shopping_cart_by_id", {"cartId": cart_id}
-                        )
-                    )
-                )
+            first, second = candidates[0], candidates[1]
 
-            # Everything between the first add and the removal runs under try/finally:
-            # a failed assertion mid-probe must not leave a stray item in a real cart.
+            def as_payload(product: dict[str, Any]) -> dict[str, Any]:
+                return {
+                    "productId": product["productId"],
+                    "companyId": product["companyId"],
+                    "branchId": product.get("branchId", context["branchId"]),
+                    "quantity": 1,
+                }
+
+            print(f"{INFO} probing with: {first.get('name')} + {second.get('name')}")
+
+            # Adding a second item proves append even when the cart started empty —
+            # 'did it wipe the cart' is vacuous against an empty one.
             try:
-                await session.call_tool(
-                    "silpo_add_or_update_cart_products", {"cartId": cart_id, "products": [payload]}
+                await call(
+                    "silpo_add_or_update_cart_products",
+                    {"shoppingCartId": cart_id, "products": [as_payload(first)]},
                 )
-                after_add = await read_cart()
-                added = dict(after_add).get(str(item["productId"]))
-
+                after_first = fingerprint(
+                    await call("silpo_get_shopping_cart_by_id", {"shoppingCartId": cart_id})
+                )
                 check(
-                    "A1a: adding did NOT wipe the existing cart",
-                    all(entry in after_add for entry in before_print),
-                    f"before={len(before_print)} after={len(after_add)}",
+                    "A1a: first item added",
+                    str(first["productId"]) in after_first,
+                    f"quantity={after_first.get(str(first['productId']))}",
                 )
-                check("A1b: the item was added", added is not None, f"quantity={added}")
 
-                # Add the same product again — upsert, or duplicate row?
-                await session.call_tool(
-                    "silpo_add_or_update_cart_products", {"cartId": cart_id, "products": [payload]}
+                await call(
+                    "silpo_add_or_update_cart_products",
+                    {"shoppingCartId": cart_id, "products": [as_payload(second)]},
                 )
-                after_second = await read_cart()
-                occurrences = [pid for pid, _ in after_second if pid == str(item["productId"])]
+                after_second = fingerprint(
+                    await call("silpo_get_shopping_cart_by_id", {"shoppingCartId": cart_id})
+                )
                 check(
-                    "A1c: re-adding upserts rather than duplicating the line",
-                    len(occurrences) == 1,
-                    f"quantity now {dict(after_second).get(str(item['productId']))}, "
-                    f"lines for this product: {len(occurrences)}",
+                    "A1b: adding APPENDS — the earlier item survived",
+                    str(first["productId"]) in after_second
+                    and str(second["productId"]) in after_second,
+                    f"cart now holds {len(after_second)} line(s)",
+                )
+                check(
+                    "A1c: pre-existing lines untouched",
+                    all(pid in after_second for pid in before),
+                    f"before={len(before)} now={len(after_second)}",
+                )
+
+                await call(
+                    "silpo_add_or_update_cart_products",
+                    {"shoppingCartId": cart_id, "products": [as_payload(second)]},
+                )
+                after_repeat = fingerprint(
+                    await call("silpo_get_shopping_cart_by_id", {"shoppingCartId": cart_id})
+                )
+                check(
+                    "A1d: re-adding upserts rather than duplicating",
+                    len(after_repeat) == len(after_second),
+                    f"quantity now {after_repeat.get(str(second['productId']))}, "
+                    f"lines {len(after_repeat)} (was {len(after_second)})",
                 )
             finally:
-                print(f"{INFO} restoring cart — removing the probe item")
-                await session.call_tool(
-                    "silpo_remove_cart_products",
-                    {"cartId": cart_id, "productIds": [item["productId"]]},
-                )
+                print(f"{INFO} restoring cart — removing probe items")
+                for product in (first, second):
+                    if str(product["productId"]) not in before:
+                        with contextlib.suppress(Exception):
+                            await call(
+                                "silpo_remove_cart_products",
+                                {
+                                    "shoppingCartId": cart_id,
+                                    "products": [as_payload(product)],
+                                },
+                            )
+
             restored = fingerprint(
-                unwrap(
-                    await session.call_tool("silpo_get_shopping_cart_by_id", {"cartId": cart_id})
-                )
+                await call("silpo_get_shopping_cart_by_id", {"shoppingCartId": cart_id})
             )
             check(
-                "A1d: cart restored to its original contents",
-                restored == before_print,
-                f"before={before_print}\n{INFO} after ={restored}",
+                "A1e: cart restored to its original contents",
+                set(restored) == set(before),
+                f"before={sorted(before)}\n{INFO} after ={sorted(restored)}",
             )
     except BaseException as exc:
         for cause in root_causes(exc):
             check(f"aborted: {type(cause).__name__}", False, str(cause)[:400])
     finally:
-        server_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await server_task
+        server.should_exit = True
+        with contextlib.suppress(asyncio.CancelledError, TimeoutError):
+            await asyncio.wait_for(server_task, timeout=5)
         await engine.dispose()
 
     return summarise()
@@ -338,15 +417,14 @@ async def main(probe_cart: bool, port: int) -> int:
 
 if __name__ == "__main__":
     # Real environment variables win; .env fills the rest. Works identically in
-    # PowerShell and bash, which shell-export instructions do not. Loaded before the
-    # event loop starts rather than inside it.
+    # PowerShell and bash. Loaded before the event loop starts rather than inside it.
     load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--probe-cart",
         action="store_true",
-        help="verify A1 by adding and then removing one cheap item from your REAL cart",
+        help="verify A1 by adding and then removing two cheap items from your REAL cart",
     )
     parser.add_argument("--port", type=int, default=8000, help="local port for the callback")
     args = parser.parse_args()
