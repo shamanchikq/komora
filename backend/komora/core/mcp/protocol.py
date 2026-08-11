@@ -59,8 +59,20 @@ class SilpoClient(Protocol):
         ...
 
     async def get_my_coupons(self) -> dict[str, Any]:
-        """The user's coupons. Carries `rewardValue` and prose, but **no
-        eligible-product list** — they cannot be matched to cart lines."""
+        """The user's coupons: `{"success", "summary", "coupons": [...]}`.
+
+        Each carries `description`, `limitText`, `warningText` and `image` — and the
+        schema is `additionalProperties: false`, so a discount **value** can never
+        appear here. Nor can an eligible-product list, so coupons cannot be matched to
+        cart lines. `get_coupon_details` is the only source of a number.
+        """
+        ...
+
+    async def get_coupon_details(self, business_coupon_id: int) -> dict[str, Any]:
+        """One coupon, with the `rewardText`/`rewardValue` the list endpoint omits.
+
+        The parameter is `businessCouponId` — not `couponId`, and a **number**.
+        """
         ...
 
     async def get_categories(self, context: SearchContext, **filters: Any) -> dict[str, Any]:
@@ -70,10 +82,24 @@ class SilpoClient(Protocol):
     async def get_my_food_restrictions(self) -> dict[str, Any]: ...
 
     async def get_time_slots(
-        self, *, branch_id: str, delivery_type: str, limit: int = 10
+        self,
+        *,
+        branch_id: str,
+        delivery_type: str,
+        start: str | None = None,
+        limit: int = 25,
     ) -> dict[str, Any]:
-        """Silpo requires this immediately after reading a cart, to confirm the cart's
-        timeslot is still available before anything else happens."""
+        """Delivery slots: `{"success", "summary", "slots": [...], "meta"}`.
+
+        `start` is not optional in practice. Without it Silpo returns a window
+        beginning at the start of the current day, so by evening every slot in it has
+        passed and `available` is false throughout — which reads exactly like "this
+        branch has no slots". It must be a **timezone-qualified** ISO datetime;
+        a date alone or a naive one returns HTTP 500.
+
+        Only `available: true` slots can be chosen — Silpo's own description says so,
+        and the list includes past slots.
+        """
         ...
 
     # --- Cart. Reachable only through the deterministic pipeline, never the LLM. ---

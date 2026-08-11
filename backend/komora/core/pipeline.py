@@ -22,6 +22,10 @@ from komora.core.passes.resolve import resolve_basket
 from komora.core.passes.restrictions import apply_restrictions
 
 DEGRADED_RESTRICTIONS = "degraded:restrictions"
+TIMESLOT_EXPIRED = "timeslot:expired"
+
+MAX_COUPON_DETAILS = 5
+"""Each one is a separate call, and a note nobody reads is not worth a round trip."""
 
 
 class CartContextMissing(McpError):
@@ -86,6 +90,43 @@ def _listed(payload: Any, *keys: str) -> list[Any]:
     return []
 
 
+def slot_verdict(payload: Any, cart_start: str) -> bool | None:
+    """Is the cart's timeslot still on offer? `None` when it cannot be told.
+
+    Silpo returns past slots with `available: false` — its own description says *"Only
+    pick slots where available=true"* — so presence in the list proves nothing and only
+    the flag counts.
+
+    This is asked with `start` set to the cart's own slot, so the window begins exactly
+    at the slot in question and a windowing miss cannot be mistaken for an expiry. The
+    first version of this function asked without `start`, got back a window beginning at
+    the start of the current day, and concluded — at 23:47 UTC, with every slot in it
+    passed — that a perfectly valid cart had expired.
+    """
+    slots = [s for s in _listed(payload, "slots", "timeslots", "items") if isinstance(s, dict)]
+    if not slots:
+        return None
+    return cart_start in {str(s["start"]) for s in slots if s.get("available") and s.get("start")}
+
+
+async def timeslot_is_offered(mcp: SilpoClient, context: SearchContext) -> bool | None:
+    """Silpo asks for this check immediately after reading the cart.
+
+    A failure is never reported as "fine": an unanswerable question returns `None`, and
+    only a definite `False` warns the user.
+    """
+    try:
+        payload = await mcp.get_time_slots(
+            branch_id=context.branch_id,
+            delivery_type=context.delivery_type,
+            start=context.timeslot_start,
+            limit=25,
+        )
+    except Exception:
+        return None
+    return slot_verdict(payload, context.timeslot_start)
+
+
 def extract_restrictions(payload: Any) -> list[str]:
     """Restriction terms, from whichever shape arrived.
 
@@ -103,6 +144,33 @@ def extract_restrictions(payload: Any) -> list[str]:
                     terms.append(value)
                     break
     return [term.strip() for term in terms if term.strip()]
+
+
+async def _coupons(mcp: SilpoClient) -> list[dict[str, Any]]:
+    """The user's coupons, enriched with the value the list endpoint cannot carry.
+
+    `get_my_coupons` is `additionalProperties: false` without `rewardValue`, so a
+    coupon's own description can be a fragment — the real one on the test account reads
+    just "на онлайн чек". `get_coupon_details` is the only place a number exists, and
+    it costs one call per coupon, hence the cap.
+
+    An enrichment failure keeps the plain coupon rather than dropping it.
+    """
+    listed = _listed(await mcp.get_my_coupons(), "coupons", "items", "data")
+    active = [c for c in listed if isinstance(c, dict) and c.get("active")]
+
+    enriched: list[dict[str, Any]] = []
+    for coupon in active:
+        coupon_id = coupon.get("id")
+        if coupon_id is None or len(enriched) >= MAX_COUPON_DETAILS:
+            enriched.append(coupon)
+            continue
+        try:
+            details = (await mcp.get_coupon_details(int(coupon_id))).get("coupon")
+        except Exception:
+            details = None
+        enriched.append({**coupon, **details} if isinstance(details, dict) else coupon)
+    return enriched
 
 
 async def build_cart(
@@ -127,10 +195,13 @@ async def build_cart(
     cart = apply_savings(cart)
 
     try:
-        notes = describe_coupons(_listed(await mcp.get_my_coupons(), "coupons", "items", "data"))
+        notes = describe_coupons(await _coupons(mcp))
     except Exception:
         notes = []
         warnings.append(DEGRADED_COUPONS)
+
+    if await timeslot_is_offered(mcp, context) is False:
+        warnings.append(TIMESLOT_EXPIRED)
 
     cart = cart.model_copy(
         update={

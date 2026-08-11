@@ -141,6 +141,10 @@ class TestWarnings:
         """A warning nobody translated is worse hidden than ugly."""
         assert "щось_нове:42" in render_cart(cart(line(), warnings=["щось_нове:42"]), "К")
 
+    def test_an_expired_timeslot_says_what_to_do(self) -> None:
+        text = render_cart(cart(line(), warnings=["timeslot:expired"]), "К")
+        assert "Час доставки" in text and "оберіть новий час" in text
+
 
 class TestBudget:
     def test_remaining_budget_is_shown(self) -> None:
@@ -190,15 +194,35 @@ class TestSyncPreview:
         text = render_sync_preview(preview)
         assert "було 42,90 ₴" in text and "зараз 52,00 ₴" in text
 
-    def test_blocking_validations_are_quoted(self) -> None:
-        preview = SyncPreview(
+    def _with(self, *validations: str) -> SyncPreview:
+        return SyncPreview(
             existing_count=0,
             existing_total=Decimal("0"),
             adding_count=1,
             adding_total=Decimal("52.00"),
-            blocking_validations=["Мінімальна сума замовлення 200 ₴"],
+            blocking_validations=list(validations),
         )
-        assert "Мінімальна сума замовлення 200 ₴" in render_sync_preview(preview)
+
+    def test_a_validation_code_is_translated(self) -> None:
+        """`validations[].message` is a code, not prose. The live run put
+        "• product.offer.stock.max" in front of a user."""
+        text = render_sync_preview(self._with("product.offer.stock.max"))
+        assert "product.offer.stock.max" not in text
+        assert "менше, ніж замовлено" in text
+
+    def test_the_timeslot_code_says_what_to_do(self) -> None:
+        text = render_sync_preview(self._with("timeslot.not_available"))
+        assert "оберіть новий" in text and "застосунку Сільпо" in text
+
+    def test_an_unknown_code_is_still_shown(self) -> None:
+        """A checkout blocker must never be hidden because nobody wrote the Ukrainian
+        for it yet."""
+        assert "cart.something.new" in render_sync_preview(self._with("cart.something.new"))
+
+    def test_a_repeated_code_is_listed_once(self) -> None:
+        """Live: the same code arrived twice, once per offending line."""
+        text = render_sync_preview(self._with("product.offer.stock.max", "product.offer.stock.max"))
+        assert text.count("менше, ніж замовлено") == 1
 
 
 class TestSyncReport:

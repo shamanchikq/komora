@@ -12,8 +12,10 @@ Silpo — Komora prepares the cart and hands off.
 
 ## Status
 
-Plan 1 Tasks 1–13 complete — the bot runs the whole loop. Task 14 is the manual
-end-to-end run against real Silpo, which the bot has not yet met.
+Plan 1 complete through Task 14's automated half. The full loop — message → draft →
+pipeline → preview — has been **run against the live Silpo server**, and what it found
+is in [Known issues](#known-issues) below. What remains is the Telegram surface itself,
+which needs a bot token (see [Manual checklist](#manual-checklist)).
 
 **Before touching Silpo calls, read [docs/silpo-mcp-reference.md](../docs/silpo-mcp-reference.md)** —
 field names, call order and domain rules, all verified against the live server. Every
@@ -77,6 +79,54 @@ In Telegram: `/start` links the Silpo account (the login URL arrives as a messag
 then plain text builds a basket — «купи молоко, хліб і щось до чаю». `/budget 1500`
 sets a weekly cap. Nothing reaches the Silpo cart until «Надіслати в Сільпо» and then
 «Додати в кошик» — two explicit taps, with a preview of the existing cart in between.
+
+## End-to-end against the live server
+
+`scripts/smoke_e2e.py` runs everything except Telegram — the OAuth gateway, the typed
+client, the agent, the four passes and the confirmation preview — against real Silpo.
+Read-only by default: it stops at the preview, which is where the bot stops before the
+user's second tap.
+
+```bash
+uv run python scripts/smoke_e2e.py
+```
+
+No Telegram token and no API key needed — the LLM defaults to a local Ollama model.
+`--push` appends to your real cart and then removes exactly what it added; `--no-llm`
+skips the model and uses a fixed draft; `--message` changes the request.
+
+### Manual checklist
+
+What the script cannot cover. Needs `KOMORA_TELEGRAM_BOT_TOKEN` from
+[@BotFather](https://t.me/BotFather).
+
+1. `/start` → auth link → Silpo OAuth → «Готово» page → bot confirms.
+2. «Купи молоко, хліб і щось до чаю» → draft renders with a reason on every line.
+3. «Надіслати в Сільпо» → preview names the existing cart → «Додати в кошик».
+4. Open the Silpo app: the items are there, **and nothing that was already in the cart
+   has changed.** ← the product's core promise
+5. «Яке грузинське вино є до 500 ₴?» → a free-form answer, no basket.
+6. Clear the user's `silpo_tokens` row → any message → the re-auth prompt appears.
+
+### Known issues
+
+Found by the live run on 2026-08-11/12, and left open deliberately.
+
+- **A local model produces weaker baskets than the pipeline can rescue.** `gemma4:12b`
+  emitted a line described as «Печиво або цукерки (до чаю)» — a compound phrase that
+  matches no product, so it resolved to nothing and the user got «Не знайшлося». It
+  also titled a basket «Завтрак», which is Russian. Both are consistent with
+  [docs/local-models-ollama-gemma.md](../docs/local-models-ollama-gemma.md): local is
+  for development, and the promotion gate has not been met.
+- **The agent never re-plans a line that fails to resolve.** A description that matches
+  nothing is reported, not retried with a simpler term. Cheap to add, but it belongs
+  with the other intents in Plan 4.
+- **A fresh OAuth provider per message** costs two discovery requests. Caching it would
+  serve stale tokens immediately after linking.
+- **`preview_sync` re-reads the cart but not current prices.** Drift is computed from
+  the resolved lines, so a price that moved between drafting and confirming is only
+  caught if the cart total moved with it.
+- **Telegram is untested against the real API.** Everything below it is not.
 
 ## Running against a local model
 

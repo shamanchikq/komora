@@ -34,13 +34,13 @@ USAGE
 import argparse
 import asyncio
 import contextlib
-import json
 import os
 import sys
 from pathlib import Path
 from typing import Any
 
 import uvicorn
+from _report import INFO, check, dump, summarise
 from dotenv import load_dotenv
 
 from komora.api.app import create_app
@@ -52,98 +52,11 @@ from komora.core.mcp.auth import (
     build_client_metadata,
 )
 from komora.core.mcp.client import open_session
-from komora.core.mcp.sanitize import sanitize
+from komora.core.mcp.payload import error_of, root_causes, unwrap
 from komora.db.base import Base, make_engine, make_session_factory
 from komora.db.repo import OAuthClientRepo, UserRepo
 
-FIXTURES = Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "mcp"
 LOCAL_USER = 1  # this script serves a single operator
-
-# Product names are Ukrainian and the Windows console defaults to cp1252, which would
-# raise UnicodeEncodeError partway through — potentially between adding and removing
-# a probe item.
-for stream in (sys.stdout, sys.stderr):
-    with contextlib.suppress(AttributeError):
-        stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
-
-PASS, FAIL, INFO = "PASS", "FAIL", "  ->"
-_results: list[tuple[str, str]] = []
-
-
-def check(label: str, ok: bool, detail: str = "") -> bool:
-    _results.append((PASS if ok else FAIL, label))
-    print(f"[{PASS if ok else FAIL}] {label}" + (f"\n{INFO} {detail}" if detail else ""))
-    return ok
-
-
-def summarise() -> int:
-    """Exit code from what actually happened. Every exit path goes through here so a
-    failed check can never be reported as success."""
-    failures = [label for status, label in _results if status == FAIL]
-    print("\n" + "=" * 70)
-    print(f"{len(_results) - len(failures)} passed, {len(failures)} failed")
-    for label in failures:
-        print(f"  FAILED: {label}")
-    print("=" * 70)
-    return 1 if failures else 0
-
-
-def root_causes(exc: BaseException) -> list[BaseException]:
-    """Flatten nested ExceptionGroups — the MCP transport nests task groups, so one
-    failure otherwise surfaces as four stacked tracebacks."""
-    if isinstance(exc, BaseExceptionGroup):
-        return [cause for sub in exc.exceptions for cause in root_causes(sub)]
-    return [exc]
-
-
-def dump(name: str, payload: Any, *, scrub: bool = True) -> None:
-    """Write a fixture. `scrub=False` only for payloads that are pure API definitions.
-
-    Tool schemas contain no user data, and running them through the sanitizer is
-    actively harmful: `silpo_find_address` declares a property named `address`, which
-    key-based redaction destroys.
-    """
-    FIXTURES.mkdir(parents=True, exist_ok=True)
-    path = FIXTURES / f"{name}.json"
-    path.write_text(
-        json.dumps(
-            sanitize(payload) if scrub else payload, ensure_ascii=False, indent=2, default=str
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    print(f"{INFO} wrote {path.relative_to(Path.cwd())}")
-
-
-def unwrap(result: Any) -> Any:
-    """Pull the payload out of an MCP CallToolResult.
-
-    Attributes are snake_case; the camelCase names are pydantic aliases only.
-    """
-    structured = getattr(result, "structured_content", None)
-    if structured is not None:
-        return structured
-    for block in getattr(result, "content", []) or []:
-        text = getattr(block, "text", None)
-        if text:
-            with contextlib.suppress(json.JSONDecodeError):
-                return json.loads(text)
-            return text
-    return None
-
-
-def error_of(payload: Any) -> str | None:
-    """Return the error message if this payload is an MCP failure, else None.
-
-    Essential: a validation error arrives as an ordinary string, so a bare
-    `payload is not None` check reports failures as passes. The first run did exactly
-    that — two calls "passed" while returning -32602 validation errors.
-    """
-    if isinstance(payload, str) and payload.lstrip().startswith("MCP error"):
-        return payload.strip()
-    if isinstance(payload, dict) and payload.get("success") is False:
-        return json.dumps(payload, ensure_ascii=False)[:300]
-    return None
 
 
 def cart_body(payload: Any) -> dict[str, Any]:

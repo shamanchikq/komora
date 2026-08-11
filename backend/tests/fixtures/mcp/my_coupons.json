@@ -1,0 +1,17 @@
+{
+  "success": true,
+  "summary": "Found 1 coupons",
+  "coupons": [
+    {
+      "id": 518608454,
+      "active": true,
+      "useWay": "Електронний",
+      "beginDate": "2026-08-04",
+      "endDate": "2026-08-31",
+      "description": "на онлайн чек",
+      "limitText": "• Не діє на подарункові сертифікати,  тютюнові вироби та стартові пакети\r\n• Пропозиція не діє на доставку LOKO.\r\n• Діє лише при замовленні доставки на silpo.ua або в застосунку.",
+      "warningText": "Максимальна знижка 100 грн",
+      "image": "https://content.silpo.ua/promo/E-com/For_SP_new/f8647a8d6b_480x480.png"
+    }
+  ]
+}

@@ -106,6 +106,20 @@ class TestArgumentNames:
         assert session.last["deliveryTypes"] == ["SelfPickup"]
         assert not set(session.last) - declared("silpo_get_time_slots")
 
+    async def test_time_slots_passes_start_through_untouched(self) -> None:
+        """Silpo answers a naive datetime with a 500, so the caller's offset-bearing
+        value must survive verbatim."""
+        session = FakeSession()
+        await SilpoSession(session).get_time_slots(
+            branch_id="b1", delivery_type="SelfPickup", start="2026-08-12T06:00:00+00:00"
+        )
+        assert session.last["start"] == "2026-08-12T06:00:00+00:00"
+
+    async def test_start_is_omitted_when_not_given(self) -> None:
+        session = FakeSession()
+        await SilpoSession(session).get_time_slots(branch_id="b1", delivery_type="SelfPickup")
+        assert "start" not in session.last
+
     async def test_cart_calls_use_shopping_cart_id(self) -> None:
         session = FakeSession()
         await SilpoSession(session).get_shopping_cart_by_id("cart-1")
@@ -165,7 +179,7 @@ class TestResponses:
         session = FakeSession(FakeResult(text=json.dumps({"success": True, "cart": {"id": "x"}})))
         assert (await SilpoSession(session).get_shopping_cart_by_id("x"))["cart"] == {"id": "x"}
 
-    async def test_a_non_mapping_payload_is_wrapped_rather_than_dropped(self) -> None:
+    async def test_a_list_payload_is_wrapped_rather_than_dropped(self) -> None:
         session = FakeSession(FakeResult(["a", "b"]))
         assert (await SilpoSession(session).get_my_coupons())["result"] == ["a", "b"]
 
@@ -176,6 +190,16 @@ class TestFailures:
         session = FakeSession(FakeResult(text="MCP error -32602: Invalid arguments"))
         with pytest.raises(ToolFailed, match="-32602"):
             await SilpoSession(session).get_my_shopping_cart()
+
+    async def test_an_upstream_500_raises(self) -> None:
+        """Found live: sending `start` as a naive datetime returned this — a plain,
+        truthy string with no `MCP error` prefix and no `success: false`. The original
+        classifier passed it through as a successful empty result."""
+        session = FakeSession(
+            FakeResult(text="Error in get-time-slots: API returned 500 Internal Server Error.")
+        )
+        with pytest.raises(ToolFailed, match="500"):
+            await SilpoSession(session).get_time_slots(branch_id="b", delivery_type="SelfPickup")
 
     async def test_success_false_raises(self) -> None:
         session = FakeSession(FakeResult({"success": False, "message": "ні"}))

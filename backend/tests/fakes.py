@@ -76,7 +76,9 @@ class FakeSilpo:
         checkout_links: bool = True,
         validations: list[dict[str, Any]] | None = None,
         coupons: list[dict[str, Any]] | None = None,
+        coupon_details: dict[int, dict[str, Any]] | None = None,
         restrictions: Any = None,
+        slots: list[dict[str, Any]] | None = None,
         fails: set[str] | None = None,
     ) -> None:
         self._results = results or {}
@@ -93,7 +95,9 @@ class FakeSilpo:
         self._checkout_links = checkout_links
         self._validations = validations or []
         self._coupons = coupons or []
+        self._coupon_details = coupon_details or {}
         self._restrictions = restrictions
+        self._slots = slots
         self._fails = fails or set()
         self.add_calls: list[list[dict[str, Any]]] = []
 
@@ -220,17 +224,69 @@ class FakeSilpo:
         return {"success": True, "categories": []}
 
     async def get_my_coupons(self) -> dict[str, Any]:
+        """Envelope captured live: `{"success", "summary", "coupons": [...]}`."""
         self._fail_if_scripted("get_my_coupons")
-        return {"success": True, "coupons": self._coupons}
+        return {
+            "success": True,
+            "summary": f"Found {len(self._coupons)} coupons",
+            "coupons": self._coupons,
+        }
 
     async def get_my_food_restrictions(self) -> dict[str, Any]:
+        """Envelope captured live: `{"success", "summary", "restrictions": [...]}`."""
         self._fail_if_scripted("get_my_food_restrictions")
-        return self._restrictions if self._restrictions is not None else {"restrictions": []}
+        if self._restrictions is not None:
+            return self._restrictions
+        return {"success": True, "summary": "No food restrictions set", "restrictions": []}
+
+    async def get_coupon_details(self, business_coupon_id: int) -> dict[str, Any]:
+        self._fail_if_scripted("get_coupon_details")
+        return {"success": True, "coupon": self._coupon_details.get(business_coupon_id)}
 
     async def get_time_slots(
-        self, *, branch_id: str, delivery_type: str, limit: int = 10
+        self,
+        *,
+        branch_id: str,
+        delivery_type: str,
+        start: str | None = None,
+        limit: int = 25,
     ) -> dict[str, Any]:
-        return {"success": True, "timeslots": []}
+        """Shape captured live: `{"success", "summary", "slots": [...], "meta"}`.
+
+        Models the behaviour that caused a false positive on the live run: **without
+        `start`, the window begins at the start of the current day**, so slots that
+        have already passed come back with `available: false`. Callers that pass the
+        slot they care about get a window beginning there.
+        """
+        self._fail_if_scripted("get_time_slots")
+        slots = self._slots if self._slots is not None else list(self._default_slots)
+        if start is not None:
+            slots = [s for s in slots if str(s.get("start", "")) >= start]
+        available = sum(1 for s in slots if s.get("available"))
+        return {
+            "success": True,
+            "summary": f"Found {len(slots)} time slots ({available} available)",
+            "slots": slots[:limit],
+            "meta": {"total": len(slots)},
+        }
+
+    @property
+    def _default_slots(self) -> list[dict[str, Any]]:
+        """A passed slot, then the cart's own — the real shape of an evening response."""
+        return [
+            {
+                "start": "2026-08-11T06:00:00+00:00",
+                "end": "2026-08-11T06:30:00+00:00",
+                "available": False,
+                "deliveryType": CONTEXT.delivery_type,
+            },
+            {
+                "start": CONTEXT.timeslot_start,
+                "end": CONTEXT.timeslot_end,
+                "available": True,
+                "deliveryType": CONTEXT.delivery_type,
+            },
+        ]
 
     async def list_tools(self) -> list[dict[str, Any]]:
         return []

@@ -1,5 +1,7 @@
 """Composing the passes, and reading the context they all depend on."""
 
+import json
+import pathlib
 from decimal import Decimal
 
 import pytest
@@ -8,10 +10,14 @@ from komora.core.models import DraftBasket, DraftLine
 from komora.core.passes.promos import DEGRADED_COUPONS
 from komora.core.pipeline import (
     DEGRADED_RESTRICTIONS,
+    TIMESLOT_EXPIRED,
     CartContextMissing,
+    _listed,
     build_cart,
     extract_restrictions,
     load_context,
+    slot_verdict,
+    timeslot_is_offered,
 )
 from tests.fakes import CONTEXT, FakeSilpo, product
 
@@ -79,9 +85,41 @@ class TestLoadContext:
             await load_context(mcp)
 
 
+class TestCapturedEnvelopes:
+    """Captured live 2026-08-12, replacing three guesses with facts.
+
+    Each was previously handled by accepting several plausible shapes. The tolerance
+    stays — an account with data may still reveal a variation — but these pin what the
+    server actually sends, so a future change is a failing test rather than a silent
+    empty list.
+    """
+
+    def test_coupons_arrive_under_coupons(self) -> None:
+        payload = _fixture("my_coupons")
+        assert sorted(payload) == ["coupons", "success", "summary"]
+        assert _listed(payload, "coupons", "items", "data") == payload["coupons"]
+
+    def test_a_live_coupon_carries_no_discount_value(self) -> None:
+        """The headline "swap X for Y to trigger a 40% coupon" feature rests on this,
+        and this is the evidence: the real coupon has no value field at all."""
+        [coupon] = _fixture("my_coupons")["coupons"]
+        assert "rewardValue" not in coupon and "rewardText" not in coupon
+        assert coupon["description"] == "на онлайн чек", "a fragment, not a description"
+
+    def test_restrictions_arrive_under_restrictions(self) -> None:
+        payload = _fixture("my_food_restrictions")
+        assert sorted(payload) == ["restrictions", "success", "summary"]
+        assert extract_restrictions(payload) == [], "none set on the captured account"
+
+    def test_time_slots_arrive_under_slots(self) -> None:
+        payload = _fixture("time_slots")
+        assert "slots" in payload and "timeslots" not in payload
+        assert {"start", "end", "available", "deliveryType"} <= set(payload["slots"][0])
+
+
 class TestExtractRestrictions:
-    """The response shape is uncaptured — the verified account has none set — so the
-    plausible shapes are accepted and anything else reads as empty."""
+    """Tolerance kept on purpose: the captured account has no restrictions set, so a
+    populated response has still never been seen."""
 
     @pytest.mark.parametrize(
         "payload",
@@ -98,6 +136,65 @@ class TestExtractRestrictions:
     @pytest.mark.parametrize("payload", [None, {}, {"restrictions": None}, "текст", 42])
     def test_anything_else_is_empty_rather_than_an_error(self, payload: object) -> None:
         assert extract_restrictions(payload) == []
+
+
+FIXTURES = pathlib.Path(__file__).parent / "fixtures" / "mcp"
+
+
+def _fixture(name: str) -> dict:
+    loaded: dict = json.loads((FIXTURES / f"{name}.json").read_text(encoding="utf-8"))
+    return loaded
+
+
+LIVE_SLOTS = _fixture("time_slots")
+
+
+def slot(start: str, *, available: bool = True) -> dict:
+    return {"start": start, "end": start, "available": available, "deliveryType": "SelfPickup"}
+
+
+class TestSlotVerdict:
+    """Only `available: true` counts — Silpo's own description says so, and the list
+    includes slots that have already passed."""
+
+    def test_an_offered_slot_passes(self) -> None:
+        payload = {"slots": [slot("2026-08-12T06:00:00+00:00")]}
+        assert slot_verdict(payload, "2026-08-12T06:00:00+00:00") is True
+
+    def test_a_passed_slot_is_present_but_unavailable(self) -> None:
+        """Observed live at 23:47 UTC: every slot of the current day returned, all
+        with `available: false`.
+
+        Written inline rather than against the fixture on purpose — how many slots are
+        available depends on the hour the capture ran, and an assertion about that
+        would fail whenever someone re-captures in the morning.
+        """
+        passed = {"slots": [slot("2026-08-11T06:00:00+00:00", available=False)]}
+        assert slot_verdict(passed, "2026-08-11T06:00:00+00:00") is False
+
+    def test_the_captured_fixture_still_parses(self) -> None:
+        """Whatever hour it was captured at, the verdict must be a real answer."""
+        assert slot_verdict(LIVE_SLOTS, LIVE_SLOTS["slots"][0]["start"]) is not None
+
+    def test_an_unreadable_payload_is_not_judged(self) -> None:
+        assert slot_verdict({}, "2026-08-12T06:00:00+00:00") is None
+
+    async def test_the_window_starts_at_the_slot_being_checked(self) -> None:
+        """The false positive this fixes: asked without `start`, Silpo answers with the
+        current day's window, which by evening is entirely in the past — and a valid
+        cart slot in tomorrow's window looks expired."""
+        mcp = FakeSilpo()
+        assert await timeslot_is_offered(mcp, CONTEXT) is True
+
+        without_start = await mcp.get_time_slots(
+            branch_id=CONTEXT.branch_id, delivery_type=CONTEXT.delivery_type
+        )
+        assert without_start["summary"].endswith("(1 available)")
+        assert slot_verdict(without_start, "2026-08-11T06:00:00+00:00") is False
+
+    async def test_silpo_failing_never_reads_as_fine(self) -> None:
+        mcp = FakeSilpo(fails={"get_time_slots"})
+        assert await timeslot_is_offered(mcp, CONTEXT) is None
 
 
 class TestBuildCart:
@@ -127,11 +224,31 @@ class TestBuildCart:
         """They carry no eligible-product list, so they are shown, never applied."""
         mcp = FakeSilpo(
             CATALOGUE,
-            coupons=[{"active": True, "description": "−25% на каву", "limitText": "до неділі"}],
+            coupons=[{"id": 1, "active": True, "description": "на онлайн чек"}],
         )
         cart = await build_cart(basket("молоко"), mcp, CONTEXT)
-        assert "−25% на каву (до неділі)" in cart.savings_notes
+        assert "на онлайн чек" in cart.savings_notes
         assert cart.estimated_savings == Decimal("0"), "a coupon is not a computed saving"
+
+    async def test_a_coupon_is_enriched_with_the_value_the_list_omits(self) -> None:
+        """`get_my_coupons` cannot return a discount value; `get_coupon_details` can."""
+        mcp = FakeSilpo(
+            CATALOGUE,
+            coupons=[{"id": 518608454, "active": True, "description": "на онлайн чек"}],
+            coupon_details={518608454: {"rewardText": "−10%", "rewardValue": 10}},
+        )
+        cart = await build_cart(basket("молоко"), mcp, CONTEXT)
+        assert any(note.startswith("−10% на онлайн чек") for note in cart.savings_notes)
+
+    async def test_a_failed_enrichment_keeps_the_plain_coupon(self) -> None:
+        mcp = FakeSilpo(
+            CATALOGUE,
+            coupons=[{"id": 7, "active": True, "description": "на онлайн чек"}],
+            fails={"get_coupon_details"},
+        )
+        cart = await build_cart(basket("молоко"), mcp, CONTEXT)
+        assert "на онлайн чек" in cart.savings_notes
+        assert DEGRADED_COUPONS not in cart.warnings, "the coupon itself still arrived"
 
     async def test_coupons_failing_degrades_rather_than_fails(self) -> None:
         mcp = FakeSilpo(CATALOGUE, fails={"get_my_coupons"})
@@ -146,6 +263,18 @@ class TestBuildCart:
         cart = await build_cart(basket("молоко"), mcp, CONTEXT)
         assert [line.name for line in cart.lines] == ["Молоко"]
         assert DEGRADED_RESTRICTIONS in cart.warnings
+
+    async def test_an_expired_timeslot_warns_without_blocking_the_cart(self) -> None:
+        """Silpo asks for this check up front. The cart is still worth building — the
+        user just has to pick a new slot before checkout."""
+        mcp = FakeSilpo(CATALOGUE, slots=[slot(CONTEXT.timeslot_start, available=False)])
+        cart = await build_cart(basket("молоко"), mcp, CONTEXT)
+        assert [line.name for line in cart.lines] == ["Молоко"]
+        assert TIMESLOT_EXPIRED in cart.warnings
+
+    async def test_a_valid_timeslot_adds_no_warning(self) -> None:
+        cart = await build_cart(basket("молоко"), FakeSilpo(CATALOGUE), CONTEXT)
+        assert TIMESLOT_EXPIRED not in cart.warnings
 
     async def test_a_search_failure_is_not_swallowed(self) -> None:
         """Unlike coupons, this one has no partial answer worth showing."""

@@ -14,14 +14,16 @@ Output is Telegram HTML, so every value that came from Silpo or the model goes t
 `esc()` — product names contain `&` and «» routinely.
 """
 
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import Decimal
 from html import escape
 
 from komora.core.models import ResolvedCart, ResolvedLine, SyncReport
+from komora.core.money import CURRENCY, uah
 from komora.core.passes.budget import optional_lines_total
 from komora.core.sync import SyncPreview
 
-CURRENCY = "₴"
+money = uah
+"""Re-exported: the same rule the savings notes are written with."""
 
 
 def esc(value: object) -> str:
@@ -43,12 +45,6 @@ def pl(n: float, one: str, few: str, many: str) -> str:
 
 def items(n: int) -> str:
     return f"{n} {pl(n, 'позиція', 'позиції', 'позицій')}"
-
-
-def money(amount: Decimal) -> str:
-    """Ukrainian convention: a comma decimal separator and the sign after the number."""
-    rounded = amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-    return f"{rounded:.2f}".replace(".", ",") + f" {CURRENCY}"
 
 
 def quantity(qty: float) -> str:
@@ -93,6 +89,11 @@ def warning_text(code: str) -> str:
         return f"Прибрано через ваші обмеження: «{esc(item)}» ({esc(restriction)})"
     if kind == "over_budget":
         return f"Понад тижневий бюджет на {money(Decimal(rest))}"
+    if kind == "timeslot":
+        return (
+            "Час доставки у вашому кошику Сільпо вже недоступний. Кошик зберемо, але "
+            "оберіть новий час у застосунку Сільпо перед оформленням."
+        )
     if kind == "degraded":
         return {
             "coupons": "Купони зараз недоступні — показано без них.",
@@ -100,6 +101,32 @@ def warning_text(code: str) -> str:
             "restrictions": "Не вдалося перевірити ваші харчові обмеження.",
         }.get(rest, f"Часткові дані: {esc(rest)}")
     return esc(code)
+
+
+_VALIDATIONS: dict[str, str] = {
+    "timeslot.not_available": (
+        "Час доставки у вашому кошику Сільпо вже недоступний — оберіть новий "
+        "у застосунку Сільпо, інакше замовлення не оформиться."
+    ),
+    "product.offer.stock.max": (
+        "У кошику Сільпо є позиція, якої лишилося менше, ніж замовлено — "
+        "зменште кількість у застосунку."
+    ),
+    "product.offer.not_available": "У кошику Сільпо є позиція, якої вже немає в наявності.",
+    "order.min_sum": "Сума замовлення менша за мінімальну для цього способу доставки.",
+}
+"""`calculation.validations[].message` is a **code**, not prose.
+
+Live examples: `timeslot.not_available`, `product.offer.stock.max`. Rendering the raw
+value put "• product.offer.stock.max" in front of a user during the Task 14 run.
+"""
+
+
+def validation_text(code: str) -> str:
+    """An untranslated code is still shown — a checkout blocker must never be hidden
+    just because nobody has written the Ukrainian for it yet."""
+    known = _VALIDATIONS.get(code.strip())
+    return known if known else f"Сільпо повідомляє про перешкоду: {esc(code)}"
 
 
 def render_cart(cart: ResolvedCart, title: str, *, budget_cap: int | None = None) -> str:
@@ -171,7 +198,7 @@ def render_sync_preview(preview: SyncPreview) -> str:
 
     if preview.blocking_validations:
         blocks += ["", "<b>Сільпо не дасть оформити замовлення:</b>"]
-        blocks += [f"• {esc(v)}" for v in preview.blocking_validations]
+        blocks += [f"• {validation_text(v)}" for v in dict.fromkeys(preview.blocking_validations)]
 
     return "\n".join(blocks)
 

@@ -34,11 +34,21 @@ def unwrap(result: Any) -> Any:
 def error_of(payload: Any) -> str | None:
     """Return the error message if this payload is a failure, else None.
 
-    Neither form raises, and neither is falsy — classifying explicitly is the only way
-    to tell them apart from a result.
+    Three observed forms, none of which raises and none of which is falsy:
+
+        "MCP error -32602: Invalid arguments ..."          protocol-level rejection
+        "Error in get-time-slots: API returned 500 ..."    Silpo's own upstream failure
+        {"success": false, ...}                            a structured refusal
+
+    The second was found during the Task 14 live run, by sending `start` as a naive
+    datetime. It defeated the original check, which only looked for the `MCP error`
+    prefix — so a 500 read as a successful empty result.
+
+    Hence the rule: **any bare string is a failure.** Every tool Komora calls declares
+    an object output schema, so a string where an object belongs is never a result.
     """
-    if isinstance(payload, str) and payload.lstrip().startswith("MCP error"):
-        return payload.strip()
+    if isinstance(payload, str):
+        return payload.strip() or "empty response"
     if isinstance(payload, dict) and payload.get("success") is False:
         return json.dumps(payload, ensure_ascii=False)[:300]
     return None

@@ -140,7 +140,18 @@ asserts the *broken* behaviour of `mcp` 2.0. When upstream fixes #3250 that test
 which is the signal to delete our workaround — rather than carrying it forever.
 
 **Never assert truthiness on an API result.** See the Silpo reference §8: a failure can
-be a perfectly truthy string.
+be a perfectly truthy string — including one that carries none of the markers you
+thought to check for.
+
+**A fixture from a live account is a snapshot of a moment.** The captured timeslot
+response has 0 available slots at midnight and 25 in the morning. Assert *structure*
+against such a fixture and write the time-dependent case inline, or re-capturing breaks
+the suite. This is the same trap as the sanitizer regression: a regenerable file is not
+a constant.
+
+**Test the failure mode you actually saw, with the string you actually got.** The
+regression test for Silpo's 500 carries the real message verbatim, because the whole
+point was that its wording is what defeated the classifier.
 
 **Guardrails check the whole surface.** The write-tool test compares the allowlist
 against the *full* captured tool list, so a future edit that adds a mutating tool fails

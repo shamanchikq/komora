@@ -180,16 +180,58 @@ class TestSavings:
         cart = ResolvedCart(lines=[resolved(unit_price=Decimal("10"), old_price=Decimal("8"))])
         assert apply_savings(cart).estimated_savings == Decimal("0")
 
+    def test_the_note_is_written_as_money_not_as_a_raw_decimal(self) -> None:
+        """Decimal keeps its operands' scale, so this reached a live run as
+        «знижка 15.000 ₴»."""
+        cart = ResolvedCart(
+            lines=[resolved(unit_price=Decimal("47.99"), old_price=Decimal("62.99"))]
+        )
+        [note] = apply_savings(cart).savings_notes
+        assert note.endswith("знижка 15,00 ₴"), note
+
+
+LIVE_COUPON = {
+    "id": 518608454,
+    "active": True,
+    "useWay": "Електронний",
+    "beginDate": "2026-08-04",
+    "endDate": "2026-08-31",
+    "description": "на онлайн чек",
+    "limitText": (
+        "• Не діє на подарункові сертифікати,  тютюнові вироби та стартові пакети\r\n"
+        "• Пропозиція не діє на доставку LOKO.\r\n"
+        "• Діє лише при замовленні доставки на silpo.ua або в застосунку."
+    ),
+    "warningText": "Максимальна знижка 100 грн",
+    "image": "https://content.silpo.ua/promo/example.png",
+}
+"""The real coupon on the account Task 14 ran against, verbatim.
+
+Note what is *not* here: no `rewardValue`, no `rewardText`. `get_my_coupons` is
+`additionalProperties: false` without them, so they can never appear.
+"""
+
 
 class TestCoupons:
-    def test_active_coupons_become_readable_notes(self) -> None:
-        notes = describe_coupons(
-            [{"active": True, "description": "−25% на каву", "limitText": "до 31.08"}]
-        )
-        assert notes == ["−25% на каву (до 31.08)"]
+    def test_a_real_coupon_reads_as_one_line(self) -> None:
+        """The first version inlined limitText and produced three lines of bullets
+        inside a parenthesis — caught by the live run, not by a unit test."""
+        [note] = describe_coupons([LIVE_COUPON])
+        assert note == "на онлайн чек — Максимальна знижка 100 грн"
+        assert "\n" not in note and "\r" not in note
+        assert "•" not in note
+
+    def test_the_reward_leads_when_details_supplied_it(self) -> None:
+        """`rewardText` only exists once a coupon has been enriched from
+        get_coupon_details — the list endpoint cannot carry it."""
+        [note] = describe_coupons([{**LIVE_COUPON, "rewardText": "−10%"}])
+        assert note.startswith("−10% на онлайн чек")
 
     def test_inactive_coupons_are_skipped(self) -> None:
         assert describe_coupons([{"active": False, "description": "x"}]) == []
+
+    def test_a_coupon_with_no_text_at_all_is_skipped(self) -> None:
+        assert describe_coupons([{"active": True, "description": None}]) == []
 
     def test_coupons_are_not_matched_to_cart_lines(self) -> None:
         """Silpo publishes no coupon-to-product mapping; claiming one would be

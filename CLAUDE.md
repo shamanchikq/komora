@@ -25,12 +25,19 @@ hand off with a checkout link.
 All from `backend/`.
 
 ```bash
-uv run pytest              # 501 tests
+uv run pytest              # 525 tests
 uv run ruff check .        # lint
 uv run ruff format .       # format
 uv run mypy komora         # strict
 uv run alembic upgrade head
 uv run python -m komora.main   # the bot + the OAuth callback, one process
+```
+
+Against the live server — the whole loop minus Telegram, read-only, no API key
+(`--push` writes to a real cart and then restores it):
+
+```bash
+uv run python scripts/smoke_e2e.py
 ```
 
 CI runs all of the above plus `alembic check`, which fails if `tables.py` changed
@@ -41,6 +48,10 @@ Re-capture Silpo fixtures (read-only; `--probe-cart` also verifies cart append):
 ```bash
 uv run python scripts/verify_mcp.py
 ```
+
+A fixture captured from a live account reflects **the moment it was taken** — the
+timeslot capture has a different number of available slots in the morning than at
+midnight. Assert structure against fixtures, never a count that the clock decides.
 
 ## Architecture
 
@@ -99,19 +110,17 @@ client, so every basket action checks `basket.user_id` against the sender.
 
 ## Status
 
-Plan 1 Tasks 1–13 complete: the full loop runs — message → draft → preview → append,
-with `/start` linking and `/budget`. **Task 14 (manual end-to-end against real Silpo)
-is next**, and it is the first time the bot meets the live server.
+Plan 1 Tasks 1–13 complete, and Task 14's automated half done: the whole loop —
+message → draft → pipeline → preview — **has run against the live Silpo server**
+(`scripts/smoke_e2e.py`, 14/14). It found four defects, all fixed: cart writes carried
+undeclared fields, `error_of` passed a Silpo 500 through as success, validation codes
+were shown to users untranslated, and a coupon note inlined three lines of bullets.
+
+**What remains is the Telegram surface**, which needs a bot token from @BotFather —
+see the manual checklist in [backend/README.md](backend/README.md#manual-checklist).
 
 Only the "stated basket" intent exists — meal plan, budget-week, deals and event
 handlers are Plan 4. The Mini App is Plan 2; habits are Plan 3.
 
-Known gaps, all deliberate:
-
-- `get_time_slots` is never called, so a cart whose slot has expired is only caught by
-  `calculation.validations[]` at preview time. Silpo's docs ask for the check up front;
-  the response shape is uncaptured, so it waits for a fixture.
-- The coupon and restriction response envelopes are uncaptured — `pipeline._listed`
-  accepts several shapes rather than guessing one.
-- A fresh OAuth provider per message costs two discovery requests; caching it would
-  serve stale tokens right after linking.
+Known gaps, all deliberate — the current list lives in
+[backend/README.md](backend/README.md#known-issues).

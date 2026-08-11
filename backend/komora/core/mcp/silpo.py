@@ -92,16 +92,33 @@ class SilpoSession:
     async def get_my_coupons(self) -> dict[str, Any]:
         return await self._call("silpo_get_my_coupons", {})
 
+    async def get_coupon_details(self, business_coupon_id: int) -> dict[str, Any]:
+        # `businessCouponId`, and a number — the list endpoint calls the same value `id`.
+        return await self._call(
+            "silpo_get_coupon_details", {"businessCouponId": int(business_coupon_id)}
+        )
+
     async def get_my_food_restrictions(self) -> dict[str, Any]:
         return await self._call("silpo_get_my_food_restrictions", {})
 
     async def get_time_slots(
-        self, *, branch_id: str, delivery_type: str, limit: int = 10
+        self,
+        *,
+        branch_id: str,
+        delivery_type: str,
+        start: str | None = None,
+        limit: int = 25,
     ) -> dict[str, Any]:
-        return await self._call(
-            "silpo_get_time_slots",
-            {"branchId": branch_id, "deliveryTypes": [delivery_type], "limit": limit},
-        )
+        # `deliveryTypes` — plural, and an array — unlike every other call.
+        args: dict[str, Any] = {
+            "branchId": branch_id,
+            "deliveryTypes": [delivery_type],
+            "limit": limit,
+        }
+        if start is not None:
+            # Must carry an offset or a Z. A naive datetime is a 500 from Silpo.
+            args["start"] = start
+        return await self._call("silpo_get_time_slots", args)
 
     # --- Cart ---
     async def get_my_shopping_cart(self) -> dict[str, Any]:

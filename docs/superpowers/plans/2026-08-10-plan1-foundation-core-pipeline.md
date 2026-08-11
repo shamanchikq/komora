@@ -514,7 +514,31 @@ chunking for Telegram's 4096-character limit.
 - [x] **Step 3:** Failing handler tests: /start unauthenticated shows auth button; text→basket→confirm→synced happy path; partial-failure path shows failed items and keeps basket status ≠ synced. Implement. PASS.
 - [x] **Step 4:** `bot.py` + `main.py`: single asyncio entrypoint — `uvicorn.Server(api).serve()` and `dp.start_polling(bot)` under `asyncio.gather`, graceful shutdown. Commit `feat: bot — full text-cart loop`.
 
-### Task 14: End-to-end smoke (manual) + README
+### Task 14: End-to-end smoke + README — AUTOMATED HALF DONE
+
+**Amendment.** Most of what this task verifies has nothing to do with Telegram: the
+OAuth gateway, the client's argument names, the agent, the passes and the preview. All
+of it now runs headlessly against the live server via `scripts/smoke_e2e.py` (14/14,
+2026-08-11/12), which also captured the three response shapes that were still being
+guessed at. Four defects found and fixed:
+
+1. **Cart writes carried undeclared fields** (`name`, `price`) — on the call the whole
+   product depends on.
+2. **`error_of` passed a Silpo 500 through as success.** It arrives as
+   `"Error in get-time-slots: API returned 500 ..."` — a truthy string with no
+   `MCP error` prefix and no `success: false`.
+3. **Validation codes were shown to users untranslated** — «product.offer.stock.max».
+4. **A coupon note inlined three lines of bullets** from `limitText`, and the coupon's
+   own description was a fragment; the value lives only in `get_coupon_details`.
+
+One planned check was **withdrawn as unsound**: an up-front timeslot comparison built
+without `get_time_slots`'s `start` parameter reported a valid cart as expired, because
+Silpo answers with the current day's window. Re-implemented with `start` set to the
+cart's own slot, and verified against the live account.
+
+Steps 1 and 2 below remain open: they need a Telegram bot token.
+
+### Task 14 (original): End-to-end smoke (manual) + README
 
 **Files:** Create `README.md` (run instructions), `docs/superpowers/plans/` copy of this plan
 
