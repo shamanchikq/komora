@@ -12,19 +12,20 @@ SAFETY. The A1 probe mutates your real Silpo cart, so it is opt-in via --probe-c
 It records the cart first, adds the cheapest item it can find, then removes it and
 verifies the cart matches the original. `silpo_clear_shopping_cart` is never called.
 
-USAGE
-    # 1. expose the OAuth callback (the bot itself needs no tunnel)
-    cloudflared tunnel --url http://localhost:8000
+NO TUNNEL NEEDED. Silpo's Dynamic Client Registration accepts a loopback redirect
+(verified 2026-08-10: POST /register with http://localhost:8000/... returned 201), and
+a loopback callback registers as a `native` client per RFC 8252. A deployed Komora
+still needs a public HTTPS callback; this script does not.
 
-    # 2. point config at that URL
-    export KOMORA_PUBLIC_BASE_URL=https://<something>.trycloudflare.com
+USAGE
+    export KOMORA_PUBLIC_BASE_URL=http://localhost:8000
     export KOMORA_TOKEN_ENCRYPTION_KEY=$(uv run python -c \
         "import base64,os;print(base64.urlsafe_b64encode(os.urandom(32)).decode())")
 
-    # 3. read-only first
+    # read-only first
     uv run python scripts/verify_mcp.py
 
-    # 4. then the cart probe, once reads look right
+    # then the cart probe, once the reads look right
     uv run python scripts/verify_mcp.py --probe-cart
 """
 

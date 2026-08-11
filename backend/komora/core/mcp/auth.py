@@ -38,12 +38,18 @@ SendUrl = Callable[[int, str], Awaitable[None]]
 """Delivers the authorization URL to a user — in practice, a Telegram message."""
 
 
+def is_loopback(url: str) -> bool:
+    return (urlparse(url).hostname or "") in {"localhost", "127.0.0.1", "::1"}
+
+
 def build_client_metadata(public_base_url: str) -> OAuthClientMetadata:
     """Client metadata for Dynamic Client Registration.
 
-    `application_type` must be set explicitly: the SDK defaults to "native", which
-    means a CLI with a loopback redirect URI. We are a web client with an HTTPS
-    callback, and a strict authorization server may reject the mismatch.
+    `application_type` is chosen from the callback URL rather than hardcoded. A
+    deployed Komora is a `web` client with an HTTPS callback, and leaving the SDK's
+    `native` default there risks a strict authorization server rejecting the mismatch.
+    But a loopback callback is `native` by definition (RFC 8252), and Silpo accepts
+    one — which is why local verification needs no tunnel.
     """
     return OAuthClientMetadata(
         client_name="Komora",
@@ -51,7 +57,7 @@ def build_client_metadata(public_base_url: str) -> OAuthClientMetadata:
         grant_types=["authorization_code", "refresh_token"],
         response_types=["code"],
         token_endpoint_auth_method="client_secret_post",
-        application_type="web",
+        application_type="native" if is_loopback(public_base_url) else "web",
     )
 
 

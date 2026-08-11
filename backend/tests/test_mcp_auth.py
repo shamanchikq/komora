@@ -181,11 +181,23 @@ class TestExpiredTokenHandling:
 
 
 class TestClientMetadata:
-    def test_is_a_web_client_not_a_native_one(self) -> None:
+    def test_public_https_callback_is_a_web_client(self) -> None:
         """The SDK defaults to `native`, meant for CLIs with loopback redirects.
         A strict authorization server may reject an https redirect_uri under it."""
         metadata = build_client_metadata("https://komora.example")
         assert metadata.application_type == "web"
+
+    @pytest.mark.parametrize(
+        "base", ["http://localhost:8000", "http://127.0.0.1:8000", "http://[::1]:8000"]
+    )
+    def test_loopback_callback_is_a_native_client(self, base: str) -> None:
+        """A loopback redirect is `native` by definition (RFC 8252). Silpo accepts
+        one, which is why local verification needs no tunnel."""
+        assert build_client_metadata(base).application_type == "native"
+
+    def test_loopback_redirect_uri_is_built_correctly(self) -> None:
+        metadata = build_client_metadata("http://localhost:8000")
+        assert str(metadata.redirect_uris[0]) == "http://localhost:8000/auth/silpo/callback"
 
     def test_redirect_uri_points_at_our_callback(self) -> None:
         metadata = build_client_metadata("https://komora.example")
