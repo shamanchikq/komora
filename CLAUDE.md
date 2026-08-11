@@ -25,11 +25,12 @@ hand off with a checkout link.
 All from `backend/`.
 
 ```bash
-uv run pytest              # 382 tests
+uv run pytest              # 501 tests
 uv run ruff check .        # lint
 uv run ruff format .       # format
 uv run mypy komora         # strict
 uv run alembic upgrade head
+uv run python -m komora.main   # the bot + the OAuth callback, one process
 ```
 
 CI runs all of the above plus `alembic check`, which fails if `tables.py` changed
@@ -45,19 +46,23 @@ uv run python scripts/verify_mcp.py
 
 ```
 komora/
-├── core/        pure domain — imports NO web framework
-│   ├── mcp/     Silpo client: per-user OAuth, retry, protocol
-│   ├── llm/     LLMClient protocol; gemini/ and ollama/ implementations
-│   ├── agent/   the loop: read tools only, propose_basket, guardrails
-│   ├── passes/  restrictions -> resolve -> savings -> budget
-│   └── sync.py  preview + append to the real Silpo cart
-├── db/          SQLAlchemy 2 + repos
-├── api/         FastAPI — only the OAuth callback
-└── bot/         aiogram adapter (Task 13, not yet built)
+├── core/          pure domain — imports NO web framework
+│   ├── mcp/       protocol + silpo.py (the real client) + gateway.py (per-user OAuth)
+│   ├── llm/       LLMClient protocol; gemini/ and ollama/ implementations
+│   ├── agent/     the loop: read tools only, propose_basket, guardrails
+│   ├── passes/    restrictions -> resolve -> savings -> budget
+│   ├── pipeline.py  composes the passes; load_context reads branch + timeslot
+│   └── sync.py    preview + append to the real Silpo cart
+├── db/            SQLAlchemy 2 + repos
+├── api/           FastAPI — only the OAuth callback
+├── bot/           handlers.py (Reply objects) + bot.py (the only aiogram file)
+└── main.py        uvicorn + polling under one asyncio.gather
 ```
 
 `core/` takes its dependencies as protocols, so the whole pipeline is testable with no
-network, no bot and no LLM.
+network, no bot and no LLM. The bot keeps that property: handlers are plain functions
+over `(services, telegram_id, …)` returning a `Reply`, and aiogram appears only in
+`bot.py` — so the conversation is tested without constructing a Telegram object.
 
 ## The rules that matter
 
@@ -80,6 +85,9 @@ every line, in Ukrainian.
 **Nothing reaches Silpo without confirmation**, and `clear_shopping_cart` is never
 called unless the user explicitly asks to start over.
 
+**A callback id is not proof of ownership.** Telegram callback data comes from the
+client, so every basket action checks `basket.user_id` against the sender.
+
 ## Conventions
 
 - Money is `Decimal`; quantities are `float`. Use `ResolvedLine.line_total` — multiplying
@@ -91,6 +99,19 @@ called unless the user explicitly asks to start over.
 
 ## Status
 
-Plan 1 Tasks 1–12 complete. **Task 13 (bot: render, handlers, main) is next**, then
-Task 14 (manual end-to-end). Only the "stated basket" intent exists — meal plan, budget,
-deals and event handlers are Plan 4. The Mini App is Plan 2; habits are Plan 3.
+Plan 1 Tasks 1–13 complete: the full loop runs — message → draft → preview → append,
+with `/start` linking and `/budget`. **Task 14 (manual end-to-end against real Silpo)
+is next**, and it is the first time the bot meets the live server.
+
+Only the "stated basket" intent exists — meal plan, budget-week, deals and event
+handlers are Plan 4. The Mini App is Plan 2; habits are Plan 3.
+
+Known gaps, all deliberate:
+
+- `get_time_slots` is never called, so a cart whose slot has expired is only caught by
+  `calculation.validations[]` at preview time. Silpo's docs ask for the check up front;
+  the response shape is uncaptured, so it waits for a fixture.
+- The coupon and restriction response envelopes are uncaptured — `pipeline._listed`
+  accepts several shapes rather than guessing one.
+- A fresh OAuth provider per message costs two discovery requests; caching it would
+  serve stale tokens right after linking.

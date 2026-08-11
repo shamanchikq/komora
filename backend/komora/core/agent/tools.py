@@ -9,9 +9,11 @@ pipeline and an explicit user confirmation.
 reaches Silpo.
 """
 
-from typing import Any, Final
+from collections.abc import Sequence
+from typing import Any, Final, Protocol
 
 from komora.core.llm.protocol import ToolDecl
+from komora.core.mcp.protocol import SilpoClient
 
 PROPOSE_BASKET: Final = "propose_basket"
 
@@ -24,6 +26,21 @@ READ_TOOLS: Final[dict[str, str]] = {
     "silpo_get_categories": "get_categories",
 }
 """Tool name -> the `SilpoClient` method that serves it. Nothing here mutates."""
+
+CONTEXT_TOOLS: Final[frozenset[str]] = frozenset(
+    {
+        "silpo_find_products_batch",
+        "silpo_get_products",
+        "silpo_get_product_details",
+        "silpo_get_promotions",
+        "silpo_get_categories",
+    }
+)
+"""Read tools whose published schema requires branch or delivery context.
+
+Every one of them lists at least `branchId` as required, so a call the loop dispatched
+without it would fail validation rather than return a result.
+"""
 
 INJECTED_PARAMS: Final[frozenset[str]] = frozenset(
     {"branchId", "deliveryType", "timeslotStart", "timeslotEnd"}
@@ -120,3 +137,26 @@ def build_tool_decls(captured_tools: list[dict[str, Any]]) -> list[ToolDecl]:
         )
     )
     return decls
+
+
+class ToolSource(Protocol):
+    """Supplies the declarations for a turn, given a live Silpo session."""
+
+    async def __call__(self, mcp: SilpoClient) -> Sequence[ToolDecl]: ...
+
+
+class CachedTools:
+    """Reads the declarations off the live server once per process.
+
+    They can only be fetched through an authenticated session, so this happens on the
+    first user turn rather than at startup. Caching also matters for cost: an identical
+    tool prefix on every request is what lets implicit context caching hit.
+    """
+
+    def __init__(self) -> None:
+        self._decls: tuple[ToolDecl, ...] | None = None
+
+    async def __call__(self, mcp: SilpoClient) -> Sequence[ToolDecl]:
+        if self._decls is None:
+            self._decls = tuple(build_tool_decls(await mcp.list_tools()))
+        return self._decls

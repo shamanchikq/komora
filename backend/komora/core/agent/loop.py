@@ -18,7 +18,12 @@ from dataclasses import dataclass
 from pydantic import ValidationError
 
 from komora.core.agent.prompts import SYSTEM_PROMPT
-from komora.core.agent.tools import PROPOSE_BASKET, READ_TOOLS
+from komora.core.agent.tools import (
+    CONTEXT_TOOLS,
+    INJECTED_PARAMS,
+    PROPOSE_BASKET,
+    READ_TOOLS,
+)
 from komora.core.llm.protocol import LLMClient, Message, ToolCall, ToolDecl
 from komora.core.mcp.protocol import SilpoClient
 from komora.core.models import DraftBasket, SearchContext
@@ -114,13 +119,21 @@ def _explain(error: ValidationError) -> str:
 
 
 async def _dispatch(mcp: SilpoClient, call: ToolCall, context: SearchContext) -> str:
-    """Invoke a read tool, filling in the context parameters the model never sees."""
+    """Invoke a read tool, filling in the context parameters the model never sees.
+
+    The injected names are stripped from the model's own arguments first: they are
+    hidden from the schema, but a model that emits one anyway would otherwise pass it
+    twice and raise a TypeError instead of answering.
+    """
     method = getattr(mcp, READ_TOOLS[call.name])
-    args = {k: v for k, v in call.args.items() if k not in {"context"}}
+    args = {k: v for k, v in call.args.items() if k not in INJECTED_PARAMS and k != "context"}
 
     if call.name == "silpo_find_products_batch":
-        result = await method(args.get("products") or args.get("queries") or [], context)
-    elif call.name in {"silpo_get_products", "silpo_get_promotions"}:
+        queries = args.pop("products", None) or args.pop("queries", None) or []
+        result = await method(queries, context)
+    elif call.name == "silpo_get_product_details":
+        result = await method(slug=str(args.get("slug", "")), context=context)
+    elif call.name in CONTEXT_TOOLS:
         result = await method(context, **args)
     else:
         result = await method(**args)

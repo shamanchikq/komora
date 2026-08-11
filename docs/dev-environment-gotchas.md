@@ -88,6 +88,30 @@ reflexive `temperature=0` for "deterministic tool calling" is **counter-indicate
 Set `thinking_level` explicitly instead — it defaults to `high`, which adds latency and
 bills thinking tokens at the output rate.
 
+### `ExceptionGroup` cannot hold a `BaseException`
+
+`ExceptionGroup("x", [asyncio.CancelledError()])` raises `TypeError: Cannot nest
+BaseExceptions in an ExceptionGroup` — the runtime returns a `BaseExceptionGroup`
+instead. This matters twice over:
+
+```python
+except (Exception, BaseExceptionGroup):   # catches a cancelled session too
+```
+
+Anything that flattens transport errors must therefore check for non-`Exception`
+causes and re-raise untouched (`core/mcp/gateway.py: _translated`), or a cancelled
+task reports a Silpo outage instead of shutting down.
+
+### Telegram: 4096 characters, and HTML that must be escaped
+
+A cart with a reason under every line passes 4096 at around twenty items, and the API
+rejects the whole message. Splitting has to happen on line boundaries — a cut inside
+`<b>` breaks the parse. Product names carry `&` and `«»` routinely, so every dynamic
+value is escaped (`bot/render.py: esc`).
+
+Inline buttons accept only `http(s)` and `tg://` URLs. Silpo's `checkoutMobileLink` is
+a `silpo://` deep link, so it can only be shown as text.
+
 ### Ollama: use raw `httpx`, not the `ollama` package
 
 That package's tool-parameter model keeps only `{type, items, description, enum}` and

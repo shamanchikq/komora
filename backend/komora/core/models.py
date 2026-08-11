@@ -108,3 +108,6 @@ class SyncReport(BaseModel):
     failed: list[tuple[str, str]] = Field(default_factory=list)
     """(product name, error) for each line Silpo rejected."""
     checkout_web_link: str | None = None
+    checkout_mobile_link: str | None = None
+    """Silpo's tool descriptions ask for both — «Оформити на сайті» and «в застосунку».
+    Present only once the cart is checkout-ready."""

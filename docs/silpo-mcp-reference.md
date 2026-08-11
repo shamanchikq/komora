@@ -30,6 +30,25 @@ reading the cart *"always the first step"*. In Komora this is `SearchContext`
 | `cartId` | **`shoppingCartId`** |
 | `queries` (search) | **`products`** |
 | `productIds` (removal) | **`products`** |
+| `products` (replacements) | **`productIds`** |
+| `deliveryType` (time slots) | **`deliveryTypes`**, and an **array** |
+
+The last two are the same idea in both directions: the name that works for one tool is
+the wrong one for its neighbour. Read the schema per tool, never per family.
+
+### Which tools need the context
+
+`branchId` is required by more than product search, and the set is not obvious:
+
+| Tool | Needs |
+|---|---|
+| `find_products_batch`, `get_products`, `get_promotions`, `get_product_details` | branch + delivery type + **both** timeslot bounds |
+| `get_replacements` | branch + delivery type + `companyId` — **no timeslot** |
+| `get_time_slots`, `get_categories` | branch only |
+| `get_my_coupons`, `get_my_food_restrictions` | nothing — empty object |
+
+`get_product_details` also insists the `slug` come from a search result: *"Never
+construct from name."*
 
 ## 3. Response shapes
 
@@ -71,12 +90,26 @@ validation with an unhelpful message. Normalise at the boundary — Komora does 
 
 ## 4. Cart write semantics — verified live
 
-`add_or_update_cart_products`:
+`add_or_update_cart_products` takes items with exactly these fields:
+
+```jsonc
+{"productId", "companyId", "branchId", "quantity"}   // all four required
+{"addQuantity": bool, "comment": string}             // optional
+```
+
+**Send nothing else.** `name` and `price` are not declared. The schema does not set
+`additionalProperties: false`, but nothing verifies that Silpo's validator agrees, and
+this is the one call whose failure costs the user their basket.
+
+Behaviour:
 
 - **Appends.** Existing lines are untouched (3 → 5 lines observed; the user's three
   survived intact).
 - **Sets quantity, does not increment.** Re-adding the same product with
-  `quantity: 1` left it at 1, not 2.
+  `quantity: 1` left it at 1, not 2. The schema explains why: `addQuantity` is
+  *"Add to existing quantity (true) or replace (false)"*, and the verified default is
+  replace. Komora leaves it off deliberately — summing would destroy the idempotency
+  the retry path depends on.
 
 Two consequences:
 
@@ -130,6 +163,16 @@ readable saving. Promotion `code`s can be passed to `get_products(promotionCode=
 
 Komora therefore reports savings that exist and shows coupons as text
 (`passes/promos.py`), matching Silpo's own line: «Купони застосує Сільпо на касі».
+
+### Two response envelopes are still uncaptured
+
+`get_my_coupons` and `get_my_food_restrictions` both returned **empty** on the account
+verification ran against, so the shape of a populated response has never been observed
+— only the field names, which come from the schemas. `core/pipeline.py: _listed`
+therefore accepts the plausible envelopes (`{"coupons": […]}`, `{"items": […]}`, a bare
+list) and treats anything else as empty rather than guessing one and crashing on the
+others. **Re-capture these against an account that has coupons and restrictions set,
+then replace the tolerance with the real shape.**
 
 ## 7. OAuth
 

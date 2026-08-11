@@ -59,6 +59,9 @@ class FakeSilpo:
     **appends**, and re-adding a product **sets** its quantity rather than incrementing
     it. That second detail is what makes a retried sync idempotent, so a fake that
     incremented would make the idempotency tests meaningless.
+
+    Cart writes carry only the four fields the schema declares, so — as on the real
+    server — the name and price of a line come from the catalogue, not the request.
     """
 
     def __init__(
@@ -69,8 +72,12 @@ class FakeSilpo:
         replacements_fail: bool = False,
         existing: list[dict[str, Any]] | None = None,
         reject: set[str] | None = None,
+        swallow: set[str] | None = None,
         checkout_links: bool = True,
         validations: list[dict[str, Any]] | None = None,
+        coupons: list[dict[str, Any]] | None = None,
+        restrictions: Any = None,
+        fails: set[str] | None = None,
     ) -> None:
         self._results = results or {}
         self._replacements = replacements or {}
@@ -80,12 +87,30 @@ class FakeSilpo:
 
         self._cart: list[dict[str, Any]] = list(existing or [])
         self._reject = reject or set()
+        self._swallow = swallow or set()
+        """Accepted with a success response, then silently not added — the failure mode
+        that makes trusting the write response instead of re-reading unsafe."""
         self._checkout_links = checkout_links
         self._validations = validations or []
+        self._coupons = coupons or []
+        self._restrictions = restrictions
+        self._fails = fails or set()
         self.add_calls: list[list[dict[str, Any]]] = []
+
+        self._catalogue: dict[str, dict[str, Any]] = {}
+        for group in (*self._results.values(), *self._replacements.values()):
+            for item in group:
+                self._catalogue[str(item["id"])] = item
+        for line in self._cart:
+            self._catalogue.setdefault(str(line["productId"]), line)
+
+    def _fail_if_scripted(self, name: str) -> None:
+        if name in self._fails:
+            raise RuntimeError(f"{name} unavailable")
 
     # --- cart ---
     async def get_my_shopping_cart(self) -> dict[str, Any]:
+        self._fail_if_scripted("get_my_shopping_cart")
         return {"success": True, "shoppingCartId": CART_ID}
 
     async def get_shopping_cart_by_id(self, shopping_cart_id: str) -> dict[str, Any]:
@@ -122,6 +147,9 @@ class FakeSilpo:
         if rejected:
             raise RuntimeError(f"Silpo rejected {rejected[0]['productId']}")
         for item in products:
+            if item["productId"] in self._swallow:
+                continue
+            known = self._catalogue.get(str(item["productId"]), {})
             existing = next((p for p in self._cart if p["productId"] == item["productId"]), None)
             if existing is None:
                 self._cart.append(
@@ -129,8 +157,8 @@ class FakeSilpo:
                         "productId": item["productId"],
                         "companyId": item["companyId"],
                         "branchId": item["branchId"],
-                        "name": item.get("name", item["productId"]),
-                        "price": item.get("price", 10),
+                        "name": known.get("name", item["productId"]),
+                        "price": known.get("price", 0),
                         "quantity": item["quantity"],
                     }
                 )
@@ -139,10 +167,19 @@ class FakeSilpo:
                 existing["quantity"] = item["quantity"]
         return {"success": True}
 
+    async def remove_cart_products(
+        self, shopping_cart_id: str, products: Sequence[dict[str, Any]]
+    ) -> dict[str, Any]:
+        removing = {p["productId"] for p in products}
+        self._cart = [p for p in self._cart if p["productId"] not in removing]
+        return {"success": True}
+
+    # --- reads ---
     async def find_products_batch(
         self, queries: Sequence[str], context: SearchContext
     ) -> dict[str, Any]:
         self.search_calls.append(list(queries))
+        self._fail_if_scripted("find_products_batch")
         return {
             "success": True,
             "queries": [
@@ -168,3 +205,32 @@ class FakeSilpo:
                 for pid in product_ids
             ],
         }
+
+    async def get_products(self, context: SearchContext, **filters: Any) -> dict[str, Any]:
+        return {"success": True, "products": []}
+
+    async def get_product_details(self, slug: str, context: SearchContext) -> dict[str, Any]:
+        found = next((p for p in self._catalogue.values() if p.get("slug") == slug), None)
+        return {"success": True, "product": found}
+
+    async def get_promotions(self, context: SearchContext) -> dict[str, Any]:
+        return {"success": True, "promotions": []}
+
+    async def get_categories(self, context: SearchContext, **filters: Any) -> dict[str, Any]:
+        return {"success": True, "categories": []}
+
+    async def get_my_coupons(self) -> dict[str, Any]:
+        self._fail_if_scripted("get_my_coupons")
+        return {"success": True, "coupons": self._coupons}
+
+    async def get_my_food_restrictions(self) -> dict[str, Any]:
+        self._fail_if_scripted("get_my_food_restrictions")
+        return self._restrictions if self._restrictions is not None else {"restrictions": []}
+
+    async def get_time_slots(
+        self, *, branch_id: str, delivery_type: str, limit: int = 10
+    ) -> dict[str, Any]:
+        return {"success": True, "timeslots": []}
+
+    async def list_tools(self) -> list[dict[str, Any]]:
+        return []

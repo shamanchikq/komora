@@ -480,19 +480,39 @@ class LLMClient(Protocol):
   - re-running `execute_sync` after partial failure retries only failed lines (idempotent via upsert semantics verified in A1).
 - [ ] **Step 3:** Implement (~60 lines). PASS. Commit `feat: sync — preview, append, honest partial reporting`.
 
-### Task 13: Bot
+### Task 13: Bot — DONE
 
 **Files:** Create `komora/bot/render.py`, `komora/bot/handlers.py`, `komora/bot/bot.py`, `komora/main.py`, `tests/test_render.py`, `tests/test_handlers.py`
 
-- [ ] **Step 1 (render, pure):** Failing tests: `render_cart(ResolvedCart)` → Ukrainian text: numbered lines with qty × price, reason on each line («— купуєте…»), substitutions marked «⇄ заміна (було: X)», unavailable struck via «✕ немає — не в сумі», footer totals + «Заощаджено ≈ …» + budget line when cap set; `render_sync_preview`, `render_sync_report` (partial failure lists failed items). Ukrainian plural helper `pl(n, "позицію", "позиції", "позицій")` with tests (1/2/5/11/21). Implement. PASS. Commit.
-- [ ] **Step 2 (handlers):** aiogram handlers with all services injected (repos, agent, sync, mcp-factory) so tests drive them directly with fake Update objects:
+**Amendments made during execution.** Three gaps in this task as written, all found
+against the captured schemas:
+
+1. **No concrete `SilpoClient` existed.** Task 6 built the transport (`open_session`,
+   retry) and the Protocol, but nothing implementing it — so `main.py` had nothing to
+   wire. Added `core/mcp/silpo.py` (+ `payload.py` for unwrap/error classification,
+   promoted out of `verify_mcp.py`) and `core/mcp/gateway.py` for per-user sessions.
+2. **`sync.py` was sending undeclared fields.** `add_or_update_cart_products` declares
+   `productId`/`companyId`/`branchId`/`quantity`; the payload also carried `name` and
+   `price`, which the A1 probe never sent. Fixed before it could fail live.
+3. **Two read tools could not be dispatched.** `get_product_details` and
+   `get_categories` both require `branchId`, which their Protocol signatures had no way
+   to carry. Both now take the `SearchContext`, and `CONTEXT_TOOLS` drives the loop's
+   dispatch.
+
+Also added beyond the plan: `core/pipeline.py` (composes the passes, so `bot/` stays an
+adapter and the Mini App can reuse it), `/budget` (without it the budget pass was
+unreachable from the product), an ownership check on every callback, and message
+chunking for Telegram's 4096-character limit.
+
+- [x] **Step 1 (render, pure):** Failing tests: `render_cart(ResolvedCart)` → Ukrainian text: numbered lines with qty × price, reason on each line («— купуєте…»), substitutions marked «⇄ заміна (було: X)», unavailable struck via «✕ немає — не в сумі», footer totals + «Заощаджено ≈ …» + budget line when cap set; `render_sync_preview`, `render_sync_report` (partial failure lists failed items). Ukrainian plural helper `pl(n, "позицію", "позиції", "позицій")` with tests (1/2/5/11/21). Implement. PASS. Commit.
+- [x] **Step 2 (handlers):** aiogram handlers with all services injected (repos, agent, sync, mcp-factory) so tests drive them directly with fake Update objects:
   - `/start`: if no tokens → explain why access is needed (spec J2 copy) + button linking `{public_base_url}/auth/silpo/start/{tg_id}`; if tokens → «Готовий — скажіть, що потрібно».
   - text message: persist to conversations → `run_agent` → basket? run pipeline (restrictions → resolve → promos → budget) → persist `draft_baskets` → reply `render_cart` + InlineKeyboard [«Надіслати в Сільпо»] [«Скасувати»] : else reply text.
   - callback `sync:{basket_id}`: `preview_sync` → if drift/unavailable → render preview + [«Все одно надіслати»] [«Скасувати»] : else straight to confirm sheet text «У кошику Сільпо вже N — не чіпаємо. Додати K?» [«Додати»] → `execute_sync` → `render_sync_report` + checkout link button.
   - callback `cancel:{basket_id}`: status→discarded.
   - `NotAuthenticated` from any MCP call → re-auth message with login button (spec §10 token-refresh failure path).
-- [ ] **Step 3:** Failing handler tests: /start unauthenticated shows auth button; text→basket→confirm→synced happy path; partial-failure path shows failed items and keeps basket status ≠ synced. Implement. PASS.
-- [ ] **Step 4:** `bot.py` + `main.py`: single asyncio entrypoint — `uvicorn.Server(api).serve()` and `dp.start_polling(bot)` under `asyncio.gather`, graceful shutdown. Commit `feat: bot — full text-cart loop`.
+- [x] **Step 3:** Failing handler tests: /start unauthenticated shows auth button; text→basket→confirm→synced happy path; partial-failure path shows failed items and keeps basket status ≠ synced. Implement. PASS.
+- [x] **Step 4:** `bot.py` + `main.py`: single asyncio entrypoint — `uvicorn.Server(api).serve()` and `dp.start_polling(bot)` under `asyncio.gather`, graceful shutdown. Commit `feat: bot — full text-cart loop`.
 
 ### Task 14: End-to-end smoke (manual) + README
 

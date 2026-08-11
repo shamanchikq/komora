@@ -67,6 +67,15 @@ class UserRepo:
                 .values(silpo_tokens=None, silpo_token_expires_at=None)
             )
 
+    async def set_budget(self, telegram_id: int, budget_weekly: int | None) -> None:
+        """`None` clears the cap — the budget pass then leaves carts alone entirely."""
+        async with self._sessions() as session, session.begin():
+            await session.execute(
+                update(User)
+                .where(User.telegram_id == telegram_id)
+                .values(budget_weekly=budget_weekly)
+            )
+
     async def set_branch(self, telegram_id: int, branch_id: str) -> None:
         async with self._sessions() as session, session.begin():
             await session.execute(
@@ -238,6 +247,16 @@ class BasketRepo:
             await session.execute(
                 update(DraftBasketRow).where(DraftBasketRow.id == basket_id).values(status=status)
             )
+
+    async def get(self, basket_id: int) -> DraftBasketRow | None:
+        """The row itself — callers need `user_id` to check a callback's owner.
+
+        A Telegram callback carries a basket id chosen by the client, so acting on one
+        without checking who owns it would let any user sync anyone's basket.
+        """
+        async with self._sessions() as session:
+            row: DraftBasketRow | None = await session.get(DraftBasketRow, basket_id)
+            return row
 
     async def get_status(self, basket_id: int) -> str | None:
         async with self._sessions() as session:

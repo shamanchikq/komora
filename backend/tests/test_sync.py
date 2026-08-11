@@ -113,8 +113,25 @@ class TestExecute:
         mcp = FakeSilpo(existing=[in_silpo("Морозиво", 139)])
         await execute_sync(cart(line("Молоко", "42.90")), mcp)
         after = await mcp.get_shopping_cart_by_id("x")
-        names = {p["name"] for p in after["cart"]["shipments"][0]["products"]}
-        assert names == {"Морозиво", "Молоко"}
+        ids = {p["productId"] for p in after["cart"]["shipments"][0]["products"]}
+        assert ids == {"id-Морозиво", "id-Молоко"}
+
+    async def test_only_the_four_declared_fields_are_sent(self) -> None:
+        """`silpo_add_or_update_cart_products` declares productId, companyId, branchId
+        and quantity. Nothing else was ever sent to the live server, so nothing else
+        goes now."""
+        mcp = FakeSilpo()
+        await execute_sync(cart(line("Молоко", "42.90", qty=2)), mcp)
+        assert mcp.add_calls == [
+            [
+                {
+                    "productId": "id-Молоко",
+                    "companyId": COMPANY,
+                    "branchId": CONTEXT.branch_id,
+                    "quantity": 2,
+                }
+            ]
+        ]
 
     async def test_unavailable_lines_are_never_sent(self) -> None:
         mcp = FakeSilpo()
@@ -147,11 +164,16 @@ class TestExecute:
         assert mcp.add_calls == []
 
     async def test_report_is_built_from_a_re_read_not_from_the_response(self) -> None:
-        """Ground truth is what is in the cart afterwards."""
-        mcp = FakeSilpo()
-        report = await execute_sync(cart(line("Молоко", "42.90")), mcp)
-        after = await mcp.get_shopping_cart_by_id("x")
-        assert report.added == [p["name"] for p in after["cart"]["shipments"][0]["products"]]
+        """A write that answers "success" and adds nothing is reported as a failure.
+
+        Ground truth is what is in the cart afterwards, which is the only thing the
+        user can check.
+        """
+        mcp = FakeSilpo(swallow={"id-Ікра"})
+        report = await execute_sync(cart(line("Молоко", "42.90"), line("Ікра", "900")), mcp)
+        assert report.ok is False
+        assert report.added == ["Молоко"]
+        assert [name for name, _ in report.failed] == ["Ікра"]
 
 
 class TestIdempotency:

@@ -12,7 +12,8 @@ Silpo — Komora prepares the cart and hands off.
 
 ## Status
 
-Plan 1 Tasks 1–12 complete; the bot adapter (Task 13) is next.
+Plan 1 Tasks 1–13 complete — the bot runs the whole loop. Task 14 is the manual
+end-to-end run against real Silpo, which the bot has not yet met.
 
 **Before touching Silpo calls, read [docs/silpo-mcp-reference.md](../docs/silpo-mcp-reference.md)** —
 field names, call order and domain rules, all verified against the live server. Every
@@ -62,6 +63,20 @@ cloudflared tunnel --url http://localhost:8000
 ```
 
 Put the resulting URL in `KOMORA_PUBLIC_BASE_URL`.
+
+## Running the bot
+
+```bash
+uv run alembic upgrade head
+uv run python -m komora.main
+```
+
+One process serves both: uvicorn holds the OAuth callback, aiogram polls for messages.
+
+In Telegram: `/start` links the Silpo account (the login URL arrives as a message),
+then plain text builds a basket — «купи молоко, хліб і щось до чаю». `/budget 1500`
+sets a weekly cap. Nothing reaches the Silpo cart until «Надіслати в Сільпо» and then
+«Додати в кошик» — two explicit taps, with a preview of the existing cart in between.
 
 ## Running against a local model
 

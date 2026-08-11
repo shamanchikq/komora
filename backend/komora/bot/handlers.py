@@ -1,0 +1,266 @@
+"""What the bot does, with Telegram kept at arm's length.
+
+Every handler is a plain async function over `(services, telegram_id, …)` returning a
+`Reply`. aiogram appears only in `bot.py`, which adapts these to updates and sends the
+result. That is what makes the conversation testable without constructing Telegram
+objects, and it is the same seam the Mini App will use later.
+
+Two rules are enforced here rather than trusted:
+
+* **Nothing reaches Silpo without a confirmation.** A draft becomes a preview, and only
+  a second, explicit tap sends it.
+* **A callback's basket is checked against its sender.** The basket id comes from the
+  client, so a user could otherwise sync somebody else's cart by guessing a number.
+"""
+
+from collections.abc import Awaitable, Callable
+from contextlib import AbstractAsyncContextManager
+from dataclasses import dataclass, field
+from typing import Protocol
+
+from komora.bot.render import render_cart, render_sync_preview, render_sync_report
+from komora.core.agent.loop import ForbiddenToolCall, run_agent
+from komora.core.agent.tools import ToolSource
+from komora.core.llm.protocol import LLMClient, LLMUnavailable, Message
+from komora.core.mcp.errors import McpError, NotAuthenticated
+from komora.core.mcp.protocol import SilpoClient
+from komora.core.pipeline import CartContextMissing, build_cart, load_context
+from komora.core.sync import execute_sync, preview_sync
+from komora.db.repo import BasketRepo, ConversationRepo, UserRepo
+
+HISTORY_TURNS = 20
+
+WELCOME = (
+    "Комора збирає кошик у «Сільпо» зі звичайного повідомлення: «купи молоко, хліб і "
+    "щось до чаю».\n\n"
+    "Щоб це працювало, потрібен доступ до вашого акаунта Сільпо — наявність, ціни та "
+    "ваш кошик. Комора нічого не додає в кошик без вашого підтвердження і нічого "
+    "не оформлює: оплата завжди у Сільпо."
+)
+READY = "Комору підключено. Скажіть, що потрібно купити."
+NEED_AUTH = (
+    "Потрібно наново підключити акаунт Сільпо — доступ втратив чинність.\n"
+    "Комора нічого не змінює у вашому кошику без підтвердження."
+)
+LINK_SENT = "Готую посилання для входу в Сільпо…"
+NO_CONTEXT = (
+    "У вашому кошику Сільпо не вибрано магазин або час доставки, а без них Сільпо не "
+    "шукає товари. Оберіть їх у застосунку Сільпо — і напишіть мені ще раз."
+)
+SILPO_DOWN = "Сільпо зараз не відповідає. Спробуйте, будь ласка, за кілька хвилин."
+LLM_DOWN = "Не можу зараз подумати над кошиком — модель недоступна. Спробуйте пізніше."
+STALE = "Ця чернетка вже неактуальна — напишіть, що потрібно, і зберемо нову."
+CANCELLED = "Скасовано. Чернетку прибрано, у кошику Сільпо нічого не змінилося."
+NOTHING_TO_SEND = "У цій чернетці нема чого надсилати."
+BUDGET_HELP = (
+    "Тижневий бюджет допомагає бачити, коли кошик виходить за межі.\n"
+    "«/budget 1500» — встановити, «/budget 0» — прибрати."
+)
+
+
+@dataclass(frozen=True)
+class Button:
+    label: str
+    data: str | None = None
+    url: str | None = None
+
+
+@dataclass(frozen=True)
+class Reply:
+    text: str
+    buttons: tuple[Button, ...] = field(default_factory=tuple)
+    toast: str | None = None
+    """Short answer for a callback query — Telegram shows it without a new message."""
+
+
+class SilpoConnect(Protocol):
+    """Opens a Silpo session for one user. Raises `NotAuthenticated` if unlinked."""
+
+    def __call__(self, telegram_id: int) -> AbstractAsyncContextManager[SilpoClient]: ...
+
+
+@dataclass(frozen=True)
+class Services:
+    users: UserRepo
+    conversations: ConversationRepo
+    baskets: BasketRepo
+    llm: LLMClient
+    tools: ToolSource
+    """Declarations can only be read through an authenticated session, so they are
+    fetched on the first turn rather than at startup — see `agent.tools.CachedTools`."""
+    connect: SilpoConnect
+    start_linking: Callable[[int], Awaitable[None]]
+    """Kicks off account linking. Returns immediately — the authorization URL arrives
+    as its own message, because the OAuth round-trip can take minutes."""
+
+
+def _auth_reply(text: str) -> Reply:
+    return Reply(text, buttons=(Button("Підключити Сільпо", data="link"),))
+
+
+async def on_start(services: Services, telegram_id: int) -> Reply:
+    await services.users.ensure(telegram_id)
+    blob, _ = await services.users.get_token_blob(telegram_id)
+    return Reply(READY) if blob else _auth_reply(WELCOME)
+
+
+async def on_budget(services: Services, telegram_id: int, argument: str) -> Reply:
+    await services.users.ensure(telegram_id)
+    argument = argument.strip()
+
+    if not argument:
+        user = await services.users.get(telegram_id)
+        cap = user.budget_weekly if user else None
+        current = f"Зараз тижневий бюджет: {cap} ₴." if cap else "Бюджет не встановлено."
+        return Reply(f"{current}\n\n{BUDGET_HELP}")
+
+    try:
+        amount = int(argument.replace(" ", "").replace("₴", ""))
+    except ValueError:
+        return Reply(BUDGET_HELP)
+
+    if amount <= 0:
+        await services.users.set_budget(telegram_id, None)
+        return Reply("Бюджет прибрано.")
+    await services.users.set_budget(telegram_id, amount)
+    return Reply(f"Тижневий бюджет: {amount} ₴. Показуватиму, коли кошик виходить за межі.")
+
+
+async def on_text(services: Services, telegram_id: int, text: str) -> Reply:
+    """One user turn: history -> agent -> pipeline -> a draft to review."""
+    await services.users.ensure(telegram_id)
+    history = [
+        Message(role="assistant" if row.role == "assistant" else "user", content=row.content)
+        for row in await services.conversations.last_n(telegram_id, HISTORY_TURNS)
+    ]
+    await services.conversations.append(telegram_id, "user", text)
+
+    user = await services.users.get(telegram_id)
+    budget_cap = user.budget_weekly if user else None
+
+    try:
+        async with services.connect(telegram_id) as mcp:
+            _, context = await load_context(mcp)
+            outcome = await run_agent(
+                llm=services.llm,
+                mcp=mcp,
+                context=context,
+                history=history,
+                user_message=text,
+                tools=await services.tools(mcp),
+            )
+            if outcome.basket is None:
+                answer = outcome.reply or SILPO_DOWN
+                await services.conversations.append(telegram_id, "assistant", answer)
+                return Reply(answer)
+
+            cart = await build_cart(outcome.basket, mcp, context, budget_cap=budget_cap)
+    except NotAuthenticated:
+        return _auth_reply(NEED_AUTH)
+    except CartContextMissing:
+        return Reply(NO_CONTEXT)
+    except McpError:
+        return Reply(SILPO_DOWN)
+    except LLMUnavailable:
+        return Reply(LLM_DOWN)
+    except ForbiddenToolCall:
+        # The model reached for a write tool. It never got through — say so plainly
+        # rather than showing the user an error they cannot act on.
+        return Reply("Не зміг це опрацювати безпечно. Спробуйте сформулювати інакше.")
+
+    basket = outcome.basket
+    rendered = render_cart(cart, basket.title, budget_cap=budget_cap)
+    await services.conversations.append(telegram_id, "assistant", f"[чернетка] {basket.title}")
+
+    if not cart.lines:
+        return Reply(rendered)
+
+    basket_id = await services.baskets.create_from_cart(
+        telegram_id, basket.title, basket.intent, cart
+    )
+    return Reply(
+        rendered,
+        buttons=(
+            Button("Надіслати в Сільпо", data=f"sync:{basket_id}"),
+            Button("Скасувати", data=f"cancel:{basket_id}"),
+        ),
+    )
+
+
+async def on_callback(services: Services, telegram_id: int, data: str) -> Reply:
+    action, _, raw_id = data.partition(":")
+
+    if action == "link":
+        await services.start_linking(telegram_id)
+        return Reply(LINK_SENT)
+
+    try:
+        basket_id = int(raw_id)
+    except ValueError:
+        return Reply(STALE, toast="Невідома дія")
+
+    basket = await services.baskets.get(basket_id)
+    if basket is None or basket.user_id != telegram_id:
+        # Ids come from the client; a mismatch is either stale UI or somebody guessing.
+        return Reply(STALE, toast="Ця чернетка недоступна")
+    if basket.status != "draft":
+        return Reply(STALE, toast="Чернетка вже неактуальна")
+
+    if action == "cancel":
+        await services.baskets.set_status(basket_id, "discarded")
+        return Reply(CANCELLED)
+    if action == "sync":
+        return await _preview(services, telegram_id, basket_id)
+    if action == "push":
+        return await _push(services, telegram_id, basket_id)
+    return Reply(STALE, toast="Невідома дія")
+
+
+async def _preview(services: Services, telegram_id: int, basket_id: int) -> Reply:
+    cart = await services.baskets.load_cart(basket_id)
+    if cart is None or not [ln for ln in cart.lines if not ln.unavailable]:
+        return Reply(NOTHING_TO_SEND)
+
+    try:
+        async with services.connect(telegram_id) as mcp:
+            preview = await preview_sync(cart, mcp)
+    except NotAuthenticated:
+        return _auth_reply(NEED_AUTH)
+    except McpError:
+        return Reply(SILPO_DOWN)
+
+    return Reply(
+        render_sync_preview(preview),
+        buttons=(
+            Button("Додати в кошик", data=f"push:{basket_id}"),
+            Button("Скасувати", data=f"cancel:{basket_id}"),
+        ),
+    )
+
+
+async def _push(services: Services, telegram_id: int, basket_id: int) -> Reply:
+    cart = await services.baskets.load_cart(basket_id)
+    if cart is None:
+        return Reply(STALE)
+
+    try:
+        async with services.connect(telegram_id) as mcp:
+            report = await execute_sync(cart, mcp)
+    except NotAuthenticated:
+        return _auth_reply(NEED_AUTH)
+    except McpError:
+        return Reply(SILPO_DOWN)
+
+    # Only a complete sync closes the draft. A partial one stays open so the same
+    # basket can be retried — safe, because re-adding sets quantities rather than
+    # incrementing them.
+    if report.ok:
+        await services.baskets.set_status(basket_id, "synced")
+
+    buttons: list[Button] = []
+    if report.checkout_web_link:
+        buttons.append(Button("Оформити на сайті", url=report.checkout_web_link))
+    if not report.ok:
+        buttons.append(Button("Спробувати ще раз", data=f"push:{basket_id}"))
+
+    return Reply(render_sync_report(report), buttons=tuple(buttons))

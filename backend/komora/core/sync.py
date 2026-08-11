@@ -72,13 +72,17 @@ def _sendable(cart: ResolvedCart) -> list[ResolvedLine]:
 
 
 def _payload(line: ResolvedLine) -> dict[str, Any]:
+    """Exactly the four fields `silpo_add_or_update_cart_products` declares.
+
+    `name` and `price` are not in its schema. The A1 probe that verified append
+    semantics sent only these four, so anything extra here would be an unverified
+    change to the one call the whole product depends on.
+    """
     return {
         "productId": line.product_id,
         "companyId": line.company_id,
         "branchId": line.branch_id,
         "quantity": line.qty,
-        "name": line.name,
-        "price": float(line.unit_price),
     }
 
 
@@ -146,4 +150,5 @@ async def execute_sync(cart: ResolvedCart, mcp: SilpoClient) -> SyncReport:
         added=added,
         failed=failed,
         checkout_web_link=final.get("checkoutWebLink"),
+        checkout_mobile_link=final.get("checkoutMobileLink"),
     )

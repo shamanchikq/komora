@@ -35,7 +35,13 @@ class SilpoClient(Protocol):
         """Browse by category or promotion code. Same context requirement as search."""
         ...
 
-    async def get_product_details(self, slug: str) -> dict[str, Any]: ...
+    async def get_product_details(self, slug: str, context: SearchContext) -> dict[str, Any]:
+        """Full details for one product.
+
+        `slug` must come from a search result — Silpo's own description says never to
+        construct one from a name. Needs the same context as search.
+        """
+        ...
 
     async def get_replacements(
         self, *, product_ids: Sequence[str], company_id: str, context: SearchContext
@@ -57,7 +63,9 @@ class SilpoClient(Protocol):
         eligible-product list** — they cannot be matched to cart lines."""
         ...
 
-    async def get_categories(self) -> dict[str, Any]: ...
+    async def get_categories(self, context: SearchContext, **filters: Any) -> dict[str, Any]:
+        """Category tree. Requires `branchId`, so it takes the context like the rest."""
+        ...
 
     async def get_my_food_restrictions(self) -> dict[str, Any]: ...
 
