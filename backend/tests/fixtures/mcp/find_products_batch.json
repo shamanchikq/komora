@@ -1,1 +1,194 @@
-"MCP error -32602: Input validation error: Invalid arguments for tool silpo_find_products_batch: [\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"branchId\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  },\n  {\n    \"code\": \"invalid_value\",\n    \"values\": [\n      \"Unknown\",\n      \"SelfPickup\",\n      \"DeliveryHome\",\n      \"DeliveryFlat\",\n      \"DeliveryOffice\",\n      \"DeliveryGlovo\",\n      \"DeliveryExpress\",\n      \"DeliveryExpressFood\",\n      \"JustIn\",\n      \"LongDelivery\",\n      \"JustInPost\",\n      \"NovaPoshta\",\n      \"DeliveryExpressByPromise\",\n      \"WideAssortDelivery\"\n    ],\n    \"path\": [\n      \"deliveryType\"\n    ],\n    \"message\": \"Invalid option: expected one of \\\"Unknown\\\"|\\\"SelfPickup\\\"|\\\"DeliveryHome\\\"|\\\"DeliveryFlat\\\"|\\\"DeliveryOffice\\\"|\\\"DeliveryGlovo\\\"|\\\"DeliveryExpress\\\"|\\\"DeliveryExpressFood\\\"|\\\"JustIn\\\"|\\\"LongDelivery\\\"|\\\"JustInPost\\\"|\\\"NovaPoshta\\\"|\\\"DeliveryExpressByPromise\\\"|\\\"WideAssortDelivery\\\"\"\n  },\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"timeslotStart\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  },\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"timeslotEnd\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  },\n  {\n    \"expected\": \"array\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"products\"\n    ],\n    \"message\": \"Invalid input: expected array, received undefined\"\n  }\n]"
+{
+  "success": true,
+  "summary": "Found 10 products across 2 search queries",
+  "queries": [
+    {
+      "query": "молоко",
+      "totalFound": 5,
+      "products": [
+        {
+          "id": "1ee2812a-d260-67e6-8c20-9d0e362915b0",
+          "name": "Молоко ультрапастеризоване ОКЗДХ Наше молоко 3,2%",
+          "slug": "moloko-ultrapasteryzovane-okzdkh-nashe-moloko-3-2-933067",
+          "price": 85.99,
+          "oldPrice": null,
+          "stock": 7,
+          "available": true,
+          "image": "https://images.silpo.ua/v2/products/500x500/webp/39da0329-cf61-488e-9df0-840b54c53b8f.png",
+          "weighted": false,
+          "step": 1,
+          "specialPrices": null,
+          "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+          "branchId": "1edb6b13-6640-6072-b10a-0b7012e7f9f8",
+          "externalProductId": 933067
+        },
+        {
+          "id": "1ed0767a-5e3d-696c-a777-9d79fa2ad32f",
+          "name": "Молоко ультрапастеризоване «Премія»® 2,5%",
+          "slug": "moloko-ultrapasteryzovane-premiia-2-5-799508",
+          "price": 56.49,
+          "oldPrice": null,
+          "stock": 2,
+          "available": true,
+          "image": "https://images.silpo.ua/v2/products/500x500/webp/3de61c25-2dc7-4860-9a3a-66c160266742.png",
+          "weighted": false,
+          "step": 1,
+          "specialPrices": null,
+          "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+          "branchId": "1edb6b13-6640-6072-b10a-0b7012e7f9f8",
+          "externalProductId": 799508
+        },
+        {
+          "id": "1f07e347-1216-6252-bbbf-71bd376f7363",
+          "name": "Молоко ультрапастеризоване Lactel Комфорт безлактозне 1,5% т/б",
+          "slug": "moloko-ultrapasteryzovane-lactel-komfort-bezlaktozne-1-5-t-b-999833",
+          "price": 95.99,
+          "oldPrice": null,
+          "stock": 1,
+          "available": true,
+          "image": "https://images.silpo.ua/v2/products/500x500/webp/ffbacee0-4177-4ba1-97be-e0e0c48353ea.png",
+          "weighted": false,
+          "step": 1,
+          "specialPrices": [
+            {
+              "price": 74.9,
+              "count": 2,
+              "type": "from"
+            }
+          ],
+          "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+          "branchId": "1edb6b13-6640-6072-b10a-0b7012e7f9f8",
+          "externalProductId": 999833
+        },
+        {
+          "id": "1ed0765d-8011-6c4a-99d7-dd63763181f9",
+          "name": "Молоко «Селянське» малюкам від 3 років 2,5%",
+          "slug": "moloko-selianske-maliukam-vid-3-rokiv-2-5-719167",
+          "price": 67.49,
+          "oldPrice": null,
+          "stock": 179,
+          "available": true,
+          "image": "https://images.silpo.ua/v2/products/500x500/webp/8e682a04-6589-4bae-9214-8b96ea87a0e0.png",
+          "weighted": false,
+          "step": 1,
+          "specialPrices": [
+            {
+              "price": 54.9,
+              "count": 2,
+              "type": "from"
+            }
+          ],
+          "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+          "branchId": "1edb6b13-6640-6072-b10a-0b7012e7f9f8",
+          "externalProductId": 719167
+        },
+        {
+          "id": "1ed07680-4d81-62da-87c8-dd63763181f9",
+          "name": "Молоко «Галичина» ультрапастеризоване 2,5%",
+          "slug": "moloko-galychyna-ultrapasteryzovane-2-5-815590",
+          "price": 56.99,
+          "oldPrice": 74.99,
+          "stock": 93,
+          "available": true,
+          "image": "https://images.silpo.ua/v2/products/500x500/webp/3948564d-e6ce-43b2-93ad-81a2271e5db4.png",
+          "weighted": false,
+          "step": 1,
+          "specialPrices": null,
+          "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+          "branchId": "1edb6b13-6640-6072-b10a-0b7012e7f9f8",
+          "externalProductId": 815590
+        }
+      ]
+    },
+    {
+      "query": "хліб",
+      "totalFound": 5,
+      "products": [
+        {
+          "id": "1edaf2dd-a25c-6140-9f65-67d0bfe96414",
+          "name": "Хліб «Кулиничі» «Європейський» тостовий білий",
+          "slug": "khlib-kulynychi-yevropeiskyi-tostovyi-bilyi-526712",
+          "price": 33.06,
+          "oldPrice": null,
+          "stock": 10,
+          "available": true,
+          "image": "https://images.silpo.ua/v2/products/500x500/webp/ae5dce0d-8b3c-42a8-ba57-25b830b4fdd8.png",
+          "weighted": false,
+          "step": 1,
+          "specialPrices": null,
+          "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+          "branchId": "1edb6b13-6640-6072-b10a-0b7012e7f9f8",
+          "externalProductId": 526712
+        },
+        {
+          "id": "1ef964ec-67dc-6002-a664-4749efa2149c",
+          "name": "Хліб Кулиничі Гурман з родзинками нарізаний",
+          "slug": "khlib-kulynychi-gurman-z-rodzynkamy-narizanyi-972196",
+          "price": 36.63,
+          "oldPrice": null,
+          "stock": 33,
+          "available": true,
+          "image": "https://images.silpo.ua/v2/products/500x500/webp/2e5182a9-a6c4-42d1-a665-9bf16b6b1ab4.png",
+          "weighted": false,
+          "step": 1,
+          "specialPrices": null,
+          "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+          "branchId": "1edb6b13-6640-6072-b10a-0b7012e7f9f8",
+          "externalProductId": 972196
+        },
+        {
+          "id": "1ee1537b-030c-6464-9b79-f189640448c7",
+          "name": "Хліб Agrola Трипільський заварний нарізаний",
+          "slug": "khlib-agrola-trypilskyi-zavarnyi-narizanyi-930554",
+          "price": 43.77,
+          "oldPrice": null,
+          "stock": 1,
+          "available": true,
+          "image": "https://images.silpo.ua/v2/products/500x500/webp/fe0c882e-b7a0-4d3e-904d-e9de0af13bc3.png",
+          "weighted": false,
+          "step": 1,
+          "specialPrices": null,
+          "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+          "branchId": "1edb6b13-6640-6072-b10a-0b7012e7f9f8",
+          "externalProductId": 930554
+        },
+        {
+          "id": "1edc271f-c783-6b36-b0a3-5df90b7a2bca",
+          "name": "Хліб Агробізнес Класичний тостовий половинка",
+          "slug": "khlib-agrobiznes-klasychnyi-tostovyi-polovynka-922368",
+          "price": 44.09,
+          "oldPrice": null,
+          "stock": 1,
+          "available": true,
+          "image": "https://images.silpo.ua/v2/products/500x500/webp/060de5c8-e6c9-488d-801e-a575110682a3.png",
+          "weighted": false,
+          "step": 1,
+          "specialPrices": null,
+          "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+          "branchId": "1edb6b13-6640-6072-b10a-0b7012e7f9f8",
+          "externalProductId": 922368
+        },
+        {
+          "id": "1ef1e131-c1ad-6f86-892d-536fbe7dba34",
+          "name": "Хліб Agrola Фінський нарізаний",
+          "slug": "khlib-agrola-finskyi-narizanyi-957221",
+          "price": 48.19,
+          "oldPrice": null,
+          "stock": 2,
+          "available": true,
+          "image": "https://images.silpo.ua/v2/products/500x500/webp/b96764f9-d825-4271-bb26-34de047460c9.png",
+          "weighted": false,
+          "step": 1,
+          "specialPrices": null,
+          "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+          "branchId": "1edb6b13-6640-6072-b10a-0b7012e7f9f8",
+          "externalProductId": 957221
+        }
+      ]
+    }
+  ],
+  "meta": {
+    "totalQueries": 2,
+    "totalProducts": 10
+  }
+}

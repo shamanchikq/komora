@@ -184,6 +184,29 @@ def is_plastic_bag(product: dict[str, Any]) -> bool:
     return any(word in str(product.get("name", "")).lower() for word in _PLASTIC_BAGS)
 
 
+def search_results(payload: Any) -> list[dict[str, Any]]:
+    """Flatten silpo_find_products_batch into a single product list.
+
+    Shape is {"success", "summary", "queries": [{"query", "totalFound", "products"}]}.
+
+    Note the identifier trap: a *search* result names the product `id`, while the
+    *cart* calls the same value `productId`. Normalised here so nothing downstream has
+    to remember which endpoint it came from.
+    """
+    products: list[dict[str, Any]] = []
+    if not isinstance(payload, dict):
+        return products
+    for group in payload.get("queries") or []:
+        if not isinstance(group, dict):
+            continue
+        for product in group.get("products") or []:
+            if isinstance(product, dict):
+                normalised = dict(product)
+                normalised.setdefault("productId", product.get("id"))
+                products.append(normalised)
+    return products
+
+
 def fingerprint(cart: Any) -> dict[str, Any]:
     """productId -> quantity, so 'unchanged' can be asserted."""
     out: dict[str, Any] = {}
@@ -320,17 +343,12 @@ async def main(probe_cart: bool, port: int) -> int:
                 return summarise()
 
             # --- A1 ---
-            pool = found if isinstance(found, list) else []
-            if isinstance(found, dict):
-                for value in found.values():
-                    if isinstance(value, list):
-                        pool.extend(v for v in value if isinstance(v, dict))
             candidates = [
                 p
-                for p in pool
-                if isinstance(p, dict)
-                and p.get("productId")
+                for p in search_results(found)
+                if p.get("productId")
                 and p.get("companyId")
+                and p.get("available", True)
                 and not is_plastic_bag(p)
                 and (p.get("stock") is None or p["stock"] >= 1)
             ]
