@@ -84,7 +84,8 @@ def dump(name: str, payload: Any) -> None:
 
 def unwrap(result: Any) -> Any:
     """Pull the payload out of an MCP CallToolResult."""
-    structured = getattr(result, "structuredContent", None)
+    # Attributes are snake_case; the camelCase names are pydantic aliases only.
+    structured = getattr(result, "structured_content", None)
     if structured is not None:
         return structured
     for block in getattr(result, "content", []) or []:
@@ -115,6 +116,30 @@ def fingerprint(cart: Any) -> list[tuple[str, Any]]:
         qty = item.get("quantity") or item.get("qty") or item.get("amount")
         out.append((str(pid), qty))
     return sorted(out)
+
+
+def summarise() -> int:
+    """Exit code from what actually happened. Every exit path goes through here so a
+    failed check can never be reported as success."""
+    failures = [label for status, label in _results if status == FAIL]
+    print("\n" + "=" * 70)
+    print(f"{len(_results) - len(failures)} passed, {len(failures)} failed")
+    for label in failures:
+        print(f"  FAILED: {label}")
+    print("=" * 70)
+    return 1 if failures else 0
+
+
+def root_causes(exc: BaseException) -> list[BaseException]:
+    """Flatten nested ExceptionGroups.
+
+    The MCP transport nests task groups, so a single failure surfaces as an
+    ExceptionGroup inside an ExceptionGroup. Printing that raw buries the one line
+    that matters under four tracebacks.
+    """
+    if isinstance(exc, BaseExceptionGroup):
+        return [cause for sub in exc.exceptions for cause in root_causes(sub)]
+    return [exc]
 
 
 async def serve_callback(bridge: AuthorizationBridge, port: int) -> asyncio.Task[None]:
@@ -176,7 +201,12 @@ async def main(probe_cart: bool, port: int) -> int:
             # --- A2: capture the real tool schemas ---
             tools = await session.list_tools()
             declarations = [
-                {"name": t.name, "description": t.description, "inputSchema": t.inputSchema}
+                {
+                    "name": t.name,
+                    "description": t.description,
+                    "inputSchema": t.input_schema,
+                    "outputSchema": t.output_schema,
+                }
                 for t in tools.tools
             ]
             check(f"list_tools returned {len(declarations)} tools", bool(declarations))
@@ -219,7 +249,7 @@ async def main(probe_cart: bool, port: int) -> int:
 
             if not probe_cart:
                 print("\nRead-only run complete. Re-run with --probe-cart to verify A1.")
-                return 0
+                return summarise()
 
             # --- A1: does add append, or replace? ---
             candidates = [
@@ -231,7 +261,7 @@ async def main(probe_cart: bool, port: int) -> int:
                 check(
                     "A1: found a product to test with", False, "no usable product in search results"
                 )
-                return 1
+                return summarise()
             item = min(candidates, key=lambda p: Decimal(str(p["price"])))
             payload = {
                 "productId": item["productId"],
@@ -294,19 +324,16 @@ async def main(probe_cart: bool, port: int) -> int:
                 restored == before_print,
                 f"before={before_print}\n{INFO} after ={restored}",
             )
+    except BaseException as exc:
+        for cause in root_causes(exc):
+            check(f"aborted: {type(cause).__name__}", False, str(cause)[:400])
     finally:
         server_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await server_task
         await engine.dispose()
 
-    failures = [label for status, label in _results if status == FAIL]
-    print("\n" + "=" * 70)
-    print(f"{len(_results) - len(failures)} passed, {len(failures)} failed")
-    for label in failures:
-        print(f"  FAILED: {label}")
-    print("=" * 70)
-    return 1 if failures else 0
+    return summarise()
 
 
 if __name__ == "__main__":
