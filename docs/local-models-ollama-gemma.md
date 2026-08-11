@@ -205,6 +205,35 @@ cd backend && PYTHONIOENCODING=utf-8 uv run python scripts/probe_ollama.py gemma
 
 (`PYTHONIOENCODING=utf-8` is required — the Windows console is cp1252 and can't print Cyrillic.)
 
+### 3.1 Re-run against the *real* Silpo schemas — and it degraded [LIVE]
+
+The probe above used 21 hand-written toy schemas. Repeating it through the actual
+`OllamaClient` with **real captured Silpo schemas** told a different story:
+
+| Setup | Result |
+|---|---|
+| **A** — permissive prompt + 5 real search tools + `propose_basket` | **No tool call.** Asked the user for store and delivery details instead. |
+| **B** — prompt that forbids searching, same 6 tools | Called `propose_basket`, but **`description` was `null` on every line** — despite being `required`. |
+| **C** — same prompt, `propose_basket` only | Correct: «Молоко», «Хліб», «Печиво до чаю», each with a reason. |
+
+Three things follow, and they generalise beyond Gemma:
+
+1. **Real tool schemas change behaviour.** `silpo_find_products_batch` requires
+   `branchId`, `deliveryType` and a timeslot, so the model quite reasonably stalls
+   asking how to fill them. The system prompt must state explicitly that the model does
+   **not** search — resolving descriptions to SKUs is the pipeline's job.
+2. **Tool-schema load degrades nested-output adherence.** Six tools versus one was the
+   only difference between B and C, and it silently dropped a required field. This is
+   the failure mode that matters: not a refusal, but *well-formed-looking output with
+   holes in it*.
+3. **Client-side validation is not optional.** `DraftBasket.model_validate` rejects B's
+   payload (`lines.0.description: string_type`), which is exactly why malformed output
+   must be a retry rather than something that reaches a cart.
+
+This is also the clearest evidence yet for the promotion gate in §6: A and B would both
+have passed a "did it call the right tool" check, and B would have passed a "schema
+validates" check too if the schema had allowed nulls.
+
 ---
 
 ## 4. The numbers that decide it [BENCH]
