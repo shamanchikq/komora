@@ -64,7 +64,7 @@ native mobile apps, any checkout/payment handling.
 | OAuth 2.1 + PKCE, dynamic client registration, tokens must be stored server-side | Backend + public HTTPS callback required regardless of surface. **Probed live 2026-08-10:** RFC 9728 metadata is published, `/register` (DCR) exists, `refresh_token` is supported, PKCE S256 available, all endpoints at the origin, no `scopes_supported`. See [verified external facts §1](2026-08-10-verified-external-facts.md). |
 | `mcp` SDK 2.0 renamed/reshaped its OAuth + transport API, and ships an open blocker (#3250) that breaks silent token refresh | Task 6 must subclass `OAuthClientProvider` to restore `token_expiry_time`, keep DCR client info in **one shared row** (not per-user), persist an absolute `expires_at`, and set `application_type="web"`. See [§2](2026-08-10-verified-external-facts.md). |
 | One persistent cart per user (`silpo_get_my_shopping_cart` — "always the first step") | We must read the existing cart and append; never replace. |
-| `silpo_add_or_update_cart_products` upserts by `productId+companyId+branchId` | Append semantics inferred from docs, **must be verified against live MCP on day 1**. |
+| `silpo_add_or_update_cart_products` upserts by `productId+companyId+branchId` | **CONFIRMED live 2026-08-11** — see §3.1. Appends; existing lines untouched. |
 | `silpo_clear_shopping_cart` exists | Never called except on explicit user request ("почати заново"). |
 | Rate limiting per user, 429 + backoff expected | Retry with exponential backoff; batch tools (`silpo_find_products_batch`, 30 items) preferred. |
 | No recipe tools | LLM generates recipes; framed as a feature (unconstrained cuisine). |
@@ -72,6 +72,56 @@ native mobile apps, any checkout/payment handling.
 | Coupon application happens at Silpo checkout, not via MCP | All savings are estimates. UI copy: «Купони застосує Сільпо на касі… остаточна може відрізнятись». |
 
 ---
+
+### 3.1 Verified against the live server — 2026-08-11
+
+`scripts/verify_mcp.py --probe-cart` against a real account, **17/17 passed**. Fixtures
+in `backend/tests/fixtures/mcp/`.
+
+**A1 is confirmed.** Adding a second product left the first in place (cart 3 → 5 lines)
+and the user's three pre-existing lines were untouched. The cart was then restored
+exactly. Cart preparation as designed is safe.
+
+**Refinement A1 did not anticipate:** re-adding the same product with `quantity: 1`
+left the quantity at **1, not 2**. The call **sets** quantity, it does not increment.
+Two consequences:
+
+- **Sync is naturally idempotent** — a retried sync cannot double-count, which makes
+  the partial-failure retry path in §10 safe by construction.
+- **Overlapping products do not sum.** If the user already has 1 milk and Komora sends
+  2, the result is 2, not 3. The confirm sheet must not promise addition for a product
+  that is already in the cart.
+
+**Field shapes — none of these matched what the tool names suggested:**
+
+| | |
+|---|---|
+| Cart response | `{"success", "cart": {...}}`; lines at `cart.shipments[].products[]` |
+| Search response | `{"success", "summary", "queries": [{"query", "totalFound", "products"}]}` |
+| **Identifier trap** | search names it **`id`**; the cart names it **`productId`**. Normalise at the boundary. |
+| Parameters | `shoppingCartId` (not `cartId`), `products` (not `queries`/`productIds`) |
+
+**Product search is context-dependent.** `silpo_find_products_batch` requires
+`branchId`, `deliveryType`, `timeslotStart`, `timeslotEnd` — and the branch comes from
+the cart. The order is always: get cart id → read cart → search → mutate.
+
+**Silpo's tool descriptions are a prescriptive playbook.** They specify behaviour our
+design must adopt:
+
+- **`cart.calculation.totalAfterDiscounts` is what the user actually pays** — Silpo says
+  to always show this, never `total`. Our `ResolvedCart.total` must map to it, not to a
+  sum of line prices.
+- **Timeslot validation is mandatory**: call `silpo_get_time_slots` immediately after
+  reading the cart and confirm the cart's slot is still available before anything else.
+  Timeslot times are UTC; convert for display.
+- **Never exceed `product.stock`** — check, cap, and tell the user the maximum.
+- **Never re-add plastic bags** (пакет / пакунок) when reordering from a cart.
+- **`cart.calculation.validations[]`** carries errors that *block checkout*, plus
+  warnings. Both must be surfaced — this feeds §10's degraded-mode labelling.
+- **Балабонуси**: if `cart.calculation.loyalty` shows `bonusAvailable > 0` and
+  `isEnabled`, offering to apply them is expected behaviour.
+- **`checkoutWebLink` / `checkoutMobileLink`** — show both, labelled «Оформити на
+  сайті» and «Оформити в застосунку».
 
 ## 4. Architecture
 
