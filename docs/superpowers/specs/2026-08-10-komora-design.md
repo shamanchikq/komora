@@ -105,6 +105,40 @@ Two consequences:
 `branchId`, `deliveryType`, `timeslotStart`, `timeslotEnd` — and the branch comes from
 the cart. The order is always: get cart id → read cart → search → mutate.
 
+### Coupons cannot be matched to products — the savings maximizer needs rescoping
+
+Discovered 2026-08-11 while building the passes, from the captured **output** schemas.
+
+The spec claimed `silpo_get_my_coupons` + `silpo_get_coupon_details` "exposes which
+products trigger each coupon". **They do not.** The real fields are:
+
+```
+id, active, useWay, beginDate, endDate, description,
+limitText, warningText, rewardText, rewardValue, image
+```
+
+A coupon has a *value* (`rewardValue`) but **no eligible-product list** — the conditions
+live in `limitText` and `description` as Ukrainian prose. `silpo_get_promotions` is no
+better for arithmetic: `code`, `title`, `productCount`, `url`, and no amounts.
+
+So the headline feature as written — *"swap brand X for Y and you trigger a 40% coupon"* —
+**is not implementable.** Nothing in the API says which products trigger which coupon,
+and inferring it from prose would be invention presented as arithmetic.
+
+What the data does support, and it is better because it is exact:
+
+- **Real savings from `oldPrice - price`.** Every product carries both, with the
+  discount already applied. The cart fixture shows `price 39.99 / oldPrice 60.99`.
+  That is a current, machine-readable saving needing no inference.
+- **Promotion codes as a discovery filter** — pass `promotionCode` to
+  `silpo_get_products` to list what is in a promotion. That powers the "deals" intent.
+- **Coupons surfaced as text**, not applied. Which matches Silpo's own line:
+  «Купони застосує Сільпо на касі».
+
+Revised scope for feature 2: *report the savings already in your cart, and show the
+coupons you hold* — not *optimize the cart toward coupons*. §7 pass 3 is renamed
+accordingly and no longer proposes coupon-triggering swaps.
+
 **Silpo's tool descriptions are a prescriptive playbook.** They specify behaviour our
 design must adopt:
 
@@ -371,10 +405,10 @@ v1; schema written to survive a Postgres move (no SQLite-only types).
 2. **Availability/resolution** — resolve descriptions to SKUs at the user's
    branch via `silpo_find_products_batch`; out-of-stock → `silpo_get_replacements`;
    substitution recorded with original, visible + reversible in UI.
-3. **Promo/coupon optimization** — cross-reference `silpo_get_my_coupons` (+
-   `silpo_get_coupon_details` eligible products), `silpo_get_my_promos`,
-   `silpo_get_promotions`; may propose swaps ("бренд X → Y активує купон −40%");
-   swaps are suggestions with reasons, never silent.
+3. **Savings reporting** — total the discounts already present in the resolved prices
+   (`oldPrice − price`, exact and machine-readable) and surface the user's coupons as
+   text. **Does not** propose coupon-triggering swaps: Silpo publishes no mapping from
+   coupon to product, so such a swap would be invention. See §3.1.
 4. **Budget fit** — if cap set: compute headroom incl. current week's spend;
    over-cap → amber banner + one-tap "прибрати необов'язкові" (items marked
    `optional` by the intent handler). User may send over budget; their choice.

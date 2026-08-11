@@ -1,0 +1,266 @@
+"""The deterministic pipeline: restrictions, resolve, savings, budget.
+
+Every intent converges here, so each pass is tested on its own rather than through a
+model. Product shapes come from the real captured search response.
+"""
+
+from decimal import Decimal
+
+import pytest
+
+from komora.core.models import DraftBasket, DraftLine, ResolvedCart, ResolvedLine
+from komora.core.passes.budget import apply_budget, optional_lines_total
+from komora.core.passes.promos import apply_savings, describe_coupons
+from komora.core.passes.resolve import clamp_quantity, resolve_basket
+from komora.core.passes.restrictions import apply_restrictions
+from tests.fakes import CONTEXT, FakeSilpo, product
+
+
+def draft(*lines: DraftLine, title: str = "Кошик") -> DraftBasket:
+    return DraftBasket(title=title, intent="stated", lines=list(lines))
+
+
+def line(description: str, quantity: float = 1, **kw: object) -> DraftLine:
+    return DraftLine.model_validate(
+        {"description": description, "quantity": quantity, "reason_text": "ви попросили"} | kw
+    )
+
+
+def resolved(**kw: object) -> ResolvedLine:
+    base = {
+        "product_id": "p1",
+        "company_id": "c1",
+        "branch_id": "b1",
+        "name": "Молоко",
+        "qty": 1,
+        "unit": "900 мл",
+        "unit_price": Decimal("42.90"),
+        "reason_kind": "stated",
+        "reason_text": "r",
+    }
+    return ResolvedLine.model_validate(base | kw)
+
+
+class TestRestrictions:
+    def test_no_restrictions_is_identity(self) -> None:
+        basket = draft(line("молоко"), line("арахісова паста"))
+        assert apply_restrictions(basket, []) == basket
+
+    def test_matching_line_is_dropped_with_a_reason(self) -> None:
+        """A line that vanishes without explanation reads as a bug — and for an
+        allergy the reason matters more than the item."""
+        out = apply_restrictions(draft(line("молоко"), line("Арахісова паста")), ["арахіс"])
+        assert [ln.description for ln in out.lines] == ["молоко"]
+        assert out.warnings == ["excluded:Арахісова паста:арахіс"]
+
+    def test_matching_is_case_insensitive(self) -> None:
+        out = apply_restrictions(draft(line("ЛАКТОЗА free молоко")), ["лактоза"])
+        assert out.lines == []
+
+    def test_blank_restrictions_are_ignored(self) -> None:
+        basket = draft(line("молоко"))
+        assert apply_restrictions(basket, ["", "   "]).lines == basket.lines
+
+    def test_input_is_not_mutated(self) -> None:
+        basket = draft(line("арахіс"))
+        apply_restrictions(basket, ["арахіс"])
+        assert len(basket.lines) == 1
+
+
+class TestClampQuantity:
+    def test_respects_stock(self) -> None:
+        assert clamp_quantity(10, product("x", 1, stock=3)) == 3
+
+    def test_rounds_to_the_product_step(self) -> None:
+        """Weighted goods are not orderable at arbitrary amounts."""
+        assert clamp_quantity(1.0, product("x", 1, step=0.5, stock=None)) == 1.0
+        assert clamp_quantity(0.7, product("x", 1, step=0.5, stock=None)) == 0.5
+
+    def test_never_returns_zero(self) -> None:
+        assert clamp_quantity(0.1, product("x", 1, step=1, stock=None)) == 1
+
+    def test_step_result_still_capped_by_stock(self) -> None:
+        assert clamp_quantity(9, product("x", 1, step=2, stock=3)) == 3
+
+
+class TestResolve:
+    async def test_descriptions_become_real_products(self) -> None:
+        mcp = FakeSilpo({"молоко": [product("Молоко Яготинське", 42.90)]})
+        cart = await resolve_basket(draft(line("молоко", 2)), mcp, CONTEXT)
+        assert len(cart.lines) == 1
+        assert cart.lines[0].name == "Молоко Яготинське"
+        assert cart.lines[0].qty == 2
+        assert cart.total == Decimal("85.80")
+
+    async def test_search_id_becomes_the_cart_product_id(self) -> None:
+        """Search says `id`, the cart wants `productId` — the trap from spec 3.1."""
+        mcp = FakeSilpo({"молоко": [product("Молоко", 10, product_id="the-uuid")]})
+        cart = await resolve_basket(draft(line("молоко")), mcp, CONTEXT)
+        assert cart.lines[0].product_id == "the-uuid"
+
+    async def test_quantity_is_capped_at_stock(self) -> None:
+        mcp = FakeSilpo({"молоко": [product("Молоко", 10, stock=2)]})
+        cart = await resolve_basket(draft(line("молоко", 5)), mcp, CONTEXT)
+        assert cart.lines[0].qty == 2
+
+    async def test_plastic_bags_are_never_selected(self) -> None:
+        """Silpo's own tool descriptions insist on this."""
+        mcp = FakeSilpo({"пакет": [product("Пакет-майка", 2)]})
+        cart = await resolve_basket(draft(line("пакет")), mcp, CONTEXT)
+        assert cart.lines == []
+        assert cart.warnings == ["not_found:пакет"]
+
+    async def test_missing_product_is_reported_not_silently_dropped(self) -> None:
+        cart = await resolve_basket(draft(line("ікра")), FakeSilpo({}), CONTEXT)
+        assert cart.lines == []
+        assert "not_found:ікра" in cart.warnings
+
+    async def test_out_of_stock_is_substituted_and_labelled(self) -> None:
+        original = product("Йогурт Активіа", 34.50, product_id="orig", stock=0)
+        mcp = FakeSilpo(
+            {"йогурт": [original]},
+            {"orig": [product("Йогурт Галичина", 31.90, product_id="sub")]},
+        )
+        cart = await resolve_basket(draft(line("йогурт")), mcp, CONTEXT)
+        assert cart.lines[0].name == "Йогурт Галичина"
+        assert cart.lines[0].substituted_from == "Йогурт Активіа"
+        assert cart.lines[0].reason_kind == "sub"
+
+    async def test_unsubstitutable_line_stays_visible_but_out_of_the_total(self) -> None:
+        mcp = FakeSilpo({"ікра": [product("Ікра", 900, product_id="x", stock=0)]}, {"x": []})
+        cart = await resolve_basket(draft(line("ікра")), mcp, CONTEXT)
+        assert cart.lines[0].unavailable is True
+        assert cart.total == Decimal("0"), "unavailable lines must not inflate the total"
+
+    async def test_replacement_failure_degrades_rather_than_fails(self) -> None:
+        mcp = FakeSilpo(
+            {"йогурт": [product("Йогурт", 30, product_id="o", stock=0)]}, replacements_fail=True
+        )
+        cart = await resolve_basket(draft(line("йогурт")), mcp, CONTEXT)
+        assert "degraded:replacements" in cart.warnings
+        assert cart.lines[0].unavailable is True
+
+    async def test_searches_are_batched_within_silpo_limit(self) -> None:
+        mcp = FakeSilpo({})
+        await resolve_basket(draft(*[line(f"товар {i}") for i in range(35)]), mcp, CONTEXT)
+        assert [len(c) for c in mcp.search_calls] == [30, 5]
+
+    async def test_restriction_warnings_survive_resolution(self) -> None:
+        basket = apply_restrictions(draft(line("молоко"), line("арахіс")), ["арахіс"])
+        mcp = FakeSilpo({"молоко": [product("Молоко", 10)]})
+        cart = await resolve_basket(basket, mcp, CONTEXT)
+        assert any(w.startswith("excluded:") for w in cart.warnings)
+
+    async def test_old_price_is_carried_through(self) -> None:
+        mcp = FakeSilpo({"молоко": [product("Молоко", 39.99, old_price=60.99)]})
+        cart = await resolve_basket(draft(line("молоко")), mcp, CONTEXT)
+        assert cart.lines[0].old_price == Decimal("60.99")
+
+
+class TestSavings:
+    def test_discount_comes_from_the_price_difference(self) -> None:
+        """The only machine-readable discount Silpo exposes."""
+        cart = ResolvedCart(
+            lines=[resolved(unit_price=Decimal("39.99"), old_price=Decimal("60.99"), qty=2)]
+        )
+        out = apply_savings(cart)
+        assert out.estimated_savings == Decimal("42.00")
+        assert len(out.savings_notes) == 1
+
+    def test_undiscounted_lines_contribute_nothing(self) -> None:
+        assert apply_savings(ResolvedCart(lines=[resolved()])).estimated_savings == Decimal("0")
+
+    def test_unavailable_lines_are_excluded(self) -> None:
+        cart = ResolvedCart(
+            lines=[resolved(unit_price=Decimal("1"), old_price=Decimal("5"), unavailable=True)]
+        )
+        assert apply_savings(cart).estimated_savings == Decimal("0")
+
+    def test_old_price_below_current_is_ignored(self) -> None:
+        cart = ResolvedCart(lines=[resolved(unit_price=Decimal("10"), old_price=Decimal("8"))])
+        assert apply_savings(cart).estimated_savings == Decimal("0")
+
+
+class TestCoupons:
+    def test_active_coupons_become_readable_notes(self) -> None:
+        notes = describe_coupons(
+            [{"active": True, "description": "−25% на каву", "limitText": "до 31.08"}]
+        )
+        assert notes == ["−25% на каву (до 31.08)"]
+
+    def test_inactive_coupons_are_skipped(self) -> None:
+        assert describe_coupons([{"active": False, "description": "x"}]) == []
+
+    def test_coupons_are_not_matched_to_cart_lines(self) -> None:
+        """Silpo publishes no coupon-to-product mapping; claiming one would be
+        invention. The signature takes no cart, which is the point."""
+        import inspect
+
+        assert "cart" not in inspect.signature(describe_coupons).parameters
+
+
+class TestBudget:
+    def test_no_cap_is_identity(self) -> None:
+        cart = ResolvedCart(lines=[resolved()], total=Decimal("500"))
+        assert apply_budget(cart, None) == cart
+
+    def test_under_cap_is_unchanged(self) -> None:
+        cart = ResolvedCart(lines=[resolved()], total=Decimal("500"))
+        assert apply_budget(cart, 2000).warnings == []
+
+    def test_over_cap_is_flagged_with_the_overage(self) -> None:
+        cart = ResolvedCart(lines=[resolved()], total=Decimal("2400"))
+        assert apply_budget(cart, 2000).warnings == ["over_budget:400"]
+
+    def test_nothing_is_removed_when_over_budget(self) -> None:
+        """Going over is the user's decision; the UI offers to trim and says so."""
+        cart = ResolvedCart(lines=[resolved(), resolved(optional=True)], total=Decimal("2400"))
+        assert len(apply_budget(cart, 2000).lines) == 2
+
+    def test_spend_so_far_counts_toward_the_cap(self) -> None:
+        cart = ResolvedCart(lines=[resolved()], total=Decimal("500"))
+        assert apply_budget(cart, 2000, already_spent=Decimal("1800")).warnings == [
+            "over_budget:300"
+        ]
+
+    def test_optional_total_is_what_trimming_would_save(self) -> None:
+        cart = ResolvedCart(
+            lines=[
+                resolved(unit_price=Decimal("100"), qty=2, optional=True),
+                resolved(unit_price=Decimal("50")),
+                resolved(unit_price=Decimal("999"), optional=True, unavailable=True),
+            ]
+        )
+        assert optional_lines_total(cart) == Decimal("200")
+
+
+class TestPipelineOrder:
+    async def test_full_pipeline_produces_a_coherent_cart(self) -> None:
+        basket = draft(
+            line("молоко", 2),
+            line("арахісова паста"),
+            line("торт", optional=True),
+        )
+        mcp = FakeSilpo(
+            {
+                "молоко": [product("Молоко", 39.99, old_price=60.99)],
+                "торт": [product("Торт", 219.00)],
+            }
+        )
+        filtered = apply_restrictions(basket, ["арахіс"])
+        cart = await resolve_basket(filtered, mcp, CONTEXT)
+        cart = apply_savings(cart)
+        cart = apply_budget(cart, 200)
+
+        assert [ln.name for ln in cart.lines] == ["Молоко", "Торт"]
+        assert cart.estimated_savings == Decimal("42.00")
+        assert any(w.startswith("excluded:") for w in cart.warnings)
+        assert any(w.startswith("over_budget:") for w in cart.warnings)
+
+    @pytest.mark.parametrize("cap", [None, 10_000])
+    async def test_pipeline_is_clean_when_nothing_goes_wrong(self, cap: int | None) -> None:
+        mcp = FakeSilpo({"молоко": [product("Молоко", 39.99)]})
+        cart = apply_budget(
+            apply_savings(await resolve_basket(draft(line("молоко")), mcp, CONTEXT)), cap
+        )
+        assert cart.warnings == []

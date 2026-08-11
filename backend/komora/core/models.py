@@ -32,6 +32,30 @@ class DraftBasket(BaseModel):
     title: str
     intent: str
     lines: list[DraftLine]
+    warnings: list[str] = Field(default_factory=list)
+    """Carried forward into the ResolvedCart — e.g. a line dropped by a restriction."""
+
+
+class SearchContext(BaseModel):
+    """Branch and delivery context, without which Silpo will not search.
+
+    `find_products_batch` requires all four, and they come from the user's cart:
+    `cart.shipments[0].branchId`, `cart.deliveryType`, `cart.timeslot.start/.end`.
+    Confirmed live 2026-08-11 — see spec §3.1.
+    """
+
+    branch_id: str
+    delivery_type: str
+    timeslot_start: str
+    timeslot_end: str
+
+    def as_tool_args(self) -> dict[str, str]:
+        return {
+            "branchId": self.branch_id,
+            "deliveryType": self.delivery_type,
+            "timeslotStart": self.timeslot_start,
+            "timeslotEnd": self.timeslot_end,
+        }
 
 
 class ResolvedLine(BaseModel):
@@ -43,6 +67,10 @@ class ResolvedLine(BaseModel):
     qty: float
     unit: str
     unit_price: Decimal
+    old_price: Decimal | None = None
+    """Silpo's pre-discount price when the product is on promotion. The discount is
+    already applied to `unit_price`, so `old_price - unit_price` is the real saving —
+    the only machine-readable discount data Silpo exposes."""
     reason_kind: ReasonKind
     reason_text: str
     substituted_from: str | None = None
