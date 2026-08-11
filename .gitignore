@@ -35,3 +35,6 @@ Thumbs.db
 # tests/fixtures/mcp/*.json IS committed, but only after scrubbing PII.
 scratch/
 *.local.json
+
+# Local artefacts from scripts/verify_mcp.py
+backend/verify.db
