@@ -18,15 +18,12 @@ a loopback callback registers as a `native` client per RFC 8252. A deployed Komo
 still needs a public HTTPS callback; this script does not.
 
 USAGE
-    export KOMORA_PUBLIC_BASE_URL=http://localhost:8000
-    export KOMORA_TOKEN_ENCRYPTION_KEY=$(uv run python -c \
-        "import base64,os;print(base64.urlsafe_b64encode(os.urandom(32)).decode())")
+    Configuration comes from backend/.env — no shell exports, so this works the same
+    in PowerShell and bash. Keeping the encryption key in a file also matters: a key
+    regenerated per run cannot decrypt the tokens the previous run stored.
 
-    # read-only first
-    uv run python scripts/verify_mcp.py
-
-    # then the cart probe, once the reads look right
-    uv run python scripts/verify_mcp.py --probe-cart
+        uv run python scripts/verify_mcp.py                # read-only first
+        uv run python scripts/verify_mcp.py --probe-cart   # then the cart probe
 """
 
 import argparse
@@ -40,6 +37,7 @@ from pathlib import Path
 from typing import Any
 
 import uvicorn
+from dotenv import load_dotenv
 
 from komora.api.app import create_app
 from komora.core.crypto import TokenCipher
@@ -131,10 +129,15 @@ async def serve_callback(bridge: AuthorizationBridge, port: int) -> asyncio.Task
 
 
 async def main(probe_cart: bool, port: int) -> int:
-    base_url = os.environ.get("KOMORA_PUBLIC_BASE_URL")
+    base_url = os.environ.get("KOMORA_PUBLIC_BASE_URL", "http://localhost:8000")
     key = os.environ.get("KOMORA_TOKEN_ENCRYPTION_KEY")
-    if not base_url or not key:
-        print("Set KOMORA_PUBLIC_BASE_URL and KOMORA_TOKEN_ENCRYPTION_KEY first (see docstring).")
+    if not key:
+        print(
+            "KOMORA_TOKEN_ENCRYPTION_KEY is not set.\n"
+            "Add it to backend/.env — generate one with:\n"
+            '  uv run python -c "import base64,os;'
+            'print(base64.urlsafe_b64encode(os.urandom(32)).decode())"'
+        )
         return 2
 
     server_url = os.environ.get("KOMORA_SILPO_MCP_URL", "https://mcp.silpo.ua/mcp")
@@ -307,6 +310,11 @@ async def main(probe_cart: bool, port: int) -> int:
 
 
 if __name__ == "__main__":
+    # Real environment variables win; .env fills the rest. Works identically in
+    # PowerShell and bash, which shell-export instructions do not. Loaded before the
+    # event loop starts rather than inside it.
+    load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--probe-cart",
