@@ -234,6 +234,30 @@ This is also the clearest evidence yet for the promotion gate in §6: A and B wo
 have passed a "did it call the right tool" check, and B would have passed a "schema
 validates" check too if the schema had allowed nulls.
 
+### 3.2 Hiding the context parameters fixed both problems [LIVE]
+
+`find_products_batch` requires `branchId`, `deliveryType`, `timeslotStart` and
+`timeslotEnd` — none of which a model can know. The agent loop now **strips those from
+the declarations and injects them at dispatch**, so the model sees
+`find_products_batch(products: string[])`.
+
+Re-running case B through the real agent loop with 7 tools:
+
+```
+BASKET: Продукти до чаю та сніданку
+  молоко          x1  Основа для сніданку або кави.
+  хліб            x1  Свіжий хліб до обіду.
+  випічка до чаю  x1  Солодка випічка або печиво до чаю.
+```
+
+Correct — and note `description` is now populated, where the same model with six
+*unstripped* tools returned `null` for every line. Removing four required parameters
+per schema recovered nested-output adherence, not merely the stalling.
+
+The lesson generalises: **schema surface area, not tool count, is what small models
+choke on.** Anything the application already knows should never appear in a
+declaration.
+
 ---
 
 ## 4. The numbers that decide it [BENCH]
