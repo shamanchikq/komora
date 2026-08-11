@@ -1,0 +1,286 @@
+"""Per-user OAuth against Silpo's MCP server.
+
+The SDK's OAuthClientProvider is built for a single interactive CLI user. Komora
+serves many Telegram users from one process, which breaks three of its assumptions —
+each has a test here.
+"""
+
+import asyncio
+import base64
+import os
+import time
+
+import pytest
+from mcp.client.auth import OAuthClientProvider
+from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
+from sqlalchemy.ext.asyncio import async_sessionmaker
+
+from komora.core.crypto import TokenCipher
+from komora.core.mcp.auth import (
+    AuthorizationBridge,
+    DBTokenStorage,
+    PersistentOAuthClientProvider,
+    build_client_metadata,
+)
+from komora.db.repo import OAuthClientRepo, UserRepo
+
+KEY = base64.urlsafe_b64encode(os.urandom(32)).decode()
+USER, OTHER_USER = 4242, 9999
+SERVER = "https://mcp.silpo.ua/mcp"
+
+
+def storage_for(sessions: async_sessionmaker, telegram_id: int = USER) -> DBTokenStorage:
+    return DBTokenStorage(
+        telegram_id=telegram_id,
+        users=UserRepo(sessions),
+        clients=OAuthClientRepo(sessions),
+        cipher=TokenCipher(KEY),
+    )
+
+
+def a_token(**kw: object) -> OAuthToken:
+    return OAuthToken.model_validate(
+        {"access_token": "at", "token_type": "Bearer", "expires_in": 3600, "refresh_token": "rt"}
+        | kw
+    )
+
+
+class TestDBTokenStorage:
+    async def test_no_tokens_before_linking(self, sessions: async_sessionmaker) -> None:
+        assert await storage_for(sessions).get_tokens() is None
+
+    async def test_token_roundtrip(self, sessions: async_sessionmaker) -> None:
+        storage = storage_for(sessions)
+        await storage.set_tokens(a_token())
+        loaded = await storage.get_tokens()
+        assert loaded is not None
+        assert loaded.access_token == "at"
+        assert loaded.refresh_token == "rt"
+
+    async def test_tokens_are_encrypted_at_rest(self, sessions: async_sessionmaker) -> None:
+        await storage_for(sessions).set_tokens(a_token())
+        blob, _ = await UserRepo(sessions).get_token_blob(USER)
+        assert blob is not None
+        assert b"at" not in blob and b"rt" not in blob
+
+    async def test_tokens_are_bound_to_their_owner(self, sessions: async_sessionmaker) -> None:
+        """A blob copied into another user's row must not decrypt into their session."""
+        await storage_for(sessions, USER).set_tokens(a_token())
+        blob, expires = await UserRepo(sessions).get_token_blob(USER)
+        assert blob is not None
+        await UserRepo(sessions).set_token_blob(OTHER_USER, blob, expires)
+
+        with pytest.raises(Exception):  # noqa: B017
+            await storage_for(sessions, OTHER_USER).get_tokens()
+
+    async def test_absolute_expiry_is_persisted_for_reload(
+        self, sessions: async_sessionmaker
+    ) -> None:
+        """OAuthToken has only a relative expires_in; after a restart it is unusable."""
+        storage = storage_for(sessions)
+        await storage.set_tokens(a_token(expires_in=3600))
+
+        fresh = storage_for(sessions)  # simulates a new process
+        assert fresh.loaded_expiry_timestamp is None, "unknown until tokens are read"
+        await fresh.get_tokens()
+        assert fresh.loaded_expiry_timestamp is not None
+        assert abs(fresh.loaded_expiry_timestamp - (time.time() + 3600)) < 5
+
+    async def test_token_without_expiry_has_no_timestamp(
+        self, sessions: async_sessionmaker
+    ) -> None:
+        storage = storage_for(sessions)
+        await storage.set_tokens(a_token(expires_in=None))
+        fresh = storage_for(sessions)
+        await fresh.get_tokens()
+        assert fresh.loaded_expiry_timestamp is None
+
+    async def test_tokens_are_scoped_per_user(self, sessions: async_sessionmaker) -> None:
+        await storage_for(sessions, USER).set_tokens(a_token(access_token="mine"))
+        assert await storage_for(sessions, OTHER_USER).get_tokens() is None
+
+
+class TestClientRegistrationIsShared:
+    """get/set_client_info is the APP-WIDE DCR registration, not per-user state.
+
+    Storing it per user would register a new OAuth client with Silpo for every
+    Telegram user — hundreds of junk registrations, and likely a ban.
+    """
+
+    async def test_registration_written_by_one_user_is_seen_by_another(
+        self, sessions: async_sessionmaker
+    ) -> None:
+        await storage_for(sessions, USER).set_client_info(
+            OAuthClientInformationFull(client_id="shared-client", redirect_uris=[])
+        )
+        seen = await storage_for(sessions, OTHER_USER).get_client_info()
+        assert seen is not None and seen.client_id == "shared-client"
+
+    async def test_absent_before_registration(self, sessions: async_sessionmaker) -> None:
+        assert await storage_for(sessions).get_client_info() is None
+
+
+class TestExpiredTokenHandling:
+    """Upstream bug #3250, open in mcp 2.0.0.
+
+    `_initialize()` restores tokens but not `token_expiry_time`, and
+    `is_token_valid()` reads `not self.token_expiry_time` — so a None expiry makes an
+    expired token look valid. The stale token is sent, Silpo 401s, and the SDK runs a
+    full interactive login instead of refreshing. We rebuild a provider per request,
+    so users would be asked to re-link constantly.
+    """
+
+    @staticmethod
+    async def _storage_with_expired_token(sessions: async_sessionmaker) -> DBTokenStorage:
+        await storage_for(sessions).set_tokens(a_token(expires_in=-3600))
+        storage = storage_for(sessions)
+        await storage.get_tokens()
+        return storage
+
+    async def test_stock_provider_wrongly_reports_an_expired_token_as_valid(
+        self, sessions: async_sessionmaker
+    ) -> None:
+        """Pins the upstream behaviour. If this ever fails, #3250 was fixed and
+        PersistentOAuthClientProvider can be deleted."""
+        storage = await self._storage_with_expired_token(sessions)
+        provider = OAuthClientProvider(
+            server_url=SERVER,
+            client_metadata=build_client_metadata("https://komora.example"),
+            storage=storage,
+        )
+        await provider._initialize()
+
+        assert provider.context.token_expiry_time is None
+        assert provider.context.is_token_valid() is True, "the bug we work around"
+
+    async def test_our_provider_correctly_reports_it_as_expired(
+        self, sessions: async_sessionmaker
+    ) -> None:
+        storage = await self._storage_with_expired_token(sessions)
+        provider = PersistentOAuthClientProvider(
+            server_url=SERVER,
+            client_metadata=build_client_metadata("https://komora.example"),
+            storage=storage,
+        )
+        await provider._initialize()
+
+        assert provider.context.token_expiry_time is not None
+        assert provider.context.is_token_valid() is False
+        assert provider.context.can_refresh_token() is False, "no client_info registered yet"
+
+    async def test_valid_token_stays_valid(self, sessions: async_sessionmaker) -> None:
+        await storage_for(sessions).set_tokens(a_token(expires_in=3600))
+        storage = storage_for(sessions)
+        provider = PersistentOAuthClientProvider(
+            server_url=SERVER,
+            client_metadata=build_client_metadata("https://komora.example"),
+            storage=storage,
+        )
+        await provider._initialize()
+        assert provider.context.is_token_valid() is True
+
+
+class TestClientMetadata:
+    def test_is_a_web_client_not_a_native_one(self) -> None:
+        """The SDK defaults to `native`, meant for CLIs with loopback redirects.
+        A strict authorization server may reject an https redirect_uri under it."""
+        metadata = build_client_metadata("https://komora.example")
+        assert metadata.application_type == "web"
+
+    def test_redirect_uri_points_at_our_callback(self) -> None:
+        metadata = build_client_metadata("https://komora.example")
+        assert str(metadata.redirect_uris[0]) == "https://komora.example/auth/silpo/callback"
+
+    def test_trailing_slash_does_not_double_up(self) -> None:
+        metadata = build_client_metadata("https://komora.example/")
+        assert str(metadata.redirect_uris[0]) == "https://komora.example/auth/silpo/callback"
+
+    def test_requests_refresh_tokens(self) -> None:
+        assert "refresh_token" in build_client_metadata("https://k.example").grant_types
+
+
+class TestAuthorizationBridge:
+    """The SDK generates `state` itself and `callback_handler()` takes no arguments,
+    so `state` — recovered from the authorization URL — is the only thing that can
+    route an incoming callback to the right waiting coroutine.
+    """
+
+    async def test_redirect_handler_sends_the_url_instead_of_opening_a_browser(self) -> None:
+        bridge = AuthorizationBridge()
+        sent: list[tuple[int, str]] = []
+
+        async def send(telegram_id: int, url: str) -> None:
+            sent.append((telegram_id, url))
+
+        redirect, _ = bridge.handlers(USER, send)
+        await redirect("https://mcp.silpo.ua/authorize?state=abc123&client_id=x")
+
+        assert sent == [(USER, "https://mcp.silpo.ua/authorize?state=abc123&client_id=x")]
+        assert bridge.pending_states() == ["abc123"]
+
+    async def test_callback_resolves_the_waiting_handler(self) -> None:
+        bridge = AuthorizationBridge()
+
+        async def send(telegram_id: int, url: str) -> None:
+            return None
+
+        redirect, callback = bridge.handlers(USER, send)
+        await redirect("https://s/authorize?state=st1")
+
+        waiter = asyncio.create_task(callback())
+        await asyncio.sleep(0)
+        assert bridge.resolve("st1", code="the-code", iss="https://mcp.silpo.ua") is True
+
+        result = await asyncio.wait_for(waiter, timeout=2)
+        assert result.code == "the-code"
+        assert result.state == "st1"
+        assert result.iss == "https://mcp.silpo.ua", "iss must be forwarded (RFC 9207)"
+        assert bridge.pending_states() == [], "resolved entries are cleaned up"
+
+    async def test_unknown_state_is_rejected(self) -> None:
+        assert AuthorizationBridge().resolve("never-seen", code="c") is False
+
+    async def test_authorization_url_without_state_is_rejected(self) -> None:
+        bridge = AuthorizationBridge()
+
+        async def send(telegram_id: int, url: str) -> None:
+            return None
+
+        redirect, _ = bridge.handlers(USER, send)
+        with pytest.raises(ValueError, match="state"):
+            await redirect("https://mcp.silpo.ua/authorize?client_id=x")
+
+    async def test_waiting_times_out_and_cleans_up(self) -> None:
+        bridge = AuthorizationBridge(timeout_seconds=0.05)
+
+        async def send(telegram_id: int, url: str) -> None:
+            return None
+
+        redirect, callback = bridge.handlers(USER, send)
+        await redirect("https://s/authorize?state=slow")
+
+        with pytest.raises(TimeoutError):
+            await callback()
+        assert bridge.pending_states() == [], "a timed-out entry must not leak"
+
+    async def test_concurrent_users_do_not_cross_wires(self) -> None:
+        """Two people linking at once must each get their own code."""
+        bridge = AuthorizationBridge()
+
+        async def send(telegram_id: int, url: str) -> None:
+            return None
+
+        redirect_a, callback_a = bridge.handlers(USER, send)
+        redirect_b, callback_b = bridge.handlers(OTHER_USER, send)
+        await redirect_a("https://s/authorize?state=state-a")
+        await redirect_b("https://s/authorize?state=state-b")
+
+        task_a = asyncio.create_task(callback_a())
+        task_b = asyncio.create_task(callback_b())
+        await asyncio.sleep(0)
+
+        bridge.resolve("state-b", code="code-b")
+        bridge.resolve("state-a", code="code-a")
+
+        assert (await asyncio.wait_for(task_a, 2)).code == "code-a"
+        assert (await asyncio.wait_for(task_b, 2)).code == "code-b"
