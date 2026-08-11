@@ -96,11 +96,20 @@ def root_causes(exc: BaseException) -> list[BaseException]:
     return [exc]
 
 
-def dump(name: str, payload: Any) -> None:
+def dump(name: str, payload: Any, *, scrub: bool = True) -> None:
+    """Write a fixture. `scrub=False` only for payloads that are pure API definitions.
+
+    Tool schemas contain no user data, and running them through the sanitizer is
+    actively harmful: `silpo_find_address` declares a property named `address`, which
+    key-based redaction destroys.
+    """
     FIXTURES.mkdir(parents=True, exist_ok=True)
     path = FIXTURES / f"{name}.json"
     path.write_text(
-        json.dumps(sanitize(payload), ensure_ascii=False, indent=2, default=str) + "\n",
+        json.dumps(
+            sanitize(payload) if scrub else payload, ensure_ascii=False, indent=2, default=str
+        )
+        + "\n",
         encoding="utf-8",
     )
     print(f"{INFO} wrote {path.relative_to(Path.cwd())}")
@@ -286,7 +295,7 @@ async def main(probe_cart: bool, port: int) -> int:
                 for t in tools.tools
             ]
             check(f"list_tools returned {len(declarations)} tools", bool(declarations))
-            dump("tools", declarations)
+            dump("tools", declarations, scrub=False)  # API definitions, no user data
 
             names = {d["name"] for d in declarations}
             for expected in (

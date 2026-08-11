@@ -6,7 +6,11 @@
       "$schema": "http://json-schema.org/draft-07/schema#",
       "type": "object",
       "properties": {
-        "address": "<redacted>"
+        "address": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Address search text (e.g., \"Київ, вулиця Хрещатик, 1\")"
+        }
       },
       "required": [
         "address"
@@ -27,7 +31,16 @@
           "items": {
             "type": "object",
             "properties": {
-              "address": "<redacted>",
+              "address": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "city": {
                 "anyOf": [
                   {
@@ -38,7 +51,16 @@
                   }
                 ]
               },
-              "street": "<redacted>",
+              "street": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "houseNumber": {
                 "anyOf": [
                   {
@@ -59,8 +81,12 @@
                   }
                 ]
               },
-              "latitude": "<redacted>",
-              "longitude": "<redacted>"
+              "latitude": {
+                "type": "number"
+              },
+              "longitude": {
+                "type": "number"
+              }
             },
             "required": [
               "address",
@@ -1693,7 +1719,14 @@
           ],
           "description": "Delivery timeslot"
         },
-        "address": "<redacted>",
+        "address": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {},
+          "description": "Full address object from silpo_get_shopping_cart_by_id response (must include addressType, latitude, longitude)"
+        },
         "shipments": {
           "minItems": 1,
           "type": "array",
@@ -1928,7 +1961,65 @@
                   }
                 ]
               },
-              "address": "<redacted>",
+              "address": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "city": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "street": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "building": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "apartment": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "city",
+                      "street",
+                      "building",
+                      "apartment"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "products": {
                 "type": "array",
                 "items": {
@@ -2953,7 +3044,16 @@
                   }
                 ]
               },
-              "street": "<redacted>",
+              "street": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "building": {
                 "anyOf": [
                   {
@@ -2964,11 +3064,56 @@
                   }
                 ]
               },
-              "apartment": "<redacted>",
-              "floor": "<redacted>",
-              "entrance": "<redacted>",
-              "latitude": "<redacted>",
-              "longitude": "<redacted>",
+              "apartment": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "floor": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "entrance": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "latitude": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "longitude": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "comment": {
                 "anyOf": [
                   {
@@ -3077,11 +3222,56 @@
             "id": {
               "type": "string"
             },
-            "firstName": "<redacted>",
-            "lastName": "<redacted>",
-            "middleName": "<redacted>",
-            "phone": "<redacted>",
-            "email": "<redacted>",
+            "firstName": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "lastName": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "middleName": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "phone": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "email": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "birthday": {
               "anyOf": [
                 {
@@ -3092,7 +3282,16 @@
                 }
               ]
             },
-            "gender": "<redacted>",
+            "gender": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "status": {
               "anyOf": [
                 {
@@ -3442,9 +3641,36 @@
                   }
                 ]
               },
-              "address": "<redacted>",
-              "latitude": "<redacted>",
-              "longitude": "<redacted>",
+              "address": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "latitude": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "longitude": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "hasPickup": {
                 "anyOf": [
                   {
@@ -3629,7 +3855,9 @@
                   }
                 ]
               },
-              "phone": "<redacted>",
+              "phone": {
+                "type": "string"
+              },
               "image": {
                 "anyOf": [
                   {
@@ -3679,7 +3907,16 @@
               "slug": {
                 "type": "string"
               },
-              "dateOfBirth": "<redacted>"
+              "dateOfBirth": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
             },
             "required": [
               "id",
@@ -3739,8 +3976,14 @@
       "$schema": "http://json-schema.org/draft-07/schema#",
       "type": "object",
       "properties": {
-        "latitude": "<redacted>",
-        "longitude": "<redacted>"
+        "latitude": {
+          "type": "number",
+          "description": "Latitude coordinate"
+        },
+        "longitude": {
+          "type": "number",
+          "description": "Longitude coordinate"
+        }
       },
       "required": [
         "latitude",
@@ -3915,7 +4158,9 @@
               "title": {
                 "type": "string"
               },
-              "address": "<redacted>",
+              "address": {
+                "type": "string"
+              },
               "type": {
                 "type": "string"
               },
@@ -3925,8 +4170,12 @@
               "status": {
                 "type": "string"
               },
-              "latitude": "<redacted>",
-              "longitude": "<redacted>"
+              "latitude": {
+                "type": "number"
+              },
+              "longitude": {
+                "type": "number"
+              }
             },
             "required": [
               "id",

@@ -63,3 +63,28 @@ class TestPreserves:
     def test_scalars_pass_through(self) -> None:
         assert sanitize("plain") == "plain"
         assert sanitize(7) == 7
+
+    def test_a_schema_property_named_address_is_not_destroyed(self) -> None:
+        """Regression: this corrupted three captured tool schemas.
+
+        silpo_find_address declares a *property* called `address` whose value is a
+        schema object. Redacting by key name alone replaced the whole definition.
+        """
+        schema = {
+            "type": "object",
+            "properties": {
+                "address": {"type": "string", "description": "Address to geocode"},
+                "latitude": {"type": "number"},
+            },
+            "required": ["address"],
+        }
+        assert sanitize(schema) == schema
+
+    def test_nested_personal_data_is_still_reached(self) -> None:
+        """Only scalars are redacted — but recursion still finds the leaves."""
+        cleaned = sanitize({"address": {"street": "вул. Хрещатик", "city": "Київ"}})
+        assert cleaned["address"]["street"] == REDACTED
+        assert cleaned["address"]["city"] == "Київ", "city alone is not identifying"
+
+    def test_scalar_personal_data_is_still_redacted(self) -> None:
+        assert sanitize({"address": "вул. Хрещатик 1"})["address"] == REDACTED

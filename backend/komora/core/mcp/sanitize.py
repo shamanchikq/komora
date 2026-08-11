@@ -27,6 +27,11 @@ _SENSITIVE_KEYS: frozenset[str] = frozenset(
         # location
         "address",
         "addressline",
+        # In Silpo's payloads `locality` is a street address, not a city name. It
+        # leaked a real one into a fixture before being added here.
+        "locality",
+        "couriercomment",
+        "courriercomment",  # Silpo's own spelling
         "street",
         "house",
         "apartment",
@@ -70,12 +75,24 @@ def _is_sensitive(key: str) -> bool:
 def sanitize(value: Any) -> Any:
     """Recursively redact sensitive values, preserving structure and types.
 
-    Product fields — including `name`, `price` and `barcode` — are deliberately kept:
-    a fixture without them would be useless for testing the passes.
+    Only **scalars** are redacted. Personal data is always a leaf — a phone number, a
+    street name — never a nested structure. Redacting containers destroyed real data
+    the first time this ran: `silpo_find_address`'s JSON Schema has a *property* named
+    `address` whose value is a schema object, and it was replaced wholesale.
+
+    A genuinely nested address is still covered: recursion reaches its `street` and
+    `house` leaves and redacts those individually.
+
+    Product fields — `name`, `price`, `barcode` — are deliberately kept: a fixture
+    without them would be useless for testing the passes.
     """
     if isinstance(value, dict):
         return {
-            key: (REDACTED if _is_sensitive(str(key)) else sanitize(item))
+            key: (
+                REDACTED
+                if _is_sensitive(str(key)) and not isinstance(item, dict | list)
+                else sanitize(item)
+            )
             for key, item in value.items()
         }
     if isinstance(value, list):

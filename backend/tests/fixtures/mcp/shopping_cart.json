@@ -7,7 +7,22 @@
       "start": "2026-08-11T17:00:00+00:00",
       "end": "2026-08-11T17:30:00+00:00"
     },
-    "address": "<redacted>",
+    "address": {
+      "addressType": "self-pickup",
+      "latitude": "<redacted>",
+      "longitude": "<redacted>",
+      "courrierComment": "<redacted>",
+      "phone": "<redacted>",
+      "country": null,
+      "postCode": "<redacted>",
+      "region": null,
+      "district": null,
+      "city": "Львів",
+      "street": "<redacted>",
+      "house": "<redacted>",
+      "locality": "<redacted>",
+      "polygonId": null
+    },
     "shipments": [
       {
         "id": "d55b118b-e458-47ac-8d5d-c451cc99c8fd",
@@ -28,7 +43,7 @@
             "subTotal": 60.99,
             "subDiscount": 21,
             "total": 39.99,
-            "stock": 130,
+            "stock": 132,
             "weighted": false,
             "addToBasketStep": 1,
             "comment": null
@@ -107,6 +122,12 @@
       },
       "validations": [
         {
+          "level": "error",
+          "type": "timeslot",
+          "message": "timeslot.not_available",
+          "context": []
+        },
+        {
           "level": "info",
           "type": "promotion",
           "message": "promotion.available",
@@ -184,7 +205,5 @@
     "bonusTotal": 0,
     "bonusRequested": null,
     "isEnabled": true
-  },
-  "checkoutWebLink": "https://silpo.ua/checkout-new",
-  "checkoutMobileLink": "https://link.silpo.ua/1hbXLDBPFJ8iiZTg7"
+  }
 }
