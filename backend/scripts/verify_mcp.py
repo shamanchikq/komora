@@ -137,38 +137,51 @@ def error_of(payload: Any) -> str | None:
     return None
 
 
-def cart_context(cart: Any) -> dict[str, Any]:
-    """Extract the branch and delivery context that product search requires.
+def cart_body(payload: Any) -> dict[str, Any]:
+    """Responses wrap the cart: {"success": true, "cart": {...}}."""
+    if isinstance(payload, dict):
+        inner = payload.get("cart")
+        return inner if isinstance(inner, dict) else payload
+    return {}
 
-    `silpo_find_products_batch` needs branchId, deliveryType, timeslotStart and
-    timeslotEnd, and the schema says the branch comes from the cart — which is why
-    Silpo's docs call reading the cart "always the first step".
+
+def cart_context(payload: Any) -> dict[str, Any]:
+    """The branch and delivery context product search requires.
+
+    Field locations are not guessed — silpo_get_shopping_cart_by_id's own description
+    documents them:
+        cart.shipments[0].branchId  -> branchId
+        cart.deliveryType           -> deliveryType
+        cart.timeslot.start / .end  -> timeslotStart / timeslotEnd
     """
-    if not isinstance(cart, dict):
-        return {}
-    flat: dict[str, Any] = {}
-
-    def walk(node: Any, depth: int = 0) -> None:
-        if depth > 3 or not isinstance(node, dict):
-            return
-        for key, value in node.items():
-            if key in {"branchId", "deliveryType", "timeslotStart", "timeslotEnd"}:
-                flat.setdefault(key, value)
-            elif isinstance(value, dict):
-                walk(value, depth + 1)
-
-    walk(cart)
-    return flat
+    cart = cart_body(payload)
+    shipments = [s for s in (cart.get("shipments") or []) if isinstance(s, dict)]
+    timeslot = cart.get("timeslot") or {}
+    context = {
+        "branchId": shipments[0].get("branchId") if shipments else None,
+        "deliveryType": cart.get("deliveryType"),
+        "timeslotStart": timeslot.get("start"),
+        "timeslotEnd": timeslot.get("end"),
+    }
+    return {key: value for key, value in context.items() if value}
 
 
-def line_items(cart: Any) -> list[dict[str, Any]]:
-    if not isinstance(cart, dict):
-        return []
-    for key in ("products", "items", "cartProducts", "lines"):
-        value = cart.get(key)
-        if isinstance(value, list):
-            return [item for item in value if isinstance(item, dict)]
-    return []
+def line_items(payload: Any) -> list[dict[str, Any]]:
+    """Cart lines live under cart.shipments[].products[], not at the top level."""
+    lines: list[dict[str, Any]] = []
+    for shipment in cart_body(payload).get("shipments") or []:
+        if isinstance(shipment, dict):
+            lines.extend(p for p in (shipment.get("products") or []) if isinstance(p, dict))
+    return lines
+
+
+# Silpo's own tool descriptions insist on this: never re-add carrier bags when
+# reordering from a cart.
+_PLASTIC_BAGS = ("пакет", "пакунок")
+
+
+def is_plastic_bag(product: dict[str, Any]) -> bool:
+    return any(word in str(product.get("name", "")).lower() for word in _PLASTIC_BAGS)
 
 
 def fingerprint(cart: Any) -> dict[str, Any]:
@@ -313,7 +326,13 @@ async def main(probe_cart: bool, port: int) -> int:
                     if isinstance(value, list):
                         pool.extend(v for v in value if isinstance(v, dict))
             candidates = [
-                p for p in pool if isinstance(p, dict) and p.get("productId") and p.get("companyId")
+                p
+                for p in pool
+                if isinstance(p, dict)
+                and p.get("productId")
+                and p.get("companyId")
+                and not is_plastic_bag(p)
+                and (p.get("stock") is None or p["stock"] >= 1)
             ]
             if not check(
                 "A1: two products available to test with",

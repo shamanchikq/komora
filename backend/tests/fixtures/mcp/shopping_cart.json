@@ -1,1 +1,190 @@
-"MCP error -32602: Input validation error: Invalid arguments for tool silpo_get_shopping_cart_by_id: [\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"shoppingCartId\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  }\n]"
+{
+  "success": true,
+  "cart": {
+    "id": "5bee1a17-07ac-4ec4-bb34-656fdc8d6bb1",
+    "deliveryType": "SelfPickup",
+    "timeslot": {
+      "start": "2026-08-11T17:00:00+00:00",
+      "end": "2026-08-11T17:30:00+00:00"
+    },
+    "address": "<redacted>",
+    "shipments": [
+      {
+        "id": "d55b118b-e458-47ac-8d5d-c451cc99c8fd",
+        "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+        "branchId": "1edb6b13-6640-6072-b10a-0b7012e7f9f8",
+        "products": [
+          {
+            "productId": "1ed075da-6532-6146-a995-dd63763181f9",
+            "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+            "branchId": "1edb6b13-6640-6072-b10a-0b7012e7f9f8",
+            "slug": "moloko-selianske-pytne-ultrapasteryzovane-2-5-28734",
+            "name": "Молоко «Селянське» питне ультрапастеризоване 2,5%",
+            "image": "https://images.silpo.ua/v2/products/500x500/webp/5f77614d-d5bb-4465-a1ea-9e86d33a3e24.png",
+            "ratio": "900г",
+            "quantity": 1,
+            "price": 39.99,
+            "oldPrice": 60.99,
+            "subTotal": 60.99,
+            "subDiscount": 21,
+            "total": 39.99,
+            "stock": 130,
+            "weighted": false,
+            "addToBasketStep": 1,
+            "comment": null
+          },
+          {
+            "productId": "1ed076a3-7c42-64de-90ef-45a3653d0710",
+            "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+            "branchId": "1edb6b13-6640-6072-b10a-0b7012e7f9f8",
+            "slug": "maslo-solodkovershkove-molokiia-ekstra-82-878789",
+            "name": "Масло солодковершкове «Молокія» екстра 82%",
+            "image": "https://images.silpo.ua/v2/products/500x500/webp/e629c2b4-0dac-428e-877c-a0d78bf50795.png",
+            "ratio": "180г",
+            "quantity": 1,
+            "price": 74.99,
+            "oldPrice": 129,
+            "subTotal": 129,
+            "subDiscount": 54.01,
+            "total": 74.99,
+            "stock": 18,
+            "weighted": false,
+            "addToBasketStep": 1,
+            "comment": null
+          },
+          {
+            "productId": "1edafafd-7d1b-649e-bd3d-5f8022da6d6b",
+            "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+            "branchId": "1edb6b13-6640-6072-b10a-0b7012e7f9f8",
+            "slug": "morozyvo-try-vedmedi-monaco-shokolad-apelsyn-lotok-752962",
+            "name": "Морозиво «Три ведмеді» Monaco шоколад-апельсин, лоток",
+            "image": "https://images.silpo.ua/v2/products/500x500/webp/a1542265-76f1-4d45-a80d-78d28ea5f662.png",
+            "ratio": "500г",
+            "quantity": 1,
+            "price": 139,
+            "oldPrice": 289,
+            "subTotal": 289,
+            "subDiscount": 150,
+            "total": 139,
+            "stock": 3,
+            "weighted": false,
+            "addToBasketStep": 1,
+            "comment": null
+          }
+        ]
+      }
+    ],
+    "feedbackContacts": "call",
+    "feedbackChanges": "disapprovedChanges",
+    "promoCode": null,
+    "packageType": "UseSilpoBags",
+    "paymentType": "Unknown",
+    "certificates": [],
+    "isAdultConfirmed": false,
+    "calculation": {
+      "total": 262.98,
+      "totalAfterDiscounts": 262.98,
+      "certificatesTotal": 0,
+      "subTotal": 487.99,
+      "subDiscount": 225.01,
+      "productsTotal": 253.98,
+      "delivery": {
+        "total": 0,
+        "totalWeight": 1.65,
+        "deliveryExpressByPromise": null
+      },
+      "promoCode": null,
+      "payment": {
+        "availableTypes": [
+          "Cashdesk",
+          "Card",
+          "Masterpass",
+          "ApplePay",
+          "GooglePay",
+          "BVR",
+          "B2B"
+        ]
+      },
+      "validations": [
+        {
+          "level": "info",
+          "type": "promotion",
+          "message": "promotion.available",
+          "context": {
+            "products": [
+              {
+                "productExternalId": 1016935,
+                "promoId": 303326,
+                "maxCount": 1,
+                "count": 0,
+                "price": 0.19,
+                "productData": {
+                  "id": "1f10b919-577a-62d4-aefe-87e64b0d47e0",
+                  "title": "Чай чорний Моршинська холодний зі смаком лимону та лемонграсу з/б",
+                  "icon": "20670a1e-841f-4baf-bc33-f34b57a13f97.png",
+                  "price": 42.99,
+                  "oldPrice": null,
+                  "offerId": "1f1231ab-b2db-68e2-b5a4-d7ef6078de4c",
+                  "ratio": "шт",
+                  "sectionSlug": "kholodni-chai-ta-kava-58",
+                  "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+                  "branchId": "1edb6b13-6640-6072-b10a-0b7012e7f9f8",
+                  "deliveryType": "SelfPickup",
+                  "externalProductId": 1016935,
+                  "promotions": [],
+                  "specialPrices": [],
+                  "sections": [
+                    "kholodni-chai-ta-kava-58"
+                  ],
+                  "createdAt": "2026-03-18T22:35:14+00:00",
+                  "updatedAt": "2026-08-10T21:36:00+00:00",
+                  "slug": "chai-chornyi-morshynska-kholodnyi-zi-smakom-lymonu-ta-lemongrasu-z-b-1016935",
+                  "addToBasketStep": 1,
+                  "stock": 26,
+                  "displayPrice": 42.99,
+                  "displayOldPrice": null,
+                  "displayRatio": "0,33л",
+                  "guestProductRating": 4,
+                  "guestProductRatingCount": 12,
+                  "classifierSapId": "1f1480b5-9176-66d8-adfb-813f783cc423",
+                  "originType": null,
+                  "brandId": "1edc4112-5f77-6242-a746-d5e18d22efad",
+                  "brandTitle": "Моршинська",
+                  "weighted": false,
+                  "blurForUnderAged": false,
+                  "modifier": null,
+                  "promos": [],
+                  "untappdRating": null,
+                  "vivinoRating": null,
+                  "isTobacco": false
+                }
+              }
+            ],
+            "promoName": "PA_SAMPLES_PROMO"
+          }
+        },
+        {
+          "level": "info",
+          "type": "order",
+          "message": "order.payment_types.disabled",
+          "context": {
+            "reason": "not_available_for_total",
+            "paymentTypes": [
+              "BNPL"
+            ],
+            "total": 262.98,
+            "minTotal": 1000
+          }
+        }
+      ]
+    }
+  },
+  "loyalty": {
+    "bonusAvailable": 0,
+    "bonusTotal": 0,
+    "bonusRequested": null,
+    "isEnabled": true
+  },
+  "checkoutWebLink": "https://silpo.ua/checkout-new",
+  "checkoutMobileLink": "https://link.silpo.ua/1hbXLDBPFJ8iiZTg7"
+}
