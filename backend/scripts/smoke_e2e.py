@@ -49,6 +49,7 @@ from komora.core.mcp.gateway import SilpoGateway
 from komora.core.mcp.payload import root_causes
 from komora.core.mcp.silpo import SilpoSession
 from komora.core.models import DraftBasket, DraftLine
+from komora.core.passes.categories import fetch_categories
 from komora.core.pipeline import (
     CartContextMissing,
     build_cart,
@@ -83,6 +84,17 @@ FALLBACK_BASKET = DraftBasket(
 """Used with --no-llm, so the Silpo half can be tested without a model at all."""
 
 
+async def _all_categories(silpo: SilpoSession, context: Any) -> dict[str, Any]:
+    """Shaped like the endpoint's own response so the fixture stays faithful."""
+    found = await fetch_categories(silpo, context)
+    return {
+        "success": True,
+        "summary": f"Found {len(found)} categories (total: {len(found)})",
+        "categories": found,
+        "meta": {"limit": len(found), "offset": 0, "total": len(found)},
+    }
+
+
 def banner(title: str) -> None:
     print(f"\n{'-' * 70}\n{title}\n{'-' * 70}")
 
@@ -104,7 +116,8 @@ async def capture_uncaptured(silpo: SilpoSession, context: Any) -> None:
                 start=context.timeslot_start,
             ),
         ),
-        ("categories", silpo.get_categories(context, limit=1000)),
+        # Paginated: the tree is 1010 rows and `limit` is capped at 1000.
+        ("categories", _all_categories(silpo, context)),
         # `category` takes the **slug**; an id returns "No products found" and no error.
         (
             "get_products_by_category",

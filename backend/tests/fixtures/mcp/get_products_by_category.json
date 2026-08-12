@@ -1,6 +1,6 @@
 {
   "success": true,
-  "summary": "Found 10 products (showing 5)",
+  "summary": "Found 12 products (showing 5)",
   "products": [
     {
       "id": "1ed075ea-e448-69d4-a8d3-dd63763181f9",
@@ -8,7 +8,7 @@
       "slug": "yaitse-yasensvit-spravzhni-veletni-s0-181642",
       "price": 64.34,
       "oldPrice": null,
-      "stock": 59,
+      "stock": 90,
       "available": true,
       "image": "https://images.silpo.ua/v2/products/500x500/webp/64010c12-d583-4b05-a9fc-56461557f6f6.png",
       "weighted": false,
@@ -24,7 +24,7 @@
       "slug": "yaitse-molodylne-vidbirne-69262",
       "price": 79.19,
       "oldPrice": null,
-      "stock": 6,
+      "stock": 28,
       "available": true,
       "image": "https://images.silpo.ua/v2/products/500x500/webp/20aede6a-2217-475f-851c-1fd54c19d9f1.png",
       "weighted": false,
@@ -35,20 +35,20 @@
       "externalProductId": 69262
     },
     {
-      "id": "1ed0767e-fa52-6f6a-a1a8-dd63763181f9",
-      "name": "Яйця курячі «Квочка» Premium С0",
-      "slug": "yaitsia-kuriachi-kvochka-premium-s0-812568",
-      "price": 79.19,
+      "id": "1ed07670-93fb-6086-94ae-eb0bb71c4ffc",
+      "name": "Яйця «Від доброї курки» «Формула здоров'я»",
+      "slug": "yaitsia-vid-dobroi-kurky-formula-zdorov-ia-779342",
+      "price": 98.99,
       "oldPrice": null,
-      "stock": 1,
+      "stock": 2,
       "available": true,
-      "image": "https://images.silpo.ua/v2/products/500x500/webp/cd0b1617-dac6-4a01-9f7c-8907de100f1f.png",
+      "image": "https://images.silpo.ua/v2/products/500x500/webp/492f5250-7933-47e5-8d11-bf6db6fbf883.png",
       "weighted": false,
       "step": 1,
       "specialPrices": null,
       "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
       "branchId": "1edb6b13-6640-6072-b10a-0b7012e7f9f8",
-      "externalProductId": 812568
+      "externalProductId": 779342
     },
     {
       "id": "1ed07648-260a-6554-aa6e-dd63763181f9",
@@ -56,7 +56,7 @@
       "slug": "yaitsia-kuriachi-premiia-povazhnyi-rozmir-stolovi-vyshchoi-kategorii-657690",
       "price": 64.34,
       "oldPrice": null,
-      "stock": 6,
+      "stock": 63,
       "available": true,
       "image": "https://images.silpo.ua/v2/products/500x500/webp/b2dbfe30-f2b0-4b98-8bfd-919e1068bfdb.jpg",
       "weighted": false,
@@ -67,25 +67,25 @@
       "externalProductId": 657690
     },
     {
-      "id": "1ee9946f-e963-63bc-a5e9-fd43cc9a46e1",
-      "name": "Яйця курячі Від доброї курки Київська С1",
-      "slug": "yaitsia-kuriachi-vid-dobroi-kurky-kyivska-s1-942733",
-      "price": 64.89,
+      "id": "1ef72200-2b13-6e62-801f-2571ce2700cb",
+      "name": "Яйця курячі Ясенсвіт Mixed різновагові",
+      "slug": "yaitsia-kuriachi-yasensvit-mixed-riznovagovi-963047",
+      "price": 71.49,
       "oldPrice": null,
-      "stock": 1,
+      "stock": 194,
       "available": true,
-      "image": "https://images.silpo.ua/v2/products/500x500/webp/3fadbedd-1e03-457d-bea1-84e021653881.jpg",
+      "image": "https://images.silpo.ua/v2/products/500x500/webp/47e4c2c4-b17a-4803-90b9-d45bdbc8e26e.png",
       "weighted": false,
       "step": 1,
       "specialPrices": null,
       "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
       "branchId": "1edb6b13-6640-6072-b10a-0b7012e7f9f8",
-      "externalProductId": 942733
+      "externalProductId": 963047
     }
   ],
   "meta": {
     "limit": 5,
     "offset": 0,
-    "total": 10
+    "total": 12
   }
 }

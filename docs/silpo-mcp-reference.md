@@ -189,8 +189,8 @@ the tool's own description says *"Only pick slots where available=true."*
 
 ## 4.2 The category tree is the answer to "which of these did you mean"
 
-`get_categories` returns **1000** entries of `{id, parentId, slug, title}` in one call,
-and it draws distinctions free-text search cannot:
+`get_categories` returns `{id, parentId, slug, title}` and draws distinctions
+free-text search cannot:
 
 ```
 Яйця · Курячі яйця · Перепелині яйця · Фермерські яйця · Яйця інших птахів
@@ -205,6 +205,13 @@ get_products(category="kuriachi-iaitsia-4977", inStock=true, limit=5)
  "products": [ /* same fields as a search hit: id, companyId, price, stock, … */ ],
  "meta": {"limit": 5, "offset": 0, "total": 10}}
 ```
+
+**It is 1010 rows and `limit` caps at 1000 — paginate.** Asking for `limit=1000` and
+stopping returns a suspiciously round, complete-looking answer that is missing ten
+**top-level** categories, which orphans 71 of their children and makes «Вода»,
+«Побутова хімія» and «Особиста гігієна» unmatchable. Follow `meta.total` with `offset`
+(`passes/categories.py: fetch_categories`). A complete tree has **28 roots and no
+orphans**, which is the cheap way to check a capture.
 
 **`category` takes the `slug`.** Passing the `id` — which sits on the same object —
 returns `"No products found"`, with no error and no hint. `inStock: true` is worth

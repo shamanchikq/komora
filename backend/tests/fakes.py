@@ -79,6 +79,7 @@ class FakeSilpo:
         coupon_details: dict[int, dict[str, Any]] | None = None,
         restrictions: Any = None,
         category_products: list[dict[str, Any]] | None = None,
+        categories: list[dict[str, Any]] | None = None,
         slots: list[dict[str, Any]] | None = None,
         fails: set[str] | None = None,
     ) -> None:
@@ -99,7 +100,9 @@ class FakeSilpo:
         self._coupon_details = coupon_details or {}
         self._restrictions = restrictions
         self._category_products = category_products
+        self._categories = categories or []
         self.category_calls: list[str] = []
+        self.category_pages: list[tuple[int, int]] = []
         self._slots = slots
         self._fails = fails or set()
         self.add_calls: list[list[dict[str, Any]]] = []
@@ -236,7 +239,19 @@ class FakeSilpo:
         return {"success": True, "promotions": []}
 
     async def get_categories(self, context: SearchContext, **filters: Any) -> dict[str, Any]:
-        return {"success": True, "categories": []}
+        """Paginates like the real endpoint, whose `limit` caps at 1000 while the tree
+        is larger — the reason `fetch_categories` exists."""
+        self._fail_if_scripted("get_categories")
+        limit = int(filters.get("limit", 1000))
+        offset = int(filters.get("offset", 0))
+        page = self._categories[offset : offset + limit]
+        self.category_pages.append((offset, limit))
+        return {
+            "success": True,
+            "summary": f"Found {len(page)} categories (total: {len(self._categories)})",
+            "categories": page,
+            "meta": {"limit": limit, "offset": offset, "total": len(self._categories)},
+        }
 
     async def get_my_coupons(self) -> dict[str, Any]:
         """Envelope captured live: `{"success", "summary", "coupons": [...]}`."""

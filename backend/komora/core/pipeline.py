@@ -18,7 +18,7 @@ from komora.core.mcp.errors import McpError
 from komora.core.mcp.protocol import SilpoClient
 from komora.core.models import DraftBasket, ResolvedCart, ResolvedLine, SearchContext
 from komora.core.passes.budget import apply_budget
-from komora.core.passes.categories import CategoryIndex
+from komora.core.passes.categories import CategoryIndex, fetch_categories
 from komora.core.passes.promos import DEGRADED_COUPONS, apply_savings, describe_coupons
 from komora.core.passes.resolve import NOT_FOUND, resolve_basket
 from komora.core.passes.restrictions import apply_restrictions
@@ -196,7 +196,7 @@ async def _categories(
     if not cache.categories_tried:
         cache.categories_tried = True
         try:
-            cache.categories = CategoryIndex(await mcp.get_categories(context, limit=1000))
+            cache.categories = CategoryIndex(await fetch_categories(mcp, context))
         except Exception:
             cache.categories = None
     return cache.categories

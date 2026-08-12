@@ -1,6 +1,6 @@
 {
   "success": true,
-  "summary": "Found 1000 categories (total: 1010)",
+  "summary": "Found 1010 categories (total: 1010)",
   "categories": [
     {
       "id": "1edb13cb-d304-6fea-be02-53f89724fa3a",
@@ -6001,10 +6001,70 @@
       "slug": "sneky-ta-chypsy-5016",
       "title": "Снеки та чипси",
       "parentId": null
+    },
+    {
+      "id": "1edb13bf-74c7-6560-a933-53f89724fa3a",
+      "slug": "kava-chai-359",
+      "title": "Кава, чай",
+      "parentId": null
+    },
+    {
+      "id": "1edb13bf-2019-6342-897c-53f89724fa3a",
+      "slug": "napoi-52",
+      "title": "Напої",
+      "parentId": null
+    },
+    {
+      "id": "1edb13bf-bf84-61ca-a07d-53f89724fa3a",
+      "slug": "zamorozhena-produktsiia-264",
+      "title": "Заморожена продукція",
+      "parentId": null
+    },
+    {
+      "id": "1edb13bf-26a6-6df4-a019-53f89724fa3a",
+      "slug": "alkogol-22",
+      "title": "Алкоголь",
+      "parentId": null
+    },
+    {
+      "id": "1eddddfa-d4b6-6522-a18a-ad430f1e2e32",
+      "slug": "sygarety-stiky-zhuiky-4384",
+      "title": "Сигарети, стіки, жуйки",
+      "parentId": null
+    },
+    {
+      "id": "1edb13d0-8e3d-651a-9a07-53f89724fa3a",
+      "slug": "kvity-tovary-dlia-sadu-ta-gorodu-476",
+      "title": "Квіти, товари для саду та городу",
+      "parentId": null
+    },
+    {
+      "id": "1edb13bf-7cdf-6220-ae1c-53f89724fa3a",
+      "slug": "dlia-domu-567",
+      "title": "Для дому",
+      "parentId": null
+    },
+    {
+      "id": "1eebb63b-101d-6df6-b4a7-5580d1a5c9a0",
+      "slug": "gigiiena-ta-krasa-4519",
+      "title": "Гігієна та краса",
+      "parentId": null
+    },
+    {
+      "id": "1edb13bf-8f28-6c1a-9f96-53f89724fa3a",
+      "slug": "dytiachi-tovary-449",
+      "title": "Дитячі товари",
+      "parentId": null
+    },
+    {
+      "id": "1edb13bf-1f75-635a-9c3b-53f89724fa3a",
+      "slug": "dlia-tvaryn-653",
+      "title": "Для тварин",
+      "parentId": null
     }
   ],
   "meta": {
-    "limit": 1000,
+    "limit": 1010,
     "offset": 0,
     "total": 1010
   }

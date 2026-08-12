@@ -13,10 +13,41 @@ came from.
 the same object, returns "No products found" and no error at all.
 """
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from komora.core.mcp.protocol import SilpoClient
+    from komora.core.models import SearchContext
 
 MIN_TITLE_WORD = 3
 """Below this a word matches half the tree and distinguishes nothing."""
+
+PAGE = 1000
+"""`limit` is capped at 1000 by the schema, and the tree is larger than that."""
+
+MAX_PAGES = 10
+"""A backstop: a server that never advances `offset` must not loop forever."""
+
+
+async def fetch_categories(mcp: SilpoClient, context: SearchContext) -> list[dict[str, Any]]:
+    """Every category, following `meta.total` past the 1000-row page limit.
+
+    The first capture asked for `limit=1000` and stopped, which read as the whole tree
+    because 1000 is a suspiciously round and complete-looking number. It was 1000 of
+    1010, and the ten it dropped were **top-level** categories — leaving 71 of their
+    children with a `parentId` pointing at nothing, and «Вода», «Побутова хімія» and
+    «Особиста гігієна» unmatchable.
+    """
+    collected: list[dict[str, Any]] = []
+    for page in range(MAX_PAGES):
+        payload = await mcp.get_categories(context, limit=PAGE, offset=page * PAGE)
+        batch = _listed(payload)
+        collected.extend(batch)
+
+        total = (payload.get("meta") or {}).get("total") if isinstance(payload, dict) else None
+        if not batch or not isinstance(total, int) or len(collected) >= total:
+            break
+    return collected
 
 
 class CategoryIndex:

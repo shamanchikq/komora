@@ -10,7 +10,7 @@ import pathlib
 import pytest
 
 from komora.core.models import DraftBasket, DraftLine
-from komora.core.passes.categories import CategoryIndex
+from komora.core.passes.categories import MAX_PAGES, CategoryIndex, fetch_categories
 from komora.core.passes.resolve import resolve_basket
 from tests.fakes import CONTEXT, FakeSilpo, product
 
@@ -103,3 +103,53 @@ class TestResolveUsesCategories:
         mcp = FakeSilpo(CATALOGUE, category_products=IN_CATEGORY)
         await resolve_basket(basket, mcp, CONTEXT, INDEX)
         assert mcp.category_calls == ["kuriachi-iaitsia-4977"], "deduplicated"
+
+
+class TestTheCaptureIsComplete:
+    """`limit` caps at 1000 and the tree is 1010 rows. The first capture stopped at
+    1000 — a suspiciously round number that reads as "all of them" — and dropped ten
+    **top-level** categories, orphaning 71 of their children."""
+
+    def test_every_row_the_server_has(self) -> None:
+        assert len(LIVE_TREE["categories"]) == LIVE_TREE["meta"]["total"]
+
+    def test_no_category_points_at_a_parent_that_is_missing(self) -> None:
+        ids = {c["id"] for c in LIVE_TREE["categories"]}
+        orphans = [
+            c["title"]
+            for c in LIVE_TREE["categories"]
+            if c.get("parentId") and c["parentId"] not in ids
+        ]
+        assert orphans == []
+
+    @pytest.mark.parametrize("title", ["Вода", "Побутова хімія", "Особиста гігієна та здоров'я"])
+    def test_the_categories_the_truncation_lost(self, title: str) -> None:
+        assert INDEX.slug_for(title) is not None
+
+
+class TestPagination:
+    async def test_it_follows_meta_total_past_the_page_limit(self) -> None:
+        tree = [{"id": str(i), "title": f"К{i}", "slug": f"k-{i}"} for i in range(1010)]
+        mcp = FakeSilpo(categories=tree)
+        found = await fetch_categories(mcp, CONTEXT)
+        assert len(found) == 1010
+        assert mcp.category_pages == [(0, 1000), (1000, 1000)]
+
+    async def test_a_single_page_costs_one_call(self) -> None:
+        tree = [{"id": "1", "title": "К", "slug": "k"}]
+        mcp = FakeSilpo(categories=tree)
+        assert len(await fetch_categories(mcp, CONTEXT)) == 1
+        assert len(mcp.category_pages) == 1
+
+    async def test_a_server_that_never_advances_cannot_loop_forever(self) -> None:
+        """`meta.total` is the server's claim; the loop must not trust it blindly."""
+        tree = [{"id": "1", "title": "К", "slug": "k"}]
+        mcp = FakeSilpo(categories=tree)
+
+        async def stuck(context, **filters):  # type: ignore[no-untyped-def]
+            mcp.category_pages.append((filters.get("offset", 0), filters.get("limit", 0)))
+            return {"success": True, "categories": tree, "meta": {"total": 99999}}
+
+        mcp.get_categories = stuck  # type: ignore[method-assign]
+        await fetch_categories(mcp, CONTEXT)
+        assert len(mcp.category_pages) == MAX_PAGES
