@@ -102,6 +102,7 @@ class FakeSilpo:
         self._category_products = category_products
         self._categories = categories or []
         self.category_calls: list[str] = []
+        self.category_limits: list[int] = []
         self.category_pages: list[tuple[int, int]] = []
         self._slots = slots
         self._fails = fails or set()
@@ -236,6 +237,7 @@ class FakeSilpo:
         category = filters.get("category")
         if category is not None:
             self.category_calls.append(str(category))
+            self.category_limits.append(int(filters.get("limit", 0)))
         products = self._category_products if self._category_products is not None else []
         return {
             "success": True,

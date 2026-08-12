@@ -94,13 +94,24 @@ def matches(request: str, line: ResolvedLine) -> bool:
 
 
 def match_removals(
-    requests: list[str], candidates: list[ResolvedLine], *, keep: set[str] | None = None
+    requests: list[str],
+    candidates: list[ResolvedLine],
+    *,
+    keep: set[str] | None = None,
+    present: set[str] | None = None,
 ) -> list[CartRemoval]:
     """Resolve described removals against the lines Komora has already synced.
 
     `keep` holds product ids the same basket is adding. A model that names a product in
     both `lines` and `removals` — «заміни ковбаски на ковбаски пепероні» would tempt
     one — must not have Komora add it and then delete it in the same confirmation.
+
+    `present` holds what is in the Silpo cart right now. Komora's record of what it
+    synced only says what it *put* there, and a product removed last turn still matches
+    the words perfectly — so a draft would offer to remove something already gone, and
+    then silently not do it, because only the confirmation sheet ever checked. Omitting
+    this argument keeps the old, unchecked behaviour, which is why it is explicit at
+    every call site rather than optional in spirit.
 
     Every matching candidate is returned, not the best one: «прибери ковбаски» with two
     sausages in the cart means both. Ordered by the candidates, so the confirmation
@@ -110,6 +121,8 @@ def match_removals(
     out: dict[str, CartRemoval] = {}
     for line in candidates:
         if line.product_id in protected or line.product_id in out:
+            continue
+        if present is not None and line.product_id not in present:
             continue
         if any(matches(request, line) for request in requests):
             out[line.product_id] = CartRemoval(product_id=line.product_id, name=line.name)

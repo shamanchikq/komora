@@ -204,7 +204,28 @@ offset-bearing because it came from Silpo.
 `available` is the only field that decides anything — the list contains past slots, and
 the tool's own description says *"Only pick slots where available=true."*
 
-## 4.2 The category tree is the answer to "which of these did you mean"
+## 4.2 A category is an aisle, not an answer
+
+`get_products` has **no `query` parameter** — see its schema: the filters are
+`category`, `mustHavePromotion`, `promotionCode`, `set`, price bounds and `sortBy`, and
+at least one of the first four is required. It returns the category in Silpo's own
+order with no idea what was asked for.
+
+So a category browse cannot rank. Taking its first in-stock item is how «пармезан»
+resolved to «Сир Мужон витриманий» — the cheese the user had just asked to replace —
+three turns running, because that cheese sits at the top of the hard-cheese aisle.
+
+**Use the category to filter search results, not to replace them.** The search supplies
+relevance (Silpo's own, which beats anything hand-rolled — a word-overlap scorer was
+tried and reverted for resolving «кока кола» to marmalade); the category supplies the
+aisle. `resolve._narrow` intersects them by product `id`, since neither response
+carries a category field.
+
+`limit` on `get_products` caps at **100**. Ask for all of it: a shelf cut short at the
+page limit cannot be told from a shelf the product is genuinely not on, and the two
+want opposite fallbacks.
+
+## 4.3 The category tree is the answer to "which of these did you mean"
 
 `get_categories` returns `{id, parentId, slug, title}` and draws distinctions
 free-text search cannot:

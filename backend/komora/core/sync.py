@@ -112,6 +112,21 @@ def _blocking(payload: Any, *, adding: bool = False) -> list[str]:
     return [code for code in codes if not (adding and code in SUM_DEPENDENT)]
 
 
+async def cart_product_ids(mcp: SilpoClient) -> set[str]:
+    """What is in the user's Silpo cart right now.
+
+    Drafting needs this as much as confirming does. A removal is matched against what
+    Komora *believes* it synced, and that belief goes stale the moment the user removes
+    something themselves — or the moment a previous edit already removed it. Without a
+    check at draft time the sheet promised «Приберемо з кошика: X» for an X that had
+    been gone for two turns, and then quietly did nothing, because only `preview_sync`
+    ever tested it against the cart.
+    """
+    cart_id = str((await mcp.get_my_shopping_cart()).get("shoppingCartId", ""))
+    payload = await mcp.get_shopping_cart_by_id(cart_id)
+    return {str(p.get("productId")) for p in _lines_of(payload)}
+
+
 def _sendable(cart: ResolvedCart) -> list[ResolvedLine]:
     return [line for line in cart.lines if not line.unavailable]
 

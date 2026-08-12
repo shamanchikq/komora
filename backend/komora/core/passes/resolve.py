@@ -29,6 +29,13 @@ from komora.core.passes.categories import CategoryIndex
 MAX_QUERIES_PER_BATCH = 30
 """Silpo's documented ceiling for find_products_batch."""
 
+CATEGORY_PAGE = 100
+"""`get_products`' documented maximum, and the size of the shelf we intersect against.
+
+Worth asking for all of it. A shelf cut short is indistinguishable from a shelf the
+product is genuinely not on, and the two want opposite fallbacks — see `_narrow`.
+"""
+
 NOT_FOUND = "not_found"
 DEGRADED_REPLACEMENTS = "degraded:replacements"
 
@@ -182,6 +189,38 @@ def _usable_in(grouped: dict[str, list[dict[str, Any]]], term: str) -> list[dict
     return [p for p in grouped.get(term, []) if usable(p)]
 
 
+def _narrow(found: list[dict[str, Any]], shelf: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Silpo's relevance ranking, restricted to the shelf the model named.
+
+    The category was meant to disambiguate near-identical names — hen's eggs from a
+    guinea fowl's. It was doing something else: `get_products` has no query parameter,
+    so browsing returned the aisle in Silpo's own order and the first in-stock item won
+    outright. Asked to replace a cheese with parmesan, that handed back the same cheese,
+    because it happens to sit at the top of the hard-cheese aisle. The description was
+    never consulted at all.
+
+    Intersecting fixes it without hand-rolling a ranker: the search supplies relevance
+    (which is better than anything written here — a word-overlap scorer was tried and
+    reverted for resolving «кока кола» to marmalade), the shelf supplies the aisle.
+
+    When nothing on the shelf matched the search, the fallback depends on something we
+    actually know. A shelf returned in full means the search results genuinely are not
+    in that category, and the category is the better guide — this is the case that keeps
+    an ice-cream cone out of «основа для піци». A shelf cut off at the page limit means
+    the match may simply be further down it, and there the search is the better guide.
+    """
+    if not shelf:
+        return found
+    if not found:
+        return shelf
+
+    on_shelf = {str(p.get("id")) for p in shelf}
+    preferred = [p for p in found if str(p.get("id")) in on_shelf]
+    if preferred:
+        return preferred
+    return shelf if len(shelf) < CATEGORY_PAGE else found
+
+
 async def _browse_categories(
     basket: DraftBasket,
     mcp: SilpoClient,
@@ -193,6 +232,11 @@ async def _browse_categories(
     One call per distinct category — `get_products` takes a single one, unlike search.
     Silpo is not the rate-limited resource here (the model is), so this buys precision
     cheaply. A failure falls back to whatever search found.
+
+    **This is a shelf, not an answer.** `get_products` has no `query` parameter: it
+    returns the category in Silpo's own order with no idea what was asked for. Reading
+    the first item off it is how «пармезан» resolved to the very cheese the user had
+    just asked to replace. `resolve_basket` intersects it with the search instead.
     """
     if categories is None:
         return {}
@@ -209,7 +253,7 @@ async def _browse_categories(
         if slug not in by_slug:
             try:
                 payload = await mcp.get_products(
-                    context, category=slug, inStock=True, limit=MAX_QUERIES_PER_BATCH
+                    context, category=slug, inStock=True, limit=CATEGORY_PAGE
                 )
             except Exception:
                 by_slug[slug] = []
@@ -242,15 +286,15 @@ async def resolve_basket(
     warnings = list(basket.warnings)
 
     for draft in basket.lines:
-        # A named category beats a search string: it is Silpo's own answer to "which
-        # of these near-identical names did you mean".
-        candidates = [p for p in browsed.get(draft.description, []) if usable(p)]
-        if not candidates:
-            candidates = _usable_in(grouped, draft.description)
+        # The named category narrows the search rather than replacing it — Silpo's own
+        # answer to "which of these near-identical names did you mean", applied to
+        # results it has already ranked.
+        shelf = [p for p in browsed.get(draft.description, []) if usable(p)]
+        candidates = _narrow(_usable_in(grouped, draft.description), shelf)
         for term in retries.get(draft.description, []):
             if candidates:
                 break
-            candidates = _usable_in(grouped, term)
+            candidates = _narrow(_usable_in(grouped, term), shelf)
 
         if not candidates:
             warnings.append(f"{NOT_FOUND}:{draft.description}")

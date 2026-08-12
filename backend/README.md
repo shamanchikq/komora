@@ -144,14 +144,14 @@ Found by the live runs on 2026-08-11/12, and left open deliberately.
   buys, which is what the habits engine (Plan 3) is for.
 - **Product choice is four defences deep, and still not certain.** A vague query once
   returned an ice-cream cone for «основа для піци». Now: the model names a Silpo
-  *category* alongside the query (browsing «Основи для піци» cannot return a cone); a
-  verification pass re-reads every pick against what was asked **and against what the
-  basket is for**, then re-searches the mismatches; and «⇄ N» offers the next candidate
-  per line. The basket's purpose was the missing piece — judged alone, a dry-cured
-  snack salami is a fine answer to «ковбаса салямі», and only «Інгредієнти для піци
-  пепероні» makes it obviously wrong. None of it is a guarantee: a wrong category the
-  model is confident about will still narrow to the wrong shelf, and only the swap
-  button recovers from that.
+  *category*, which **narrows** the search rather than replacing it; a verification pass
+  re-reads every pick against what was asked **and against what the basket is for**,
+  then re-searches the mismatches; and «⇄ N» offers the next candidate per line. The
+  basket's purpose was one missing piece — judged alone, a dry-cured snack salami is a
+  fine answer to «ковбаса салямі», and only «Інгредієнти для піци пепероні» makes it
+  obviously wrong. None of it is a guarantee: a wrong category the model is confident
+  about will still narrow to the wrong shelf, and only the swap button recovers.
+  **The intersection is unit-tested against captured shapes, not yet confirmed live.**
 - **Removals are matched lexically.** «Прибери ковбаски» is matched to synced lines by
   shared word stems, so a request whose words do not land removes nothing and says so
   rather than guessing. Deliberately strict in that direction: a false positive deletes

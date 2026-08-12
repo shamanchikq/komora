@@ -11,7 +11,7 @@ import pytest
 
 from komora.core.models import DraftBasket, DraftLine
 from komora.core.passes.categories import MAX_PAGES, CategoryIndex, fetch_categories
-from komora.core.passes.resolve import resolve_basket
+from komora.core.passes.resolve import CATEGORY_PAGE, resolve_basket
 from tests.fakes import CONTEXT, FakeSilpo, product
 
 LIVE_TREE = json.loads(
@@ -153,3 +153,60 @@ class TestPagination:
         mcp.get_categories = stuck  # type: ignore[method-assign]
         await fetch_categories(mcp, CONTEXT)
         assert len(mcp.category_pages) == MAX_PAGES
+
+
+class TestTheShelfNarrowsTheSearch:
+    """A category says which aisle, not which product.
+
+    `get_products` has no query parameter — it returns the category in Silpo's own
+    order — so reading the first item off it ignored the description entirely. Live on
+    2026-08-12: asked «замiни сир мухон на пармезан», Komora proposed the very cheese it
+    had been asked to replace, three turns running, because that cheese sits at the top
+    of the hard-cheese aisle.
+    """
+
+    HARD_CHEESE = "Тверді і напівтверді сири"
+    MUZHON = product("Сир «Лавка Традицій» «Мужон витриманий» 30,2%", 775.00)
+    PARMESAN = product("Сир Milkiwita «Пармеджано Реджано» 36% 24 місяці", 299.90)
+
+    def _basket(self, category: str | None = None) -> DraftBasket:
+        return DraftBasket(
+            title="Паста карбонара",
+            intent="stated",
+            lines=[DraftLine(description="пармезан", category=category, reason_text="для пасти")],
+        )
+
+    async def test_the_search_decides_which_product_on_the_named_shelf(self) -> None:
+        mcp = FakeSilpo(
+            {"пармезан": [self.PARMESAN]},
+            # Silpo's order, with the wrong cheese first — this is the shelf as returned.
+            category_products=[self.MUZHON, self.PARMESAN],
+        )
+        cart = await resolve_basket(self._basket(self.HARD_CHEESE), mcp, CONTEXT, INDEX)
+        assert cart.lines[0].name == self.PARMESAN["name"], (
+            "the first item on the shelf is not the answer to the question asked"
+        )
+
+    async def test_a_shelf_seen_in_full_still_overrides_an_off_aisle_search(self) -> None:
+        """The protection categories were introduced for: «основа для піци» matching an
+        ice-cream cone. Nothing the search found is on the shelf, and the shelf is short
+        enough that we know we saw all of it."""
+        cone = product("Корзинка Progelcone для морозива цукрова", 39.90)
+        base = product("Основа для піци Мlivita", 54.90)
+        mcp = FakeSilpo({"пармезан": [cone]}, category_products=[base])
+        cart = await resolve_basket(self._basket(self.HARD_CHEESE), mcp, CONTEXT, INDEX)
+        assert cart.lines[0].name == base["name"]
+
+    async def test_a_truncated_shelf_defers_to_the_search(self) -> None:
+        """A full page means the match may simply be further down the aisle, so an
+        unmatched intersection is not evidence the search was wrong."""
+        filler = [product(f"Сир інший {i}", 100.0 + i) for i in range(CATEGORY_PAGE)]
+        mcp = FakeSilpo({"пармезан": [self.PARMESAN]}, category_products=filler)
+        cart = await resolve_basket(self._basket(self.HARD_CHEESE), mcp, CONTEXT, INDEX)
+        assert cart.lines[0].name == self.PARMESAN["name"]
+
+    async def test_the_whole_shelf_is_requested(self) -> None:
+        """A shelf cut short cannot be told from a shelf the product is not on."""
+        mcp = FakeSilpo({"пармезан": [self.PARMESAN]}, category_products=[self.MUZHON])
+        await resolve_basket(self._basket(self.HARD_CHEESE), mcp, CONTEXT, INDEX)
+        assert mcp.category_limits == [CATEGORY_PAGE]

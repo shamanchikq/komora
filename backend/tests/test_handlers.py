@@ -608,3 +608,54 @@ class TestTwoModelRouting:
 
         await on_text(services, USER, "купи молоко і хліб")
         assert verifier.calls == []
+
+
+class TestAStaleRemovalIsNotPromised:
+    """Komora's record says what it PUT in the cart, not what is still there.
+
+    Live on 2026-08-12: a cheese removed one turn earlier was still offered for removal
+    on the next draft — «Приберемо з кошика: …» — and then nothing happened, because
+    only the confirmation sheet ever checked the request against the real cart.
+    """
+
+    REMOVE_CALL = ToolCall(
+        PROPOSE_BASKET,
+        {
+            "title": "Паста",
+            "lines": [{"description": "молоко", "quantity": 1, "reason_text": "ви попросили"}],
+            "removals": ["хліб"],
+        },
+    )
+
+    async def _synced_then_emptied(self, sessions, silpo: FakeSilpo) -> Services:
+        services, _, _ = services_for(sessions, mcp=silpo)
+        await on_text(services, USER, "молоко і хліб")
+        basket_id = (await services.baskets.get_active(USER)).id
+        await on_callback(services, USER, f"sync:{basket_id}")
+        await on_callback(services, USER, f"push:{basket_id}")
+        # The user takes it out themselves, in the Silpo app.
+        silpo._cart = [p for p in silpo._cart if p["productId"] != "id-Хліб Київський"]
+        return services
+
+    async def test_a_product_already_gone_is_not_offered_for_removal(self, sessions) -> None:
+        silpo = FakeSilpo(CATALOGUE)
+        services = await self._synced_then_emptied(sessions, silpo)
+
+        services.llm._responses.append(LLMResponse(tool_calls=(self.REMOVE_CALL,)))
+        reply = await on_text(services, USER, "прибери хліб")
+        assert "Приберемо з кошика" not in reply.text, (
+            "the draft must not promise a removal the sync will silently skip"
+        )
+
+    async def test_a_product_still_there_is_offered(self, sessions) -> None:
+        """The guard must not swallow the real case."""
+        silpo = FakeSilpo(CATALOGUE)
+        services, _, _ = services_for(sessions, mcp=silpo)
+        await on_text(services, USER, "молоко і хліб")
+        basket_id = (await services.baskets.get_active(USER)).id
+        await on_callback(services, USER, f"sync:{basket_id}")
+        await on_callback(services, USER, f"push:{basket_id}")
+
+        services.llm._responses.append(LLMResponse(tool_calls=(self.REMOVE_CALL,)))
+        reply = await on_text(services, USER, "прибери хліб")
+        assert "Приберемо з кошика" in reply.text and "Хліб Київський" in reply.text

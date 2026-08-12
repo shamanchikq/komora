@@ -37,7 +37,7 @@ from komora.core.pipeline import (
     categories_for,
     load_context,
 )
-from komora.core.sync import execute_sync, preview_sync
+from komora.core.sync import cart_product_ids, execute_sync, preview_sync
 from komora.db.repo import BasketRepo, ConversationRepo, UserRepo
 
 HISTORY_TURNS = 20
@@ -198,6 +198,17 @@ async def on_text(services: Services, telegram_id: int, text: str) -> Reply:
                 llm=(services.verifier or services.llm) if services.verify else None,
                 cache=services.cache,
             )
+            if outcome.basket.removals:
+                cart = cart.model_copy(
+                    update={
+                        "removals": match_removals(
+                            outcome.basket.removals,
+                            await services.baskets.synced_lines(telegram_id),
+                            keep={ln.product_id for ln in cart.lines if not ln.unavailable},
+                            present=await cart_product_ids(mcp),
+                        )
+                    }
+                )
     except NotAuthenticated:
         return _auth_reply(NEED_AUTH)
     except CartContextMissing:
@@ -212,17 +223,6 @@ async def on_text(services: Services, telegram_id: int, text: str) -> Reply:
         return Reply("Не зміг це опрацювати безпечно. Спробуйте сформулювати інакше.")
 
     basket = outcome.basket
-    if basket.removals:
-        cart = cart.model_copy(
-            update={
-                "removals": match_removals(
-                    basket.removals,
-                    await services.baskets.synced_lines(telegram_id),
-                    keep={ln.product_id for ln in cart.lines if not ln.unavailable},
-                )
-            }
-        )
-
     rendered = render_cart(cart, basket.title, budget_cap=budget_cap, swappable=True)
     # The whole basket, not just its title. A follow-up edit is only possible if the
     # model can see what it is editing — see core/agent/recap.py.
