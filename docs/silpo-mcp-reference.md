@@ -33,9 +33,22 @@ reading the cart *"always the first step"*. In Komora this is `SearchContext`
 | `products` (replacements) | **`productIds`** |
 | `deliveryType` (time slots) | **`deliveryTypes`**, and an **array** |
 | `couponId` / `id` (coupon details) | **`businessCouponId`**, and a **number** |
+| category `id` (product browse) | **the `slug`** — an id returns "No products found" |
 
 The last two are the same idea in both directions: the name that works for one tool is
 the wrong one for its neighbour. Read the schema per tool, never per family.
+
+### How search behaves in Ukrainian
+
+Measured against the live catalogue, because none of it is in the docs:
+
+| | Result |
+|---|---|
+| **Inflection** | `молоко`→`молока` survives (shared `молок-` prefix); `яйця`→**`яєць` collapses to 4 hits**, the first an egg *container*. Prefix matching, not lemmatisation — and Ukrainian's stem-changing declensions defeat it. Ask the model for nominative forms. |
+| **Script** | `кока кола`, `кока-кола`, `coca cola`, `Coca-Cola` all return the drink first. Silpo crosses Cyrillic↔Latin correctly; do not attempt it yourself. |
+| **Word order** | `сир твердий` and `твердий сир` are identical. |
+| **Precision** | A cliff, not a slope: `тісто для піци` returns exactly **1** product, `основа для піци` returns 7 of nonsense. |
+| **Brands** | `яготинське`, `моршинська` work well on their own. |
 
 ### Which tools need the context
 
@@ -157,6 +170,32 @@ offset-bearing because it came from Silpo.
 
 `available` is the only field that decides anything — the list contains past slots, and
 the tool's own description says *"Only pick slots where available=true."*
+
+## 4.2 The category tree is the answer to "which of these did you mean"
+
+`get_categories` returns **1000** entries of `{id, parentId, slug, title}` in one call,
+and it draws distinctions free-text search cannot:
+
+```
+Яйця · Курячі яйця · Перепелині яйця · Фермерські яйця · Яйця інших птахів
+```
+
+Search for «яйця» and Silpo offers «Яйця цесарки» at 257,40 ₴ first — a perfectly good
+string match. Browse `kuriachi-iaitsia-4977` and every result is an ordinary hen's egg.
+
+```jsonc
+get_products(category="kuriachi-iaitsia-4977", inStock=true, limit=5)
+{"success": true, "summary": "Found 10 products (showing 5)",
+ "products": [ /* same fields as a search hit: id, companyId, price, stock, … */ ],
+ "meta": {"limit": 5, "offset": 0, "total": 10}}
+```
+
+**`category` takes the `slug`.** Passing the `id` — which sits on the same object —
+returns `"No products found"`, with no error and no hint. `inStock: true` is worth
+setting: it cut 24 results to the 10 actually buyable.
+
+Products come back in the **same shape as search results**, so nothing downstream needs
+to know which call produced a candidate.
 
 ## 5. Domain rules Silpo states in its own tool descriptions
 

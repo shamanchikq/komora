@@ -25,7 +25,7 @@ hand off with a checkout link.
 All from `backend/`.
 
 ```bash
-uv run pytest              # 525 tests
+uv run pytest              # 588 tests
 uv run ruff check .        # lint
 uv run ruff format .       # format
 uv run mypy komora         # strict
@@ -61,7 +61,9 @@ komora/
 │   ├── mcp/       protocol + silpo.py (the real client) + gateway.py (per-user OAuth)
 │   ├── llm/       LLMClient protocol; gemini/ and ollama/ implementations
 │   ├── agent/     the loop: read tools only, propose_basket, guardrails
-│   ├── passes/    restrictions -> resolve -> savings -> budget
+│   ├── passes/    restrictions -> resolve -> verify -> savings -> budget
+│   │              + categories.py (Silpo's taxonomy, beats free-text search)
+│   ├── alternatives.py  «інший варіант» — re-runs a line's own query
 │   ├── pipeline.py  composes the passes; load_context reads branch + timeslot
 │   └── sync.py    preview + append to the real Silpo cart
 ├── db/            SQLAlchemy 2 + repos
@@ -96,6 +98,11 @@ every line, in Ukrainian.
 **Nothing reaches Silpo without confirmation**, and `clear_shopping_cart` is never
 called unless the user explicitly asks to start over.
 
+**One model request per turn is the budget.** Gemini's free tier limits requests per
+minute and per day, not tokens — so a longer prompt is free and a second round trip is
+not. The verification pass covers a whole basket in one call; category hints ride along
+in the existing `propose_basket` call rather than costing their own.
+
 **A callback id is not proof of ownership.** Telegram callback data comes from the
 client, so every basket action checks `basket.user_id` against the sender.
 
@@ -122,7 +129,7 @@ reached users untranslated, a coupon note inlined three lines of bullets, a sync
 checkout link gave no reason, savings printed as `15.000 ₴`, and the model's stray
 `</div>` reached a basket title.
 
-Still unticked on the checklist: the free-form question path and the re-auth path.
+Still unticked: the re-auth path. The free-form question path passes on Gemini.
 
 Only the "stated basket" intent exists — meal plan, budget-week, deals and event
 handlers are Plan 4. The Mini App is Plan 2; habits are Plan 3.

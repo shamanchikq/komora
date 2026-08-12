@@ -87,6 +87,10 @@ class DraftItem(Base):
     position: Mapped[int] = mapped_column(default=0)
     """Preserves the order the passes produced; the user reads it top to bottom."""
 
+    description: Mapped[str] = mapped_column(Text, default="")
+    """What the model asked for. Kept so a line can be re-resolved after the fact —
+    «інший варіант» re-runs this query rather than storing every candidate."""
+
     product_id: Mapped[str] = mapped_column(String(64))
     company_id: Mapped[str] = mapped_column(String(64))
     branch_id: Mapped[str] = mapped_column(String(64))
@@ -94,6 +98,8 @@ class DraftItem(Base):
     qty: Mapped[float]
     unit: Mapped[str] = mapped_column(String(64))
     unit_price: Mapped[Decimal] = mapped_column(Numeric(10, 2))
+    old_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), default=None)
+    """Silpo's pre-discount price, so a reloaded draft still shows what was saved."""
 
     reason_kind: Mapped[str] = mapped_column(String(16))
     reason_text: Mapped[str] = mapped_column(Text)

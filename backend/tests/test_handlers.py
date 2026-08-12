@@ -63,6 +63,7 @@ def services_for(
     llm: ScriptedLLM | None = None,
     mcp: FakeSilpo | None = None,
     connect_error: Exception | None = None,
+    verify: bool = False,
 ) -> tuple[Services, FakeSilpo, list[int]]:
     silpo = mcp or FakeSilpo(CATALOGUE)
     linked: list[int] = []
@@ -87,6 +88,7 @@ def services_for(
             llm=llm or ScriptedLLM(LLMResponse(tool_calls=(BASKET_CALL,))),
             tools=no_tools,  # type: ignore[arg-type]
             connect=connect,  # type: ignore[arg-type]
+            verify=verify,
             start_linking=start_linking,
         ),
         silpo,
@@ -133,7 +135,8 @@ class TestConversation:
 
         assert "Молоко Яготинське" in reply.text and "Хліб Київський" in reply.text
         assert reply.text.count("— ви попросили") == 2, "every line carries its reason"
-        assert [d and d.split(":")[0] for d in button_data(reply)] == ["sync", "cancel"]
+        actions = [d and d.split(":")[0] for d in button_data(reply)]
+        assert actions == ["swap", "swap", "sync", "cancel"], "one swap per line"
         assert silpo.add_calls == [], "nothing may reach the cart before confirmation"
 
     async def test_the_draft_is_persisted_for_the_confirm_tap(self, sessions) -> None:
@@ -348,3 +351,70 @@ async def test_the_full_happy_path(sessions) -> None:
         for p in cart["shipments"][0]["products"]
     )
     assert total == Decimal("253.30")
+
+
+class TestSwap:
+    """«Інший варіант» re-runs the line's own query rather than storing candidates."""
+
+    async def _draft(self, sessions, catalogue):  # type: ignore[no-untyped-def]
+        services, silpo, _ = services_for(sessions, mcp=FakeSilpo(catalogue))
+        await on_text(services, USER, "купи молоко і хліб")
+        basket = await services.baskets.get_active(USER)
+        assert basket is not None
+        return services, silpo, basket.id
+
+    async def test_the_next_candidate_replaces_the_line(self, sessions) -> None:
+        catalogue = {
+            "молоко": [product("Молоко Перше", 42.90), product("Молоко Друге", 51.00)],
+            "хліб": [product("Хліб", 28.50)],
+        }
+        services, _, basket_id = await self._draft(sessions, catalogue)
+        before = await services.baskets.load_cart(basket_id)
+        assert before is not None and before.lines[0].name == "Молоко Перше"
+
+        reply = await on_callback(services, USER, f"swap:{basket_id}:0")
+        assert "Молоко Друге" in reply.text
+        assert reply.toast is not None and "Молоко Друге" in reply.toast
+
+        after = await services.baskets.load_cart(basket_id)
+        assert after is not None
+        assert after.lines[0].name == "Молоко Друге"
+        assert after.lines[1].name == "Хліб", "other lines are untouched"
+
+    async def test_swapping_recomputes_the_total(self, sessions) -> None:
+        catalogue = {
+            "молоко": [product("Молоко Перше", 42.90), product("Молоко Друге", 51.00)],
+            "хліб": [product("Хліб", 28.50)],
+        }
+        services, _, basket_id = await self._draft(sessions, catalogue)
+        await on_callback(services, USER, f"swap:{basket_id}:0")
+        after = await services.baskets.load_cart(basket_id)
+        assert after is not None and after.total == Decimal("130.50"), "2 x 51.00 + 28.50"
+
+    async def test_cycling_wraps_back_to_the_first(self, sessions) -> None:
+        catalogue = {
+            "молоко": [product("Молоко Перше", 42.90), product("Молоко Друге", 51.00)],
+            "хліб": [product("Хліб", 28.50)],
+        }
+        services, _, basket_id = await self._draft(sessions, catalogue)
+        await on_callback(services, USER, f"swap:{basket_id}:0")
+        await on_callback(services, USER, f"swap:{basket_id}:0")
+        after = await services.baskets.load_cart(basket_id)
+        assert after is not None and after.lines[0].name == "Молоко Перше"
+
+    async def test_a_line_with_no_alternative_says_so(self, sessions) -> None:
+        catalogue = {"молоко": [product("Молоко", 42.90)], "хліб": [product("Хліб", 28.50)]}
+        services, _, basket_id = await self._draft(sessions, catalogue)
+        reply = await on_callback(services, USER, f"swap:{basket_id}:0")
+        assert "Інших варіантів" in reply.text
+
+    async def test_an_out_of_range_position_is_refused(self, sessions) -> None:
+        catalogue = {"молоко": [product("Молоко", 42.90)], "хліб": [product("Хліб", 28.50)]}
+        services, _, basket_id = await self._draft(sessions, catalogue)
+        assert (await on_callback(services, USER, f"swap:{basket_id}:99")).toast is not None
+
+    async def test_someone_else_cannot_swap_your_basket(self, sessions) -> None:
+        catalogue = {"молоко": [product("Молоко", 42.90)], "хліб": [product("Хліб", 28.50)]}
+        services, _, basket_id = await self._draft(sessions, catalogue)
+        reply = await on_callback(services, 9999, f"swap:{basket_id}:0")
+        assert reply.toast == "Ця чернетка недоступна"

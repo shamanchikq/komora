@@ -78,6 +78,7 @@ class FakeSilpo:
         coupons: list[dict[str, Any]] | None = None,
         coupon_details: dict[int, dict[str, Any]] | None = None,
         restrictions: Any = None,
+        category_products: list[dict[str, Any]] | None = None,
         slots: list[dict[str, Any]] | None = None,
         fails: set[str] | None = None,
     ) -> None:
@@ -97,6 +98,8 @@ class FakeSilpo:
         self._coupons = coupons or []
         self._coupon_details = coupon_details or {}
         self._restrictions = restrictions
+        self._category_products = category_products
+        self.category_calls: list[str] = []
         self._slots = slots
         self._fails = fails or set()
         self.add_calls: list[list[dict[str, Any]]] = []
@@ -211,7 +214,19 @@ class FakeSilpo:
         }
 
     async def get_products(self, context: SearchContext, **filters: Any) -> dict[str, Any]:
-        return {"success": True, "products": []}
+        """Category browse. Shape captured live — same product fields as a search hit,
+        so nothing downstream cares which one a candidate came from."""
+        self._fail_if_scripted("get_products")
+        category = filters.get("category")
+        if category is not None:
+            self.category_calls.append(str(category))
+        products = self._category_products if self._category_products is not None else []
+        return {
+            "success": True,
+            "summary": f"Found {len(products)} products",
+            "products": products,
+            "meta": {"total": len(products)},
+        }
 
     async def get_product_details(self, slug: str, context: SearchContext) -> dict[str, Any]:
         found = next((p for p in self._catalogue.values() if p.get("slug") == slug), None)

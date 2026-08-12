@@ -137,12 +137,13 @@ Found by the live runs on 2026-08-11/12, and left open deliberately.
   packs of eggs. Correcting it in plain language works, but nothing anchors a first
   guess to what the household actually buys — that is what the habits engine (Plan 3)
   is for.
-- **A vague description still resolves badly, and nothing catches it.** «основа для
-  піци» returned an ice-cream cone; the same request a run earlier said «тісто для
-  піци» and got pizza dough. The prompt asks for concrete two-word queries and the
-  resolve pass retries simplified terms, but neither can tell that a returned product
-  makes no sense for the request. Nothing between the search and the user checks
-  plausibility — a swap control in the Mini App (Plan 2) is the real answer.
+- **Product choice is three defences deep, and still not certain.** A vague query once
+  returned an ice-cream cone for «основа для піци». Now: the model names a Silpo
+  *category* alongside the query (browsing «Основи для піци» cannot return a cone); a
+  verification pass re-reads every pick against what was asked and re-searches the
+  mismatches; and «⇄ N» offers the next candidate per line. None of it is a guarantee —
+  a wrong category the model is confident about will still narrow to the wrong shelf,
+  and only the swap button recovers from that.
 - **The free-form question path needs a frontier model.** Asked «яке грузинське вино є
   до 500 ₴?», three runs each on the same question and tools:
   `gemini-3.1-flash-lite` answered correctly 3/3; `gemma4:12b` never searched, 0/3, and

@@ -43,6 +43,13 @@ Prose = Annotated[str, StringConstraints(strip_whitespace=True)]
 class DraftLine(BaseModel):
     description: Prose
     """What to buy, in the user's terms — "молоко 2,6% ~1 л". Not a SKU."""
+    category: Prose | None = None
+    """Silpo category title, when the model can name one — «Курячі яйця».
+
+    Free-text search cannot tell hen's eggs from guinea fowl's; Silpo's own taxonomy
+    keeps them in separate categories. Matched to a slug in `passes/categories.py`,
+    and ignored when it matches nothing.
+    """
     quantity: float = 1
     optional: bool = False
     """Trimmed first when a cart exceeds its budget cap."""
@@ -91,6 +98,12 @@ class ResolvedLine(BaseModel):
     company_id: str
     branch_id: str
     """Silpo needs all three to identify a product in a cart."""
+    description: str = ""
+    """What the model asked for, kept alongside what was chosen.
+
+    Two things need it after resolution: the verification pass, which compares the two,
+    and «інший варіант», which re-runs the same query to offer the next candidate.
+    """
     name: str
     qty: float
     unit: str

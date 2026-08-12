@@ -16,15 +16,19 @@ Two rules are enforced here rather than trusted:
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Protocol
 
 from komora.bot.render import render_cart, render_sync_preview, render_sync_report
 from komora.core.agent.loop import ForbiddenToolCall, run_agent
 from komora.core.agent.tools import ToolSource
+from komora.core.alternatives import next_alternative
 from komora.core.llm.protocol import LLMClient, LLMUnavailable, Message
 from komora.core.mcp.errors import McpError, NotAuthenticated
 from komora.core.mcp.protocol import SilpoClient
-from komora.core.pipeline import CartContextMissing, build_cart, load_context
+from komora.core.models import ResolvedCart
+from komora.core.passes.promos import apply_savings
+from komora.core.pipeline import CartContextMissing, SilpoCache, build_cart, load_context
 from komora.core.sync import execute_sync, preview_sync
 from komora.db.repo import BasketRepo, ConversationRepo, UserRepo
 
@@ -56,6 +60,11 @@ BUDGET_HELP = (
     "Тижневий бюджет допомагає бачити, коли кошик виходить за межі.\n"
     "«/budget 1500» — встановити, «/budget 0» — прибрати."
 )
+NO_ALTERNATIVE = "Інших варіантів для «{name}» Сільпо не пропонує."
+
+
+async def _unlinked(telegram_id: int) -> None:
+    raise NotImplementedError("Services.start_linking was not provided")
 
 
 @dataclass(frozen=True)
@@ -63,6 +72,9 @@ class Button:
     label: str
     data: str | None = None
     url: str | None = None
+    same_row: bool = False
+    """Pack with the button before it. The swap controls are one per line, so a row
+    each would bury the actual actions under a wall of buttons."""
 
 
 @dataclass(frozen=True)
@@ -89,7 +101,12 @@ class Services:
     """Declarations can only be read through an authenticated session, so they are
     fetched on the first turn rather than at startup — see `agent.tools.CachedTools`."""
     connect: SilpoConnect
-    start_linking: Callable[[int], Awaitable[None]]
+    cache: SilpoCache = field(default_factory=SilpoCache)
+    """Holds Silpo's category tree for the process — see `core.pipeline`."""
+    verify: bool = True
+    """Run the verification pass. One extra model request per basket, which is the
+    scarce resource on Gemini's free tier — set false if requests per day bite."""
+    start_linking: Callable[[int], Awaitable[None]] = _unlinked
     """Kicks off account linking. Returns immediately — the authorization URL arrives
     as its own message, because the OAuth round-trip can take minutes."""
 
@@ -154,7 +171,14 @@ async def on_text(services: Services, telegram_id: int, text: str) -> Reply:
                 await services.conversations.append(telegram_id, "assistant", answer)
                 return Reply(answer)
 
-            cart = await build_cart(outcome.basket, mcp, context, budget_cap=budget_cap)
+            cart = await build_cart(
+                outcome.basket,
+                mcp,
+                context,
+                budget_cap=budget_cap,
+                llm=services.llm if services.verify else None,
+                cache=services.cache,
+            )
     except NotAuthenticated:
         return _auth_reply(NEED_AUTH)
     except CartContextMissing:
@@ -178,12 +202,24 @@ async def on_text(services: Services, telegram_id: int, text: str) -> Reply:
     basket_id = await services.baskets.create_from_cart(
         telegram_id, basket.title, basket.intent, cart
     )
-    return Reply(
-        rendered,
-        buttons=(
-            Button("Надіслати в Сільпо", data=f"sync:{basket_id}"),
-            Button("Скасувати", data=f"cancel:{basket_id}"),
-        ),
+    return Reply(rendered, buttons=_draft_buttons(basket_id, cart))
+
+
+MAX_SWAP_BUTTONS = 8
+"""Telegram tolerates more, but a keyboard longer than this reads as noise."""
+
+
+def _draft_buttons(basket_id: int, cart: ResolvedCart) -> tuple[Button, ...]:
+    """Send/cancel, plus one «⇄ N» per line matching the numbers in the text."""
+    swaps = tuple(
+        Button(f"⇄ {i}", data=f"swap:{basket_id}:{i - 1}", same_row=i > 1)
+        for i, line in enumerate(cart.lines[:MAX_SWAP_BUTTONS], start=1)
+        if not line.unavailable
+    )
+    return (
+        *swaps,
+        Button("Надіслати в Сільпо", data=f"sync:{basket_id}"),
+        Button("Скасувати", data=f"cancel:{basket_id}"),
     )
 
 
@@ -194,12 +230,14 @@ async def on_callback(services: Services, telegram_id: int, data: str) -> Reply:
         await services.start_linking(telegram_id)
         return Reply(LINK_SENT)
 
+    basket_id, _, raw_position = raw_id.partition(":")
     try:
-        basket_id = int(raw_id)
+        position = int(raw_position) if raw_position else -1
+        basket_id_int = int(basket_id)
     except ValueError:
         return Reply(STALE, toast="Невідома дія")
 
-    basket = await services.baskets.get(basket_id)
+    basket = await services.baskets.get(basket_id_int)
     if basket is None or basket.user_id != telegram_id:
         # Ids come from the client; a mismatch is either stale UI or somebody guessing.
         return Reply(STALE, toast="Ця чернетка недоступна")
@@ -207,13 +245,54 @@ async def on_callback(services: Services, telegram_id: int, data: str) -> Reply:
         return Reply(STALE, toast="Чернетка вже неактуальна")
 
     if action == "cancel":
-        await services.baskets.set_status(basket_id, "discarded")
+        await services.baskets.set_status(basket_id_int, "discarded")
         return Reply(CANCELLED)
     if action == "sync":
-        return await _preview(services, telegram_id, basket_id)
+        return await _preview(services, telegram_id, basket_id_int)
     if action == "push":
-        return await _push(services, telegram_id, basket_id)
+        return await _push(services, telegram_id, basket_id_int)
+    if action == "swap":
+        return await _swap(services, telegram_id, basket_id_int, position, basket.title)
     return Reply(STALE, toast="Невідома дія")
+
+
+async def _swap(
+    services: Services, telegram_id: int, basket_id: int, position: int, title: str
+) -> Reply:
+    """Offer the next product Silpo returns for the same query."""
+    cart = await services.baskets.load_cart(basket_id)
+    if cart is None or not 0 <= position < len(cart.lines):
+        return Reply(STALE, toast="Ця позиція недоступна")
+
+    line = cart.lines[position]
+    try:
+        async with services.connect(telegram_id) as mcp:
+            _, context = await load_context(mcp)
+            alternative = await next_alternative(line, mcp, context)
+    except NotAuthenticated:
+        return _auth_reply(NEED_AUTH)
+    except McpError:
+        return Reply(SILPO_DOWN)
+
+    if alternative is None:
+        return Reply(NO_ALTERNATIVE.format(name=line.name), toast="Інших варіантів нема")
+
+    await services.baskets.replace_item(basket_id, position, alternative)
+    updated = await services.baskets.load_cart(basket_id)
+    if updated is None:
+        return Reply(STALE)
+
+    total = sum((ln.line_total for ln in updated.lines if not ln.unavailable), Decimal("0"))
+    updated = updated.model_copy(update={"total": total})
+    updated = apply_savings(updated.model_copy(update={"savings_notes": []}))
+    await services.baskets.set_total(basket_id, updated.total, updated.estimated_savings)
+
+    user = await services.users.get(telegram_id)
+    return Reply(
+        render_cart(updated, title, budget_cap=user.budget_weekly if user else None),
+        buttons=_draft_buttons(basket_id, updated),
+        toast=f"Замінено на {alternative.name}"[:200],
+    )
 
 
 async def _preview(services: Services, telegram_id: int, basket_id: int) -> Reply:

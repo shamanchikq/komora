@@ -1,0 +1,105 @@
+"""Silpo's taxonomy, matched against the real captured tree.
+
+Free-text search conflates «Курячі яйця» with «Яйця цесарки»; the catalogue keeps them
+in separate categories, and browsing one is the only way to say which was meant.
+"""
+
+import json
+import pathlib
+
+import pytest
+
+from komora.core.models import DraftBasket, DraftLine
+from komora.core.passes.categories import CategoryIndex
+from komora.core.passes.resolve import resolve_basket
+from tests.fakes import CONTEXT, FakeSilpo, product
+
+LIVE_TREE = json.loads(
+    (pathlib.Path(__file__).parent / "fixtures" / "mcp" / "categories.json").read_text(
+        encoding="utf-8"
+    )
+)
+INDEX = CategoryIndex(LIVE_TREE)
+
+
+class TestAgainstTheRealTree:
+    def test_the_capture_is_the_whole_tree(self) -> None:
+        assert len(INDEX) > 500, "a partial tree would silently stop matching"
+
+    def test_an_exact_title_matches(self) -> None:
+        assert INDEX.slug_for("Курячі яйця") == "kuriachi-iaitsia-4977"
+
+    def test_matching_ignores_case(self) -> None:
+        assert INDEX.slug_for("курячі яйця") == "kuriachi-iaitsia-4977"
+
+    def test_the_distinctions_search_cannot_make_are_all_there(self) -> None:
+        """The reason this exists at all."""
+        assert INDEX.slug_for("Перепелині яйця") != INDEX.slug_for("Курячі яйця")
+        assert INDEX.slug_for("Фермерські яйця") is not None
+
+    def test_a_looser_phrase_finds_the_shortest_containing_title(self) -> None:
+        """«яйця» alone should land on the general category, not a niche one."""
+        assert INDEX.slug_for("яйця") == "yaitsia-528"
+
+    @pytest.mark.parametrize("unknown", ["", None, "   ", "марсіанські делікатеси"])
+    def test_no_match_falls_back_to_search(self, unknown: str | None) -> None:
+        """A wrong category is worse than none: it narrows the catalogue to the wrong
+        shelf, and nothing in the product name gives that away."""
+        assert INDEX.slug_for(unknown) is None
+
+    def test_a_stop_word_alone_matches_nothing(self) -> None:
+        assert INDEX.slug_for("та") is None
+
+
+CATALOGUE = {"яйця": [product("Яйця цесарки Пташина Династія", 257.40)]}
+IN_CATEGORY = [product("Яйця курячі С1 «Квочка»", 59.39)]
+
+
+class TestResolveUsesCategories:
+    def _basket(self, category: str | None) -> DraftBasket:
+        return DraftBasket(
+            title="Кошик",
+            intent="stated",
+            lines=[DraftLine(description="яйця", category=category, reason_text="ви попросили")],
+        )
+
+    async def test_a_named_category_beats_the_search_result(self) -> None:
+        mcp = FakeSilpo(CATALOGUE, category_products=IN_CATEGORY)
+        cart = await resolve_basket(self._basket("Курячі яйця"), mcp, CONTEXT, INDEX)
+        assert cart.lines[0].name == "Яйця курячі С1 «Квочка»"
+        assert mcp.category_calls == ["kuriachi-iaitsia-4977"]
+
+    async def test_no_category_falls_back_to_search(self) -> None:
+        mcp = FakeSilpo(CATALOGUE, category_products=IN_CATEGORY)
+        cart = await resolve_basket(self._basket(None), mcp, CONTEXT, INDEX)
+        assert cart.lines[0].name == "Яйця цесарки Пташина Династія"
+        assert mcp.category_calls == []
+
+    async def test_an_unrecognised_category_falls_back_to_search(self) -> None:
+        mcp = FakeSilpo(CATALOGUE, category_products=IN_CATEGORY)
+        cart = await resolve_basket(self._basket("вигадана категорія"), mcp, CONTEXT, INDEX)
+        assert cart.lines[0].name == "Яйця цесарки Пташина Династія"
+
+    async def test_an_empty_category_falls_back_to_search(self) -> None:
+        """A category that exists but holds nothing here must not lose the line."""
+        mcp = FakeSilpo(CATALOGUE, category_products=[])
+        cart = await resolve_basket(self._basket("Курячі яйця"), mcp, CONTEXT, INDEX)
+        assert cart.lines[0].name == "Яйця цесарки Пташина Династія"
+
+    async def test_a_failing_category_call_falls_back_to_search(self) -> None:
+        mcp = FakeSilpo(CATALOGUE, fails={"get_products"})
+        cart = await resolve_basket(self._basket("Курячі яйця"), mcp, CONTEXT, INDEX)
+        assert cart.lines[0].name == "Яйця цесарки Пташина Династія"
+
+    async def test_one_call_per_distinct_category(self) -> None:
+        basket = DraftBasket(
+            title="Кошик",
+            intent="stated",
+            lines=[
+                DraftLine(description="яйця", category="Курячі яйця", reason_text="r"),
+                DraftLine(description="ще яйця", category="Курячі яйця", reason_text="r"),
+            ],
+        )
+        mcp = FakeSilpo(CATALOGUE, category_products=IN_CATEGORY)
+        await resolve_basket(basket, mcp, CONTEXT, INDEX)
+        assert mcp.category_calls == ["kuriachi-iaitsia-4977"], "deduplicated"

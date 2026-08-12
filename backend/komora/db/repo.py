@@ -176,6 +176,7 @@ class BasketRepo:
                     DraftItem(
                         basket_id=basket.id,
                         position=position,
+                        description=line.description,
                         product_id=line.product_id,
                         company_id=line.company_id,
                         branch_id=line.branch_id,
@@ -183,6 +184,7 @@ class BasketRepo:
                         qty=line.qty,
                         unit=line.unit,
                         unit_price=line.unit_price,
+                        old_price=line.old_price,
                         reason_kind=line.reason_kind,
                         reason_text=line.reason_text,
                         substituted_from=line.substituted_from,
@@ -219,6 +221,7 @@ class BasketRepo:
             )
             lines = [
                 ResolvedLine(
+                    description=item.description,
                     product_id=item.product_id,
                     company_id=item.company_id,
                     branch_id=item.branch_id,
@@ -226,6 +229,9 @@ class BasketRepo:
                     qty=item.qty,
                     unit=item.unit,
                     unit_price=Decimal(str(item.unit_price)),
+                    old_price=(
+                        Decimal(str(item.old_price)) if item.old_price is not None else None
+                    ),
                     reason_kind=item.reason_kind,
                     reason_text=item.reason_text,
                     substituted_from=item.substituted_from,
@@ -240,6 +246,41 @@ class BasketRepo:
                 estimated_savings=Decimal(str(basket.estimated_savings)),
                 savings_notes=json.loads(basket.savings_notes),
                 warnings=json.loads(basket.warnings),
+            )
+
+    async def replace_item(self, basket_id: int, position: int, line: ResolvedLine) -> bool:
+        """Swap one line's product, keeping its place in the basket.
+
+        Used by «інший варіант». The description is left untouched: it is the query
+        the alternatives came from, and the next tap needs it again.
+        """
+        async with self._sessions() as session, session.begin():
+            result = await session.execute(
+                select(DraftItem).where(
+                    DraftItem.basket_id == basket_id, DraftItem.position == position
+                )
+            )
+            item = result.scalar_one_or_none()
+            if item is None:
+                return False
+            item.product_id = line.product_id
+            item.company_id = line.company_id
+            item.branch_id = line.branch_id
+            item.name = line.name
+            item.qty = line.qty
+            item.unit = line.unit
+            item.unit_price = line.unit_price
+            item.old_price = line.old_price
+            item.unavailable = line.unavailable
+            item.substituted_from = line.substituted_from
+            return True
+
+    async def set_total(self, basket_id: int, total: Decimal, savings: Decimal) -> None:
+        async with self._sessions() as session, session.begin():
+            await session.execute(
+                update(DraftBasketRow)
+                .where(DraftBasketRow.id == basket_id)
+                .values(total=total, estimated_savings=savings)
             )
 
     async def set_status(self, basket_id: int, status: BasketStatus) -> None:

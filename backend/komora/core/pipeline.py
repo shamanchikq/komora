@@ -13,13 +13,16 @@ warning behind, and `bot/render.py` shows it — no failure is swallowed.
 from decimal import Decimal
 from typing import Any
 
+from komora.core.llm.protocol import LLMClient
 from komora.core.mcp.errors import McpError
 from komora.core.mcp.protocol import SilpoClient
-from komora.core.models import DraftBasket, ResolvedCart, SearchContext
+from komora.core.models import DraftBasket, ResolvedCart, ResolvedLine, SearchContext
 from komora.core.passes.budget import apply_budget
+from komora.core.passes.categories import CategoryIndex
 from komora.core.passes.promos import DEGRADED_COUPONS, apply_savings, describe_coupons
-from komora.core.passes.resolve import resolve_basket
+from komora.core.passes.resolve import NOT_FOUND, resolve_basket
 from komora.core.passes.restrictions import apply_restrictions
+from komora.core.passes.verify import DEGRADED_VERIFY, find_mismatches
 
 DEGRADED_RESTRICTIONS = "degraded:restrictions"
 TIMESLOT_EXPIRED = "timeslot:expired"
@@ -173,6 +176,91 @@ async def _coupons(mcp: SilpoClient) -> list[dict[str, Any]]:
     return enriched
 
 
+class SilpoCache:
+    """Per-process cache for data that does not change during a conversation.
+
+    The category tree is 1000 entries in one call. Fetching it per basket would be
+    wasteful; fetching it per process is free after the first turn.
+    """
+
+    def __init__(self) -> None:
+        self.categories: CategoryIndex | None = None
+        self.categories_tried = False
+
+
+async def _categories(
+    mcp: SilpoClient, context: SearchContext, cache: SilpoCache | None
+) -> CategoryIndex | None:
+    if cache is None:
+        return None
+    if not cache.categories_tried:
+        cache.categories_tried = True
+        try:
+            cache.categories = CategoryIndex(await mcp.get_categories(context, limit=1000))
+        except Exception:
+            cache.categories = None
+    return cache.categories
+
+
+async def _verified(
+    cart: ResolvedCart,
+    basket: DraftBasket,
+    mcp: SilpoClient,
+    context: SearchContext,
+    llm: LLMClient,
+    cache: SilpoCache | None,
+) -> tuple[ResolvedCart, bool]:
+    """Drop or re-resolve lines the model says do not match the request.
+
+    A flagged line is re-searched once with the model's suggested wording. If that
+    still fails it becomes a `not_found` warning — a wrong product presented as the
+    right one is the worst outcome available, because the user may simply buy it.
+    """
+    pairs = [(line.description or "", line.name) for line in cart.lines]
+    mismatches = await find_mismatches(llm, pairs)
+    if mismatches is None:
+        return cart, True
+    if not mismatches:
+        return cart, False
+
+    originals = {line.description: line for line in basket.lines}
+    retry = DraftBasket(
+        title=basket.title,
+        intent=basket.intent,
+        lines=[
+            (originals[cart.lines[i].description]).model_copy(update={"description": better})
+            for i, better in mismatches.items()
+            if better and cart.lines[i].description in originals
+        ],
+    )
+    replacements = (
+        {
+            line.description: line
+            for line in (
+                await resolve_basket(retry, mcp, context, await _categories(mcp, context, cache))
+            ).lines
+        }
+        if retry.lines
+        else {}
+    )
+
+    kept: list[ResolvedLine] = []
+    warnings: list[str] = list(cart.warnings)
+    for index, line in enumerate(cart.lines):
+        if index not in mismatches:
+            kept.append(line)
+            continue
+        better = mismatches[index]
+        found = replacements.get(better)
+        if found is not None:
+            kept.append(found.model_copy(update={"description": line.description}))
+        else:
+            warnings.append(f"{NOT_FOUND}:{line.description}")
+
+    total = sum((ln.line_total for ln in kept if not ln.unavailable), Decimal("0"))
+    return cart.model_copy(update={"lines": kept, "total": total, "warnings": warnings}), False
+
+
 async def build_cart(
     basket: DraftBasket,
     mcp: SilpoClient,
@@ -180,8 +268,14 @@ async def build_cart(
     *,
     budget_cap: int | None = None,
     already_spent: Decimal | None = None,
+    llm: LLMClient | None = None,
+    cache: SilpoCache | None = None,
 ) -> ResolvedCart:
-    """Run the full pipeline: restrictions -> resolve -> savings -> budget."""
+    """Run the full pipeline: restrictions -> resolve -> verify -> savings -> budget.
+
+    `llm` enables the verification pass — one extra request per basket, which is the
+    scarce resource on the free tier. `cache` holds the category tree.
+    """
     warnings: list[str] = []
 
     try:
@@ -191,7 +285,11 @@ async def build_cart(
         warnings.append(DEGRADED_RESTRICTIONS)
 
     filtered = apply_restrictions(basket, restrictions)
-    cart = await resolve_basket(filtered, mcp, context)
+    cart = await resolve_basket(filtered, mcp, context, await _categories(mcp, context, cache))
+    if llm is not None:
+        cart, degraded = await _verified(cart, filtered, mcp, context, llm, cache)
+        if degraded:
+            warnings.append(DEGRADED_VERIFY)
     cart = apply_savings(cart)
 
     try:

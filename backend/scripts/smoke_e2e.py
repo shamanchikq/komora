@@ -62,7 +62,12 @@ from komora.db.repo import OAuthClientRepo, UserRepo
 ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
 
 LOCAL_USER = 1
-"""The same operator id `verify_mcp.py` uses, so both scripts share one linked account."""
+"""The id `verify_mcp.py` uses, so both scripts share one linked account by default.
+
+Override with `--user` when the bot has linked the same Silpo account under a real
+Telegram id: authorising again appears to retire the older token, so the row this
+script wrote can stop being accepted while its stored expiry still looks fine.
+"""
 
 DEFAULT_MESSAGE = "купи молоко, хліб і щось до чаю"
 
@@ -97,6 +102,12 @@ async def capture_uncaptured(silpo: SilpoSession, context: Any) -> None:
                 delivery_type=context.delivery_type,
                 start=context.timeslot_start,
             ),
+        ),
+        ("categories", silpo.get_categories(context, limit=1000)),
+        # `category` takes the **slug**; an id returns "No products found" and no error.
+        (
+            "get_products_by_category",
+            silpo.get_products(context, category="kuriachi-iaitsia-4977", inStock=True, limit=5),
         ),
     ):
         try:
@@ -177,12 +188,12 @@ async def main(args: argparse.Namespace) -> int:
         print("=" * 70 + "\n")
 
     try:
-        if not await gateway.is_linked(LOCAL_USER):
+        if not await gateway.is_linked(args.user):
             note("no stored tokens — running account linking first")
-            await gateway.link(LOCAL_USER, show_url)
-        check("account is linked", await gateway.is_linked(LOCAL_USER))
+            await gateway.link(args.user, show_url)
+        check("account is linked", await gateway.is_linked(args.user), f"user {args.user}")
 
-        async with gateway.connect(LOCAL_USER) as silpo:
+        async with gateway.connect(args.user) as silpo:
             check("session opened with the stored token", True, "no re-login needed")
 
             banner("1. Tool declarations")
@@ -370,4 +381,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("--keep", action="store_true", help="with --push, do not clean up")
     parser.add_argument("--port", type=int, default=8000, help="local port for the callback")
+    parser.add_argument(
+        "--user", type=int, default=LOCAL_USER, help="telegram id whose tokens to use"
+    )
     sys.exit(asyncio.run(main(parser.parse_args())))

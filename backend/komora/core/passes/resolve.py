@@ -24,6 +24,7 @@ from komora.core.models import (
     ResolvedLine,
     SearchContext,
 )
+from komora.core.passes.categories import CategoryIndex
 
 MAX_QUERIES_PER_BATCH = 30
 """Silpo's documented ceiling for find_products_batch."""
@@ -40,11 +41,11 @@ def _is_plastic_bag(product: dict[str, Any]) -> bool:
     return any(word in name for word in _PLASTIC_BAGS)
 
 
-def _usable(product: dict[str, Any]) -> bool:
+def usable(product: dict[str, Any]) -> bool:
     return bool(product.get("id") and product.get("companyId") and not _is_plastic_bag(product))
 
 
-def _in_stock(product: dict[str, Any]) -> bool:
+def in_stock(product: dict[str, Any]) -> bool:
     stock = product.get("stock")
     return bool(product.get("available", True)) and (stock is None or stock > 0)
 
@@ -120,6 +121,7 @@ def clamp_quantity(wanted: float, product: dict[str, Any]) -> float:
 def _line_from(
     product: dict[str, Any],
     *,
+    description: str,
     qty: float,
     reason_kind: ReasonKind,
     reason_text: str,
@@ -129,6 +131,7 @@ def _line_from(
 ) -> ResolvedLine:
     old = product.get("oldPrice")
     return ResolvedLine(
+        description=description,
         product_id=str(product["id"]),  # search says `id`; the cart wants `productId`
         company_id=str(product["companyId"]),
         branch_id=str(product.get("branchId", "")),
@@ -157,15 +160,57 @@ async def _search(
 
 
 def _usable_in(grouped: dict[str, list[dict[str, Any]]], term: str) -> list[dict[str, Any]]:
-    return [p for p in grouped.get(term, []) if _usable(p)]
+    return [p for p in grouped.get(term, []) if usable(p)]
+
+
+async def _browse_categories(
+    basket: DraftBasket,
+    mcp: SilpoClient,
+    context: SearchContext,
+    categories: CategoryIndex | None,
+) -> dict[str, list[dict[str, Any]]]:
+    """Products from the category each line named, keyed by description.
+
+    One call per distinct category — `get_products` takes a single one, unlike search.
+    Silpo is not the rate-limited resource here (the model is), so this buys precision
+    cheaply. A failure falls back to whatever search found.
+    """
+    if categories is None:
+        return {}
+
+    wanted: dict[str, str] = {}
+    for line in basket.lines:
+        slug = categories.slug_for(line.category)
+        if slug:
+            wanted[line.description] = slug
+
+    results: dict[str, list[dict[str, Any]]] = {}
+    by_slug: dict[str, list[dict[str, Any]]] = {}
+    for description, slug in wanted.items():
+        if slug not in by_slug:
+            try:
+                payload = await mcp.get_products(
+                    context, category=slug, inStock=True, limit=MAX_QUERIES_PER_BATCH
+                )
+            except Exception:
+                by_slug[slug] = []
+            else:
+                found = payload.get("products")
+                by_slug[slug] = [p for p in found if isinstance(p, dict)] if found else []
+        results[description] = by_slug[slug]
+    return results
 
 
 async def resolve_basket(
-    basket: DraftBasket, mcp: SilpoClient, context: SearchContext
+    basket: DraftBasket,
+    mcp: SilpoClient,
+    context: SearchContext,
+    categories: CategoryIndex | None = None,
 ) -> ResolvedCart:
     """Turn a DraftBasket into a ResolvedCart of real products."""
     descriptions = [line.description for line in basket.lines]
     grouped = await _search(mcp, descriptions, context)
+    browsed = await _browse_categories(basket, mcp, context, categories)
 
     # Second pass for anything that matched nothing. One extra batched call buys back
     # every line a parenthetical aside would otherwise have lost.
@@ -178,7 +223,11 @@ async def resolve_basket(
     warnings = list(basket.warnings)
 
     for draft in basket.lines:
-        candidates = _usable_in(grouped, draft.description)
+        # A named category beats a search string: it is Silpo's own answer to "which
+        # of these near-identical names did you mean".
+        candidates = [p for p in browsed.get(draft.description, []) if usable(p)]
+        if not candidates:
+            candidates = _usable_in(grouped, draft.description)
         for term in retries.get(draft.description, []):
             if candidates:
                 break
@@ -188,11 +237,12 @@ async def resolve_basket(
             warnings.append(f"{NOT_FOUND}:{draft.description}")
             continue
 
-        available = next((p for p in candidates if _in_stock(p)), None)
+        available = next((p for p in candidates if in_stock(p)), None)
         if available is not None:
             lines.append(
                 _line_from(
                     available,
+                    description=draft.description,
                     qty=clamp_quantity(draft.quantity, available),
                     reason_kind=draft.reason_kind,
                     reason_text=draft.reason_text,
@@ -209,6 +259,7 @@ async def resolve_basket(
             lines.append(
                 _line_from(
                     substitute,
+                    description=draft.description,
                     qty=clamp_quantity(draft.quantity, substitute),
                     reason_kind="sub",
                     reason_text="заміна — оригіналу немає в наявності",
@@ -221,6 +272,7 @@ async def resolve_basket(
             lines.append(
                 _line_from(
                     original,
+                    description=draft.description,
                     qty=draft.quantity,
                     reason_kind=draft.reason_kind,
                     reason_text="немає в наявності",
@@ -248,6 +300,6 @@ async def _find_substitute(
 
     for item in (payload or {}).get("items") or []:
         for candidate in item.get("replacements") or []:
-            if _usable(candidate) and _in_stock(candidate):
+            if usable(candidate) and in_stock(candidate):
                 return candidate, False
     return None, False

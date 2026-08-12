@@ -21,7 +21,12 @@ MAX_MESSAGE = 3900
 """Telegram's hard limit is 4096; the margin covers entity overhead."""
 
 TERMINAL_ACTIONS = ("push", "cancel")
-"""After these the original keyboard is removed, so a stale tap cannot be repeated."""
+"""After these the original keyboard is removed, so a stale tap cannot be repeated.
+
+«swap» is deliberately absent: it replaces the draft with a new message carrying its
+own keyboard, and clearing the old one every time would litter the chat with dead
+cards the user may still want to scroll back to.
+"""
 
 
 def make_bot(token: str) -> Bot:
@@ -29,14 +34,22 @@ def make_bot(token: str) -> Bot:
 
 
 def _keyboard(reply: Reply) -> InlineKeyboardMarkup | None:
+    """One button per row, except where `same_row` packs them together.
+
+    The «⇄ N» swap controls are one per basket line, so a row each would bury «Надіслати
+    в Сільпо» under a column of them.
+    """
     if not reply.buttons:
         return None
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=b.label, callback_data=b.data, url=b.url)]
-            for b in reply.buttons
-        ]
-    )
+
+    rows: list[list[InlineKeyboardButton]] = []
+    for button in reply.buttons:
+        cell = InlineKeyboardButton(text=button.label, callback_data=button.data, url=button.url)
+        if button.same_row and rows:
+            rows[-1].append(cell)
+        else:
+            rows.append([cell])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def chunks(text: str, limit: int = MAX_MESSAGE) -> Iterator[str]:
