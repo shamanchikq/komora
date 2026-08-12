@@ -76,6 +76,11 @@ class DraftBasketRow(Base):
     coupon_notes: Mapped[str] = mapped_column(Text, default="[]")
     """Kept apart from savings_notes: a swap regenerates one and must not touch
     the other."""
+    removals: Mapped[str] = mapped_column(Text, default="[]")
+    """`CartRemoval` list, JSON-encoded — what confirming this basket takes OUT of the
+    Silpo cart. Persisted rather than recomputed because the two taps that authorise it
+    happen in different turns, and the second one must send exactly what the first one
+    showed."""
     warnings: Mapped[str] = mapped_column(Text, default="[]")
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 

@@ -217,7 +217,7 @@ async def _verified(
     right one is the worst outcome available, because the user may simply buy it.
     """
     pairs = [(line.description or "", line.name) for line in cart.lines]
-    mismatches = await find_mismatches(llm, pairs)
+    mismatches = await find_mismatches(llm, pairs, basket.title)
     if mismatches is None:
         return cart, True
     if not mismatches:

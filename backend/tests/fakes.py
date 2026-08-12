@@ -106,6 +106,11 @@ class FakeSilpo:
         self._slots = slots
         self._fails = fails or set()
         self.add_calls: list[list[dict[str, Any]]] = []
+        self.remove_calls: list[list[dict[str, Any]]] = []
+        self.write_order: list[str] = []
+        """Cart writes in the order they happened — the per-method lists cannot show
+        that adds run before removals, which is the property that decides whether a
+        half-finished sync leaves the user with too much or too little."""
 
         self._catalogue: dict[str, dict[str, Any]] = {}
         for group in (*self._results.values(), *self._replacements.values()):
@@ -153,6 +158,7 @@ class FakeSilpo:
         self, shopping_cart_id: str, products: Sequence[dict[str, Any]]
     ) -> dict[str, Any]:
         self.add_calls.append([dict(p) for p in products])
+        self.write_order.append("add")
         rejected = [p for p in products if p["productId"] in self._reject]
         if rejected:
             raise RuntimeError(f"Silpo rejected {rejected[0]['productId']}")
@@ -180,6 +186,13 @@ class FakeSilpo:
     async def remove_cart_products(
         self, shopping_cart_id: str, products: Sequence[dict[str, Any]]
     ) -> dict[str, Any]:
+        """Its schema declares `productId` alone, so the fake reads nothing else — a
+        caller that still sends quantity would pass here and fail on the real server."""
+        self.remove_calls.append([dict(p) for p in products])
+        self.write_order.append("remove")
+        rejected = [p for p in products if p["productId"] in self._reject]
+        if rejected:
+            raise RuntimeError(f"Silpo refused to remove {rejected[0]['productId']}")
         removing = {p["productId"] for p in products}
         self._cart = [p for p in self._cart if p["productId"] not in removing]
         return {"success": True}

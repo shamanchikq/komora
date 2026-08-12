@@ -111,6 +111,9 @@ What the script cannot cover. Needs `KOMORA_TELEGRAM_BOT_TOKEN` from
 - [x] A follow-up edit in plain language — «можна замість 3 упаковок яєць додати
       тільки 2?» — produced a corrected basket with «Ви змінили кількість з 3 на 2
       упаковки» as the reason. Not in the original plan; it works anyway.
+- [ ] An edit **after** the basket reached Silpo — «заміни ковбаски на салямі» →
+      the sheet says «Приберемо з кошика: …» → «Додати в кошик» → the replaced
+      product is gone from the real cart and the untouched lines are still there.
 - [x] «Яке грузинське вино є до 500 ₴?» → a free-form answer, no basket. Passes on
       `gemini-3.1-flash-lite` (3/3 in a harness against the shipped prompt and tools);
       fails on `gemma4:12b`, which answers without searching.
@@ -139,13 +142,20 @@ Found by the live runs on 2026-08-11/12, and left open deliberately.
   countable items the number is still whatever the model chose. Correcting it in plain
   language works; nothing anchors the *first* guess to what the household actually
   buys, which is what the habits engine (Plan 3) is for.
-- **Product choice is three defences deep, and still not certain.** A vague query once
+- **Product choice is four defences deep, and still not certain.** A vague query once
   returned an ice-cream cone for «основа для піци». Now: the model names a Silpo
   *category* alongside the query (browsing «Основи для піци» cannot return a cone); a
-  verification pass re-reads every pick against what was asked and re-searches the
-  mismatches; and «⇄ N» offers the next candidate per line. None of it is a guarantee —
-  a wrong category the model is confident about will still narrow to the wrong shelf,
-  and only the swap button recovers from that.
+  verification pass re-reads every pick against what was asked **and against what the
+  basket is for**, then re-searches the mismatches; and «⇄ N» offers the next candidate
+  per line. The basket's purpose was the missing piece — judged alone, a dry-cured
+  snack salami is a fine answer to «ковбаса салямі», and only «Інгредієнти для піци
+  пепероні» makes it obviously wrong. None of it is a guarantee: a wrong category the
+  model is confident about will still narrow to the wrong shelf, and only the swap
+  button recovers from that.
+- **Removals are matched lexically.** «Прибери ковбаски» is matched to synced lines by
+  shared word stems, so a request whose words do not land removes nothing and says so
+  rather than guessing. Deliberately strict in that direction: a false positive deletes
+  food from a real cart, a false negative costs two taps in the Silpo app.
 - **The free-form question path needs a frontier model.** Asked «яке грузинське вино є
   до 500 ₴?», three runs each on the same question and tools:
   `gemini-3.1-flash-lite` answered correctly 3/3; `gemma4:12b` never searched, 0/3, and

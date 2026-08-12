@@ -21,6 +21,7 @@ from typing import Protocol
 
 from komora.bot.render import render_cart, render_sync_preview, render_sync_report
 from komora.core.agent.loop import ForbiddenToolCall, run_agent
+from komora.core.agent.recap import draft_recap, sync_recap
 from komora.core.agent.tools import ToolSource
 from komora.core.alternatives import next_alternative
 from komora.core.llm.protocol import LLMClient, LLMUnavailable, Message
@@ -28,6 +29,7 @@ from komora.core.mcp.errors import McpError, NotAuthenticated
 from komora.core.mcp.protocol import SilpoClient
 from komora.core.models import ResolvedCart
 from komora.core.passes.promos import apply_savings
+from komora.core.passes.removals import match_removals
 from komora.core.pipeline import (
     CartContextMissing,
     SilpoCache,
@@ -199,10 +201,23 @@ async def on_text(services: Services, telegram_id: int, text: str) -> Reply:
         return Reply("Не зміг це опрацювати безпечно. Спробуйте сформулювати інакше.")
 
     basket = outcome.basket
-    rendered = render_cart(cart, basket.title, budget_cap=budget_cap, swappable=True)
-    await services.conversations.append(telegram_id, "assistant", f"[чернетка] {basket.title}")
+    if basket.removals:
+        cart = cart.model_copy(
+            update={
+                "removals": match_removals(
+                    basket.removals,
+                    await services.baskets.synced_lines(telegram_id),
+                    keep={ln.product_id for ln in cart.lines if not ln.unavailable},
+                )
+            }
+        )
 
-    if not cart.lines:
+    rendered = render_cart(cart, basket.title, budget_cap=budget_cap, swappable=True)
+    # The whole basket, not just its title. A follow-up edit is only possible if the
+    # model can see what it is editing — see core/agent/recap.py.
+    await services.conversations.append(telegram_id, "assistant", draft_recap(basket.title, cart))
+
+    if not cart.lines and not cart.removals:
         return Reply(rendered)
 
     basket_id = await services.baskets.create_from_cart(
@@ -309,7 +324,9 @@ async def _swap(
 
 async def _preview(services: Services, telegram_id: int, basket_id: int) -> Reply:
     cart = await services.baskets.load_cart(basket_id)
-    if cart is None or not [ln for ln in cart.lines if not ln.unavailable]:
+    if cart is None:
+        return Reply(STALE)
+    if not [ln for ln in cart.lines if not ln.unavailable] and not cart.removals:
         return Reply(NOTHING_TO_SEND)
 
     try:
@@ -348,6 +365,10 @@ async def _push(services: Services, telegram_id: int, basket_id: int) -> Reply:
     # incrementing them.
     if report.ok:
         await services.baskets.set_status(basket_id, "synced")
+
+    # What is in the real cart now. The next turn's edit is built on this: a model told
+    # only «[чернетка] …» cannot know these products left the draft and became goods.
+    await services.conversations.append(telegram_id, "assistant", sync_recap(report))
 
     buttons: list[Button] = []
     if report.checkout_web_link:

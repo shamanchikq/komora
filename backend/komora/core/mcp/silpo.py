@@ -146,9 +146,19 @@ class SilpoSession:
     async def remove_cart_products(
         self, shopping_cart_id: str, products: Sequence[dict[str, Any]]
     ) -> dict[str, Any]:
+        """Takes a product out of the cart entirely — quantity is not part of it.
+
+        Its item schema declares **`productId` alone**, and requires it alone. Passing
+        the four fields `add_or_update` wants would send three undeclared ones to the
+        call that deletes from a real cart, and would refuse a caller who has no
+        `quantity` to give — which is every caller, because a removal has none.
+        """
         return await self._call(
             "silpo_remove_cart_products",
-            {"shoppingCartId": shopping_cart_id, "products": [_cart_item(p) for p in products]},
+            {
+                "shoppingCartId": shopping_cart_id,
+                "products": [_cart_item(p, _REMOVE_ITEM_FIELDS) for p in products],
+            },
         )
 
     # --- Introspection ---
@@ -166,16 +176,20 @@ class SilpoSession:
 
 
 _CART_ITEM_FIELDS = ("productId", "companyId", "branchId", "quantity")
+_REMOVE_ITEM_FIELDS = ("productId",)
+"""The two cart writes declare different items — see `remove_cart_products`."""
 
 
-def _cart_item(product: dict[str, Any]) -> dict[str, Any]:
+def _cart_item(
+    product: dict[str, Any], fields: tuple[str, ...] = _CART_ITEM_FIELDS
+) -> dict[str, Any]:
     """Keep only what the schema declares.
 
     Silpo does not mark the object `additionalProperties: false`, but nothing verifies
-    that its validator agrees, and this is the one call whose failure loses the user
+    that its validator agrees, and these are the calls whose failure loses the user
     their basket.
     """
-    missing = [field for field in _CART_ITEM_FIELDS if product.get(field) is None]
+    missing = [field for field in fields if product.get(field) is None]
     if missing:
         raise ValueError(f"cart item is missing required fields {missing}: {product}")
-    return {field: product[field] for field in _CART_ITEM_FIELDS}
+    return {field: product[field] for field in fields}

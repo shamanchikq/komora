@@ -9,7 +9,7 @@ Two facts confirmed live (spec §3.1) shape all of it:
 
 from decimal import Decimal
 
-from komora.core.models import ResolvedCart, ResolvedLine
+from komora.core.models import CartRemoval, ResolvedCart, ResolvedLine
 from komora.core.sync import execute_sync, preview_sync
 from tests.fakes import COMPANY, CONTEXT, FakeSilpo, product
 
@@ -309,3 +309,97 @@ class TestLiveRepricing:
         """Every caller before the re-pricing existed passed no context."""
         preview = await preview_sync(self._cart("42.90", "42.90"), FakeSilpo())
         assert preview.adding_count == 1 and preview.drift is None
+
+
+class TestRemovals:
+    """«Заміни ковбаски на салямі» after a sync.
+
+    Before this, an edit could only ever append: the basket the user asked to change
+    was already in the Silpo cart and nothing could take it back out, so the reply
+    «Готово. Додано 4 позиції» was true and useless — the sausage they asked to be rid
+    of was still there, next to its replacement.
+    """
+
+    def _cart(self, *, removing: str, adding: str = "Салямі") -> ResolvedCart:
+        return ResolvedCart(
+            lines=[line(adding, "123.00")],
+            total=Decimal("123.00"),
+            removals=[CartRemoval(product_id=f"id-{removing}", name=removing)],
+        )
+
+    async def test_the_confirmation_sheet_names_what_will_be_removed(self) -> None:
+        mcp = FakeSilpo(existing=[in_silpo("Ковбаски", 123.00)])
+        preview = await preview_sync(self._cart(removing="Ковбаски"), mcp)
+        assert preview.removing == ["Ковбаски"]
+
+    async def test_a_removal_the_user_already_did_is_not_promised(self) -> None:
+        """The draft was built against what Komora believes it synced; the cart is the
+        authority, and it is read fresh."""
+        preview = await preview_sync(self._cart(removing="Ковбаски"), FakeSilpo())
+        assert preview.removing == []
+
+    async def test_removals_count_against_the_final_size(self) -> None:
+        mcp = FakeSilpo(existing=[in_silpo("Ковбаски", 123.00), in_silpo("Хліб")])
+        preview = await preview_sync(self._cart(removing="Ковбаски"), mcp)
+        assert preview.final_count == 2, "two in the cart, one added, one taken out"
+
+    async def test_the_product_actually_leaves_the_cart(self) -> None:
+        mcp = FakeSilpo(
+            {"Салямі": [product("Салямі", 123.00)]},
+            existing=[in_silpo("Ковбаски", 123.00), in_silpo("Хліб")],
+        )
+        report = await execute_sync(self._cart(removing="Ковбаски"), mcp)
+        assert report.ok
+        assert report.removed == ["Ковбаски"]
+        assert [p["productId"] for p in mcp._cart] == ["id-Хліб", "id-Салямі"]
+
+    async def test_only_product_id_is_sent(self) -> None:
+        """`silpo_remove_cart_products` declares `productId` alone. The four fields the
+        add call wants would send three undeclared ones to a delete."""
+        mcp = FakeSilpo(existing=[in_silpo("Ковбаски", 123.00)])
+        await execute_sync(self._cart(removing="Ковбаски"), mcp)
+        assert mcp.remove_calls == [[{"productId": "id-Ковбаски"}]]
+
+    async def test_a_removal_that_silpo_refuses_is_not_reported_as_success(self) -> None:
+        mcp = FakeSilpo(existing=[in_silpo("Ковбаски", 123.00)], reject={"id-Ковбаски"})
+        report = await execute_sync(self._cart(removing="Ковбаски"), mcp)
+        assert not report.ok
+        assert [name for name, _ in report.remove_failed] == ["Ковбаски"]
+        assert report.removed == []
+
+    async def test_a_target_already_gone_is_not_a_failure(self) -> None:
+        """The user got what they asked for, by their own hand."""
+        mcp = FakeSilpo({"Салямі": [product("Салямі", 123.00)]})
+        report = await execute_sync(self._cart(removing="Ковбаски"), mcp)
+        assert report.ok and report.remove_failed == [] and mcp.remove_calls == []
+
+    async def test_a_product_being_added_is_never_removed(self) -> None:
+        """A model that names the same product in both lists must not have Komora add
+        it and then delete it in one confirmation."""
+        both = ResolvedCart(
+            lines=[line("Ковбаски", "123.00")],
+            total=Decimal("123.00"),
+            removals=[CartRemoval(product_id="id-Ковбаски", name="Ковбаски")],
+        )
+        mcp = FakeSilpo({"Ковбаски": [product("Ковбаски", 123.00)]})
+        report = await execute_sync(both, mcp)
+        assert mcp.remove_calls == []
+        assert report.added == ["Ковбаски"]
+
+    async def test_a_basket_that_only_removes_still_syncs(self) -> None:
+        """«прибери ковбаски» is a whole request; it adds nothing."""
+        mcp = FakeSilpo(existing=[in_silpo("Ковбаски", 123.00)])
+        removal_only = ResolvedCart(
+            lines=[], removals=[CartRemoval(product_id="id-Ковбаски", name="Ковбаски")]
+        )
+        report = await execute_sync(removal_only, mcp)
+        assert report.ok and report.removed == ["Ковбаски"] and mcp._cart == []
+
+    async def test_adds_run_before_removals(self) -> None:
+        """If the two disagree the user is left holding too much, never too little."""
+        mcp = FakeSilpo(
+            {"Салямі": [product("Салямі", 123.00)]},
+            existing=[in_silpo("Ковбаски", 123.00)],
+        )
+        await execute_sync(self._cart(removing="Ковбаски"), mcp)
+        assert mcp.write_order == ["add", "remove"]

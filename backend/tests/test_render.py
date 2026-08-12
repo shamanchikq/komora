@@ -240,7 +240,7 @@ class TestSyncReport:
         report = SyncReport(ok=False, added=["Молоко"], failed=[("Ікра", "немає в наявності")])
         text = render_sync_report(report)
         assert "Готово" not in text
-        assert "Додалося не все" in text
+        assert "Вийшло не все" in text
         assert "Ікра — немає в наявності" in text
 
     def test_no_checkout_link_comes_with_the_reason(self) -> None:

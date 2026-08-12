@@ -342,17 +342,8 @@ async def main(args: argparse.Namespace) -> int:
             for line in added:
                 if line.product_id not in before:
                     try:
-                        await silpo.remove_cart_products(
-                            cart_id,
-                            [
-                                {
-                                    "productId": line.product_id,
-                                    "companyId": line.company_id,
-                                    "branchId": line.branch_id,
-                                    "quantity": line.qty,
-                                }
-                            ],
-                        )
+                        # `productId` alone — the removal schema declares nothing else.
+                        await silpo.remove_cart_products(cart_id, [{"productId": line.product_id}])
                     except Exception as exc:
                         note(f"could not remove {line.name}: {exc}")
 

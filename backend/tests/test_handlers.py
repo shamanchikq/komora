@@ -250,7 +250,7 @@ class TestConfirmation:
         services, _, basket_id = await self._draft(sessions, mcp=silpo)
         reply = await on_callback(services, USER, f"push:{basket_id}")
 
-        assert "Додалося не все" in reply.text
+        assert "Вийшло не все" in reply.text
         assert "Хліб Київський" in reply.text
         assert await services.baskets.get_status(basket_id) == "draft"
         assert "push" in str(button_data(reply)), "a retry has to be offered"
@@ -465,3 +465,110 @@ class TestSwapPreservesTheRest:
         assert after is not None
         assert len(after.savings_notes) == 1, "one line, one note — not two"
         assert "Молоко Друге" in after.savings_notes[0]
+
+
+REPLACEMENT_CALL = ToolCall(
+    PROPOSE_BASKET,
+    {
+        "title": "Заміна ковбаски",
+        "lines": [{"description": "салямі", "quantity": 1, "reason_text": "ви попросили"}],
+        "removals": ["хліб"],
+    },
+)
+
+
+class TestEditingWhatIsAlreadyInTheCart:
+    """The reported bug, in full.
+
+    «Додай інгредієнти для піци» → sent to Silpo → «заміни ковбаски на салямі» added a
+    second sausage and left the first one sitting in the cart. An edit could only ever
+    append, because nothing in the bot could take a product back out.
+    """
+
+    async def _synced(self, sessions, silpo: FakeSilpo) -> Services:
+        """Get to the state the bug needs: a basket already in the real Silpo cart."""
+        services, _, _ = services_for(sessions, mcp=silpo)
+        await on_text(services, USER, "молоко і хліб")
+        basket_id = (await services.baskets.get_active(USER)).id
+        await on_callback(services, USER, f"sync:{basket_id}")
+        await on_callback(services, USER, f"push:{basket_id}")
+        assert {p["name"] for p in silpo._cart} == {"Молоко Яготинське 2,6%", "Хліб Київський"}
+        return services
+
+    async def test_a_replacement_removes_the_product_it_replaces(self, sessions) -> None:
+        silpo = FakeSilpo(CATALOGUE | {"салямі": [product("Ковбаса Салямі", 123.00)]})
+        services = await self._synced(sessions, silpo)
+
+        services.llm._responses.append(LLMResponse(tool_calls=(REPLACEMENT_CALL,)))
+        reply = await on_text(services, USER, "заміни хліб на салямі")
+        assert "Приберемо з кошика" in reply.text and "Хліб Київський" in reply.text
+
+        basket_id = (await services.baskets.get_active(USER)).id
+        preview = await on_callback(services, USER, f"sync:{basket_id}")
+        assert "Приберемо з кошика" in preview.text, "the tap that authorises it says so"
+
+        await on_callback(services, USER, f"push:{basket_id}")
+        names = {p["name"] for p in silpo._cart}
+        assert names == {"Молоко Яготинське 2,6%", "Ковбаса Салямі"}, (
+            "the replaced product must be gone, and the untouched one must remain"
+        )
+
+    async def test_only_what_komora_synced_is_a_candidate(self, sessions) -> None:
+        """A product the user put in their own cart is never removed, however well the
+        words match — Komora cannot tell it from one of its own."""
+        silpo = FakeSilpo(
+            CATALOGUE | {"салямі": [product("Ковбаса Салямі", 123.00)]},
+            existing=[
+                {
+                    "productId": "id-Хліб Домашній",
+                    "companyId": "c",
+                    "branchId": "b",
+                    "name": "Хліб Домашній",
+                    "price": 30.0,
+                    "quantity": 1,
+                }
+            ],
+        )
+        services, _, _ = services_for(sessions, mcp=silpo)
+        services.llm._responses.append(LLMResponse(tool_calls=(REPLACEMENT_CALL,)))
+
+        reply = await on_text(services, USER, "заміни хліб на салямі")
+        assert "Приберемо з кошика" not in reply.text
+
+        basket_id = (await services.baskets.get_active(USER)).id
+        await on_callback(services, USER, f"sync:{basket_id}")
+        await on_callback(services, USER, f"push:{basket_id}")
+        assert "id-Хліб Домашній" in {p["productId"] for p in silpo._cart}
+
+    async def test_the_removal_survives_the_two_taps(self, sessions) -> None:
+        """The draft is persisted between the tap that shows it and the tap that sends
+        it, so the removal has to be stored, not recomputed."""
+        silpo = FakeSilpo(CATALOGUE | {"салямі": [product("Ковбаса Салямі", 123.00)]})
+        services = await self._synced(sessions, silpo)
+        services.llm._responses.append(LLMResponse(tool_calls=(REPLACEMENT_CALL,)))
+        await on_text(services, USER, "заміни хліб на салямі")
+
+        reloaded = await services.baskets.load_cart((await services.baskets.get_active(USER)).id)
+        assert [r.name for r in reloaded.removals] == ["Хліб Київський"]
+
+
+class TestGroundingTheNextTurn:
+    async def test_the_model_is_told_what_the_basket_held(self, sessions) -> None:
+        """History used to carry the title alone, so a follow-up edit had nothing to
+        edit and the model invented a replacement basket."""
+        services, _, _ = services_for(sessions)
+        await on_text(services, USER, "молоко і хліб")
+
+        recorded = [m.content for m in await services.conversations.last_n(USER)]
+        assert any("Молоко Яготинське 2,6%" in text for text in recorded)
+        assert any("Хліб Київський" in text for text in recorded)
+
+    async def test_the_model_is_told_the_products_reached_the_real_cart(self, sessions) -> None:
+        services, _, _ = services_for(sessions)
+        await on_text(services, USER, "молоко і хліб")
+        basket_id = (await services.baskets.get_active(USER)).id
+        await on_callback(services, USER, f"sync:{basket_id}")
+        await on_callback(services, USER, f"push:{basket_id}")
+
+        recorded = [m.content for m in await services.conversations.last_n(USER)]
+        assert any("надіслано в кошик Сільпо" in text for text in recorded)

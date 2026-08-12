@@ -153,14 +153,23 @@ def render_cart(
     with no caption reads as decoration, and a control nobody understands is a control
     nobody uses.
     """
+    removals = (
+        ["", f"<b>Приберемо з кошика Сільпо:</b> {', '.join(esc(r.name) for r in cart.removals)}"]
+        if cart.removals
+        else []
+    )
+
     if not cart.lines:
-        return (
-            f"<b>{esc(title)}</b>\n\nНічого не вдалося підібрати.\n"
-            + "\n".join(warning_text(w) for w in cart.warnings)
+        # «прибери ковбаски» is a whole basket: nothing to add, something to take out.
+        # Only a basket with neither has failed.
+        body = removals or ["", "Нічого не вдалося підібрати."]
+        return "\n".join(
+            [f"<b>{esc(title)}</b>", *body, *(warning_text(w) for w in cart.warnings)]
         ).strip()
 
     blocks = [f"<b>{esc(title)}</b>", ""]
     blocks += [line_text(i, line) for i, line in enumerate(cart.lines, start=1)]
+    blocks += removals
 
     counted = [ln for ln in cart.lines if not ln.unavailable]
     blocks += ["", f"<b>Разом: {money(cart.total)}</b> · {items(len(counted))}"]
@@ -198,14 +207,26 @@ def render_sync_preview(preview: SyncPreview) -> str:
     blocks = ["<b>Надіслати в Сільпо?</b>", ""]
 
     if preview.existing_count:
+        # «не чіпаємо» is a promise, so it is only made when it is true — with a
+        # removal pending, the exception is named a few lines down instead.
+        rest = "решти не чіпаємо" if preview.removing else "не чіпаємо"
         blocks.append(
             f"У вашому кошику Сільпо вже {items(preview.existing_count)} "
-            f"на {money(preview.existing_total)} — не чіпаємо."
+            f"на {money(preview.existing_total)} — {rest}."
         )
     else:
         blocks.append("Ваш кошик Сільпо зараз порожній.")
 
-    blocks.append(f"Додаємо {items(preview.adding_count)} на {money(preview.adding_total)}.")
+    if preview.adding_count:
+        blocks.append(f"Додаємо {items(preview.adding_count)} на {money(preview.adding_total)}.")
+
+    if preview.removing:
+        names = ", ".join(esc(n) for n in preview.removing)
+        blocks += [
+            "",
+            f"<b>Приберемо з кошика:</b> {names}.",
+            "Це те, що Комора додала раніше. Решти у вашому кошику не торкаємось.",
+        ]
 
     if preview.overlapping:
         names = ", ".join(esc(n) for n in preview.overlapping)
@@ -234,16 +255,30 @@ def render_sync_preview(preview: SyncPreview) -> str:
 
 def render_sync_report(report: SyncReport) -> str:
     """What actually landed. A partial sync is never dressed up as a success."""
+    removed_line = (
+        f"Прибрано: {', '.join(esc(n) for n in report.removed)}." if report.removed else ""
+    )
+
     if report.ok and report.added:
         blocks = [f"<b>Готово.</b> Додано {items(len(report.added))} у кошик Сільпо."]
+        if removed_line:
+            blocks.append(removed_line)
+    elif report.ok and report.removed:
+        blocks = [f"<b>Готово.</b> {removed_line}"]
     elif report.ok:
         blocks = ["Нічого додавати — кошик порожній."]
     else:
-        blocks = ["<b>Додалося не все.</b>"]
+        blocks = ["<b>Вийшло не все.</b>"]
         if report.added:
             blocks.append(f"Додано: {', '.join(esc(n) for n in report.added)}")
-        blocks.append("Не вдалося:")
-        blocks += [f"• {esc(name)} — {esc(error)}" for name, error in report.failed]
+        if removed_line:
+            blocks.append(removed_line)
+        if report.failed:
+            blocks.append("Не вдалося додати:")
+            blocks += [f"• {esc(name)} — {esc(error)}" for name, error in report.failed]
+        if report.remove_failed:
+            blocks.append("Не вдалося прибрати — ці позиції лишилися в кошику:")
+            blocks += [f"• {esc(name)} — {esc(error)}" for name, error in report.remove_failed]
         blocks.append("")
         blocks.append("Можна спробувати ще раз — повторне надсилання нічого не подвоїть.")
 

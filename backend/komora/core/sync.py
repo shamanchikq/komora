@@ -19,7 +19,13 @@ from decimal import Decimal
 from typing import Any
 
 from komora.core.mcp.protocol import SilpoClient
-from komora.core.models import ResolvedCart, ResolvedLine, SearchContext, SyncReport
+from komora.core.models import (
+    CartRemoval,
+    ResolvedCart,
+    ResolvedLine,
+    SearchContext,
+    SyncReport,
+)
 from komora.core.passes.resolve import flatten_search
 
 DRIFT_TOLERANCE = Decimal("0.02")
@@ -37,6 +43,11 @@ class SyncPreview:
     now_unavailable: list[str] = field(default_factory=list)
     """Drafted products Silpo no longer offers. They are still sent — the cart write
     is the authority — but the user is told before confirming."""
+    removing: list[str] = field(default_factory=list)
+    """Products this confirmation takes OUT of the cart, checked against a fresh read.
+
+    Anything the user has already removed themselves is dropped here rather than
+    promised and then silently not done."""
     blocking_validations: list[str] = field(default_factory=list)
     """Errors from `cart.calculation.validations[]` — these stop checkout."""
     drift: tuple[Decimal, Decimal] | None = None
@@ -44,7 +55,7 @@ class SyncPreview:
 
     @property
     def final_count(self) -> int:
-        return self.existing_count + self.adding_count - len(self.overlapping)
+        return self.existing_count + self.adding_count - len(self.overlapping) - len(self.removing)
 
 
 def _cart_body(payload: Any) -> dict[str, Any]:
@@ -103,6 +114,17 @@ def _blocking(payload: Any, *, adding: bool = False) -> list[str]:
 
 def _sendable(cart: ResolvedCart) -> list[ResolvedLine]:
     return [line for line in cart.lines if not line.unavailable]
+
+
+def _removable(cart: ResolvedCart, sendable: list[ResolvedLine]) -> list[CartRemoval]:
+    """Removals this basket is not simultaneously adding.
+
+    Adding a product and deleting it in the same confirmation would leave the cart in
+    whichever state the two calls happened to finish in. The add wins: the user is
+    looking at a draft that lists it.
+    """
+    adding = {line.product_id for line in sendable}
+    return [removal for removal in cart.removals if removal.product_id not in adding]
 
 
 def _payload(line: ResolvedLine) -> dict[str, Any]:
@@ -194,28 +216,40 @@ async def preview_sync(
         adding_total=live_total,
         overlapping=[line.name for line in adding if line.product_id in existing_ids],
         now_unavailable=gone,
+        # Only what is demonstrably in the cart right now: the draft's removal list was
+        # matched against what Komora *believes* it synced, and the user may have
+        # emptied the cart or removed the item themselves since.
+        removing=[r.name for r in _removable(cart, adding) if r.product_id in existing_ids],
         blocking_validations=_blocking(current, adding=bool(adding)),
         drift=drift,
     )
 
 
 async def execute_sync(cart: ResolvedCart, mcp: SilpoClient) -> SyncReport:
-    """Append the draft to the user's cart and report what actually landed."""
+    """Apply the draft to the user's cart and report what actually happened.
+
+    Adds run before removals. If the two disagree — a cart write fails, the connection
+    drops between them — the user is left holding too much rather than too little,
+    which is the recoverable direction: an extra item costs two taps in the Silpo app,
+    a deleted one has to be found and chosen again.
+    """
     sendable = _sendable(cart)
-    if not sendable:
+    removals = _removable(cart, sendable)
+    if not sendable and not removals:
         return SyncReport(ok=True)
 
     cart_id = str((await mcp.get_my_shopping_cart()).get("shoppingCartId", ""))
     errors: dict[str, str] = {}
 
-    try:
-        await mcp.add_or_update_cart_products(cart_id, [_payload(line) for line in sendable])
-    except Exception:
-        for line in sendable:
-            try:
-                await mcp.add_or_update_cart_products(cart_id, [_payload(line)])
-            except Exception as exc:
-                errors[line.product_id] = str(exc)
+    if sendable:
+        try:
+            await mcp.add_or_update_cart_products(cart_id, [_payload(line) for line in sendable])
+        except Exception:
+            for line in sendable:
+                try:
+                    await mcp.add_or_update_cart_products(cart_id, [_payload(line)])
+                except Exception as exc:
+                    errors[line.product_id] = str(exc)
 
     # Ground truth: what is in the cart now, not what the write call claimed.
     landed = {
@@ -228,12 +262,38 @@ async def execute_sync(cart: ResolvedCart, mcp: SilpoClient) -> SyncReport:
         if line.product_id not in landed
     ]
 
+    # A removal target that is no longer in the cart needs no call and is not a
+    # failure — the user got what they asked for, by their own hand or ours.
+    targets = [removal for removal in removals if removal.product_id in landed]
+    remove_errors: dict[str, str] = {}
+    if targets:
+        try:
+            await mcp.remove_cart_products(
+                cart_id, [{"productId": removal.product_id} for removal in targets]
+            )
+        except Exception:
+            for removal in targets:
+                try:
+                    await mcp.remove_cart_products(cart_id, [{"productId": removal.product_id}])
+                except Exception as exc:
+                    remove_errors[removal.product_id] = str(exc)
+
     final_payload = await mcp.get_shopping_cart_by_id(cart_id)
     final = _cart_body(final_payload)
+    remaining = {str(p.get("productId")) for p in _lines_of(final_payload)}
+    removed = [r.name for r in targets if r.product_id not in remaining]
+    remove_failed = [
+        (r.name, remove_errors.get(r.product_id, "не прибралося"))
+        for r in targets
+        if r.product_id in remaining
+    ]
+
     return SyncReport(
-        ok=not failed,
+        ok=not failed and not remove_failed,
         added=added,
         failed=failed,
+        removed=removed,
+        remove_failed=remove_failed,
         checkout_web_link=final.get("checkoutWebLink"),
         checkout_mobile_link=final.get("checkoutMobileLink"),
         # Why there may be no link. Observed live: a cart holding a line that exceeds

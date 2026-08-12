@@ -25,7 +25,7 @@ hand off with a checkout link.
 All from `backend/`.
 
 ```bash
-uv run pytest              # 588 tests
+uv run pytest              # 664 tests
 uv run ruff check .        # lint
 uv run ruff format .       # format
 uv run mypy komora         # strict
@@ -61,8 +61,10 @@ komora/
 │   ├── mcp/       protocol + silpo.py (the real client) + gateway.py (per-user OAuth)
 │   ├── llm/       LLMClient protocol; gemini/ and ollama/ implementations
 │   ├── agent/     the loop: read tools only, propose_basket, guardrails
+│   │              + recap.py (what the model is told it did last turn)
 │   ├── passes/    restrictions -> resolve -> verify -> savings -> budget
 │   │              + categories.py (Silpo's taxonomy, beats free-text search)
+│   │              + removals.py («прибери ковбаски» -> a product Komora synced)
 │   ├── alternatives.py  «інший варіант» — re-runs a line's own query
 │   ├── pipeline.py  composes the passes; load_context reads branch + timeslot
 │   └── sync.py    preview + append to the real Silpo cart
@@ -98,6 +100,13 @@ every line, in Ukrainian.
 **Nothing reaches Silpo without confirmation**, and `clear_shopping_cart` is never
 called unless the user explicitly asks to start over.
 
+**Komora removes only what Komora added.** An edit after a sync («заміни ковбаски на
+салямі») has to take the old product out, or the cart just accumulates. The model names
+what to drop in words; `passes/removals.py` matches that against *lines Komora itself
+synced* and nothing else, because a product the user chose in the Silpo app is
+indistinguishable from one of ours and deleting it is unrecoverable. Every match is
+named on the confirmation sheet before the tap that sends it.
+
 **One model request per turn is the budget.** Gemini's free tier limits requests per
 minute and per day, not tokens — so a longer prompt is free and a second round trip is
 not. The verification pass covers a whole basket in one call; category hints ride along
@@ -121,6 +130,14 @@ client, so every basket action checks `basket.user_id` against the sender.
 `/start` → OAuth → «Потрібне молоко і яйця» → reviewed draft → preview → items in the
 real Silpo cart. Verified on **@moya_komora_bot**, 2026-08-12. Plain-language edits to a
 draft («замість 3 упаковок — тільки 2») work, which the plan never asked for.
+
+Editing a basket **after** it reached Silpo took a second pass: the reply «Готово.
+Додано 4 позиції» was true and useless, because the sausage the user asked to replace
+was still in the cart next to its replacement. Three things were wrong at once — history
+recorded a draft as its title alone, so the model could not see what it was editing; no
+bot path could take a product out; and the verification pass judged each line without
+knowing the basket was a pizza. Untested on the live bot — it is the open checklist item
+in [backend/README.md](backend/README.md#manual-checklist).
 
 `scripts/smoke_e2e.py` runs everything except Telegram headlessly against the live
 server — use it before any manual run. Seven defects came out of these runs: cart writes

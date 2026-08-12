@@ -26,7 +26,12 @@ DEGRADED_VERIFY: Final = "degraded:verification"
 SYSTEM: Final = """\
 Ти перевіряєш, чи підібрані товари відповідають тому, що просив користувач.
 
-Для кожної позиції тобі дають ЗАПИТ і НАЗВУ обраного товару. Признач кожній позиції:
+Перший рядок повідомлення — для чого цей кошик. Це частина перевірки: товар буває
+правильної категорії, але не для цієї страви. Для піци пепероні «ковбаса сирокопчена
+салямі» — ok, а «м'ясний снек до пива» чи «сиров'ялені міні-салямі фасовані» —
+mismatch, бо на піцу таке не кладуть.
+
+Далі для кожної позиції тобі дають ЗАПИТ і НАЗВУ обраного товару. Признач кожній:
   ok      — товар підходить під запит (навіть якщо це інший бренд чи розмір)
   mismatch — це не той товар: інша категорія, інше призначення, явно не те
 
@@ -79,9 +84,15 @@ DECLARATION: Final = ToolDecl(
 
 
 async def find_mismatches(
-    llm: LLMClient, pairs: Sequence[tuple[str, str]]
+    llm: LLMClient, pairs: Sequence[tuple[str, str]], purpose: str = ""
 ) -> dict[int, str] | None:
     """Index -> a better query, for lines the model says do not match.
+
+    `purpose` is the basket's own title — «Інгредієнти для піци пепероні». Without it
+    each line is judged alone, and alone a dry-cured snack salami is a perfectly good
+    answer to «ковбаса салямі»; only the basket says it is going on a pizza. It rides
+    the user message rather than the system prompt so the cached prefix stays byte-
+    identical across calls.
 
     Returns `None` when the check could not be run, which the caller reports as a
     degraded cart. An empty dict means everything passed — the two must not be
@@ -94,6 +105,8 @@ async def find_mismatches(
         f"{i}. ЗАПИТ: «{description}» → ОБРАНО: «{name}»"
         for i, (description, name) in enumerate(pairs)
     )
+    heading = f"КОШИК: «{purpose.strip()}»" if purpose.strip() else "КОШИК: не вказано"
+    listing = f"{heading}\n\n{listing}"
     try:
         response = await llm.complete(
             system=SYSTEM.format(tool=REPORT_TOOL),

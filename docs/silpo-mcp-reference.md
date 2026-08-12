@@ -150,8 +150,25 @@ Two consequences:
    result is 2. Never promise addition in a confirmation UI for a product already in
    the cart.
 
+`remove_cart_products` takes a **different item** — read its schema, do not assume it
+mirrors the add:
+
+```jsonc
+{"productId"}   // the only declared field, and the only required one
+```
+
+No `companyId`, no `branchId`, and no `quantity`: a removal takes the line out
+entirely, so there is no amount to give. Sharing the add's four-field builder was
+wrong twice over — it sent three undeclared fields to a *delete*, and it rejected any
+caller that had no quantity to supply, which is every caller. (The A1 probe did send
+all four and the server accepted them, so this is unverified surface rather than an
+observed failure. Narrow it anyway: an accepted-today extra on a delete call is not a
+guarantee worth holding.)
+
 `clear_shopping_cart` exists and is never called by Komora except on an explicit
-"start over" from the user.
+"start over" from the user. Removal of *named* products is separate and does happen —
+Komora offers it only for lines it synced itself, and only behind the same second tap
+that authorises an add.
 
 ## 4.1 Time slots — the parameter that is optional in the schema and required in life
 

@@ -65,10 +65,37 @@ class DraftBasket(BaseModel):
     """Shown as the heading and stored as the basket's name."""
     intent: str
     lines: list[DraftLine]
+    removals: list[Prose] = Field(default_factory=list)
+    """What the user asked to take back out, in their own words — «ковбаски пепероні».
+
+    A basket already sent to Silpo cannot be edited by proposing a new one: appending
+    a replacement leaves the original sitting in the cart, which is exactly what the
+    user asked to be rid of. These are *descriptions*, never SKUs — the model names
+    what to drop and `passes/removals.py` decides whether anything Komora added
+    actually matches.
+    """
     warnings: list[str] = Field(default_factory=list)
     """Carried forward into the ResolvedCart — e.g. a line dropped by a restriction."""
 
     _clean = field_validator("title")(clean_prose)
+
+    @field_validator("removals")
+    @classmethod
+    def _clean_removals(cls, value: list[str]) -> list[str]:
+        return [cleaned for cleaned in (clean_prose(item) for item in value) if cleaned]
+
+
+class CartRemoval(BaseModel):
+    """One product to take out of the user's real Silpo cart.
+
+    Only ever built from a line Komora itself synced. Nothing the user put in their
+    cart by hand is a candidate: Komora is a guest there, and a grocery agent that
+    deletes things it did not add is not one anybody should run.
+    """
+
+    product_id: str
+    name: str
+    """Shown on the confirmation sheet — a removal has to be recognisable to approve."""
 
 
 class SearchContext(BaseModel):
@@ -154,6 +181,13 @@ class ResolvedCart(BaseModel):
     product must recompute the discounts and leave the coupons alone. Sharing one list
     meant a swap silently dropped «-10% на онлайн чек».
     """
+    removals: list[CartRemoval] = Field(default_factory=list)
+    """Products to take out of the Silpo cart when this basket is confirmed.
+
+    Deliberately not `lines`: they are not part of the basket's total, they are not
+    rendered as products, and they need their own line on the confirmation sheet. The
+    user is agreeing to two different things, so they are shown as two different things.
+    """
     warnings: list[str] = Field(default_factory=list)
     """Degraded-mode labels, e.g. "degraded:coupons". Surfaced, never swallowed."""
 
@@ -164,6 +198,10 @@ class SyncReport(BaseModel):
     added: list[str] = Field(default_factory=list)
     failed: list[tuple[str, str]] = Field(default_factory=list)
     """(product name, error) for each line Silpo rejected."""
+    removed: list[str] = Field(default_factory=list)
+    remove_failed: list[tuple[str, str]] = Field(default_factory=list)
+    """A removal that did not happen counts against `ok` exactly like a failed add:
+    the user asked for the cart to end up a certain way and it did not."""
     checkout_web_link: str | None = None
     checkout_mobile_link: str | None = None
     """Silpo's tool descriptions ask for both — «Оформити на сайті» and «в застосунку».

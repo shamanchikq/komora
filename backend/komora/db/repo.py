@@ -11,7 +11,7 @@ from typing import Any
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from komora.core.models import BasketStatus, ResolvedCart, ResolvedLine
+from komora.core.models import BasketStatus, CartRemoval, ResolvedCart, ResolvedLine
 from komora.db.tables import (
     ConversationMessage,
     DraftBasketRow,
@@ -21,6 +21,16 @@ from komora.db.tables import (
 )
 
 _REGISTRATION_ID = 1
+
+SYNCED_BASKETS = 5
+"""How far back «прибери молоко» may reach.
+
+Bounded because a removal candidate is a product Komora believes is still in the cart,
+and that belief decays: the user checks out, empties the cart, or removes the item in
+the Silpo app. A stale candidate is harmless — `sync` only removes what a fresh read
+shows is actually there — but the list is shown on the confirmation sheet, and offering
+to remove something bought last month would be nonsense.
+"""
 
 
 class UserRepo:
@@ -137,6 +147,27 @@ class ConversationRepo:
             return list(reversed(result.scalars().all()))
 
 
+def _line(item: DraftItem) -> ResolvedLine:
+    """One stored row back into the domain object the passes work with."""
+    return ResolvedLine(
+        description=item.description,
+        category=item.category,
+        product_id=item.product_id,
+        company_id=item.company_id,
+        branch_id=item.branch_id,
+        name=item.name,
+        qty=item.qty,
+        unit=item.unit,
+        unit_price=Decimal(str(item.unit_price)),
+        old_price=(Decimal(str(item.old_price)) if item.old_price is not None else None),
+        reason_kind=item.reason_kind,
+        reason_text=item.reason_text,
+        substituted_from=item.substituted_from,
+        optional=item.optional,
+        unavailable=item.unavailable,
+    )
+
+
 class BasketRepo:
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
         self._sessions = sessions
@@ -167,6 +198,7 @@ class BasketRepo:
                 estimated_savings=cart.estimated_savings,
                 savings_notes=json.dumps(cart.savings_notes, ensure_ascii=False),
                 coupon_notes=json.dumps(cart.coupon_notes, ensure_ascii=False),
+                removals=json.dumps([r.model_dump() for r in cart.removals], ensure_ascii=False),
                 warnings=json.dumps(cart.warnings, ensure_ascii=False),
             )
             session.add(basket)
@@ -221,36 +253,48 @@ class BasketRepo:
                 .where(DraftItem.basket_id == basket_id, DraftItem.removed.is_(False))
                 .order_by(DraftItem.position)
             )
-            lines = [
-                ResolvedLine(
-                    description=item.description,
-                    category=item.category,
-                    product_id=item.product_id,
-                    company_id=item.company_id,
-                    branch_id=item.branch_id,
-                    name=item.name,
-                    qty=item.qty,
-                    unit=item.unit,
-                    unit_price=Decimal(str(item.unit_price)),
-                    old_price=(
-                        Decimal(str(item.old_price)) if item.old_price is not None else None
-                    ),
-                    reason_kind=item.reason_kind,
-                    reason_text=item.reason_text,
-                    substituted_from=item.substituted_from,
-                    optional=item.optional,
-                    unavailable=item.unavailable,
-                )
-                for item in result.scalars().all()
-            ]
             return ResolvedCart(
-                lines=lines,
+                lines=[_line(item) for item in result.scalars().all()],
                 total=Decimal(str(basket.total)),
                 estimated_savings=Decimal(str(basket.estimated_savings)),
                 savings_notes=json.loads(basket.savings_notes),
                 coupon_notes=json.loads(basket.coupon_notes),
+                removals=[CartRemoval.model_validate(r) for r in json.loads(basket.removals)],
                 warnings=json.loads(basket.warnings),
             )
+
+    async def synced_lines(
+        self, telegram_id: int, baskets: int = SYNCED_BASKETS
+    ) -> list[ResolvedLine]:
+        """Everything Komora has put in this user's Silpo cart recently, newest first.
+
+        The candidate set for «прибери…» — and the only one. Komora never offers to
+        remove a product it did not add, because it cannot tell one the user chose in
+        the Silpo app from one of its own, and guessing wrong deletes real food.
+
+        Unavailable lines are excluded: they were never sent, so they are not there.
+        """
+        async with self._sessions() as session:
+            recent = (
+                select(DraftBasketRow.id)
+                .where(
+                    DraftBasketRow.user_id == telegram_id,
+                    DraftBasketRow.status == "synced",
+                )
+                .order_by(DraftBasketRow.id.desc())
+                .limit(baskets)
+                .scalar_subquery()
+            )
+            result = await session.execute(
+                select(DraftItem)
+                .where(
+                    DraftItem.basket_id.in_(recent),
+                    DraftItem.removed.is_(False),
+                    DraftItem.unavailable.is_(False),
+                )
+                .order_by(DraftItem.basket_id.desc(), DraftItem.position)
+            )
+            return [_line(item) for item in result.scalars().all()]
 
     async def replace_item(self, basket_id: int, position: int, line: ResolvedLine) -> bool:
         """Swap one line's product, keeping its place in the basket.
