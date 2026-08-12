@@ -19,7 +19,8 @@ from decimal import Decimal
 from typing import Any
 
 from komora.core.mcp.protocol import SilpoClient
-from komora.core.models import ResolvedCart, ResolvedLine, SyncReport
+from komora.core.models import ResolvedCart, ResolvedLine, SearchContext, SyncReport
+from komora.core.passes.resolve import flatten_search
 
 DRIFT_TOLERANCE = Decimal("0.02")
 """Two percent. Below that, re-confirming costs the user more than it tells them."""
@@ -33,6 +34,9 @@ class SyncPreview:
     adding_total: Decimal
     overlapping: list[str] = field(default_factory=list)
     """Products already in the Silpo cart. Their quantity will be **replaced**."""
+    now_unavailable: list[str] = field(default_factory=list)
+    """Drafted products Silpo no longer offers. They are still sent — the cart write
+    is the authority — but the user is told before confirming."""
     blocking_validations: list[str] = field(default_factory=list)
     """Errors from `cart.calculation.validations[]` — these stop checkout."""
     drift: tuple[Decimal, Decimal] | None = None
@@ -116,8 +120,52 @@ def _payload(line: ResolvedLine) -> dict[str, Any]:
     }
 
 
-async def preview_sync(cart: ResolvedCart, mcp: SilpoClient) -> SyncPreview:
-    """Everything the confirmation sheet needs, read fresh from Silpo."""
+async def _reprice(
+    lines: list[ResolvedLine], mcp: SilpoClient, context: SearchContext | None
+) -> dict[str, tuple[Decimal, bool]]:
+    """product_id -> (current price, still on offer), from one batched search.
+
+    Without this the drift check compared the stored total against the sum of the
+    stored lines — the same number twice, so it could never fire while the preview
+    implied that price changes were being watched for. A safeguard that cannot trigger
+    is worse than none, because it is believed.
+
+    Silpo is not the rate-limited resource, so re-asking costs a round trip and nothing
+    else. A line whose description finds nothing keeps its drafted price rather than
+    being called a price change.
+    """
+    if context is None or not lines:
+        return {}
+
+    queries = list(dict.fromkeys(line.description for line in lines if line.description))
+    if not queries:
+        return {}
+
+    try:
+        grouped = flatten_search(await mcp.find_products_batch(queries, context))
+    except Exception:
+        return {}
+
+    found: dict[str, tuple[Decimal, bool]] = {}
+    for products in grouped.values():
+        for product in products:
+            pid = str(product.get("id") or "")
+            if pid:
+                available = bool(product.get("available", True)) and (
+                    product.get("stock") is None or (product.get("stock") or 0) > 0
+                )
+                found[pid] = (Decimal(str(product.get("price", 0))), available)
+    return found
+
+
+async def preview_sync(
+    cart: ResolvedCart, mcp: SilpoClient, context: SearchContext | None = None
+) -> SyncPreview:
+    """Everything the confirmation sheet needs, read fresh from Silpo.
+
+    `context` enables the live re-pricing; without it the preview still works and
+    simply reports no drift, which is what every caller did before it existed.
+    """
     cart_id = (await mcp.get_my_shopping_cart()).get("shoppingCartId", "")
     current = await mcp.get_shopping_cart_by_id(str(cart_id))
 
@@ -125,7 +173,16 @@ async def preview_sync(cart: ResolvedCart, mcp: SilpoClient) -> SyncPreview:
     existing_ids = {str(p.get("productId")) for p in existing}
     adding = _sendable(cart)
 
-    live_total = sum((line.line_total for line in adding), Decimal("0"))
+    live = await _reprice(adding, mcp, context)
+    live_total = sum(
+        (
+            live.get(line.product_id, (line.unit_price, True))[0] * Decimal(str(line.qty))
+            for line in adding
+        ),
+        Decimal("0"),
+    )
+    gone = [line.name for line in adding if not live.get(line.product_id, (None, True))[1]]
+
     drift = None
     if cart.total > 0 and abs(live_total - cart.total) / cart.total > DRIFT_TOLERANCE:
         drift = (cart.total, live_total)
@@ -136,6 +193,7 @@ async def preview_sync(cart: ResolvedCart, mcp: SilpoClient) -> SyncPreview:
         adding_count=len(adding),
         adding_total=live_total,
         overlapping=[line.name for line in adding if line.product_id in existing_ids],
+        now_unavailable=gone,
         blocking_validations=_blocking(current, adding=bool(adding)),
         drift=drift,
     )

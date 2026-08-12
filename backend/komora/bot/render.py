@@ -185,8 +185,9 @@ def render_cart(
         blocks.append(SWAP_HINT)
     if cart.warnings:
         blocks += ["", *(warning_text(w) for w in cart.warnings)]
-    if cart.savings_notes:
-        blocks += ["", "<b>Знижки та купони</b>", *(f"• {esc(n)}" for n in cart.savings_notes[:8])]
+    notes = [*cart.savings_notes, *cart.coupon_notes]
+    if notes:
+        blocks += ["", "<b>Знижки та купони</b>", *(f"• {esc(n)}" for n in notes[:8])]
 
     return "\n".join(blocks)
 
@@ -212,6 +213,10 @@ def render_sync_preview(preview: SyncPreview) -> str:
             "",
             f"Уже в кошику: {names}. Кількість буде <b>замінено</b>, а не додано.",
         ]
+
+    if preview.now_unavailable:
+        names = ", ".join(esc(n) for n in preview.now_unavailable)
+        blocks += ["", f"Уже немає в наявності: {names}. Сільпо може їх не додати."]
 
     if preview.drift is not None:
         confirmed, current = preview.drift

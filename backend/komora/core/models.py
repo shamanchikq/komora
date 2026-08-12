@@ -104,6 +104,13 @@ class ResolvedLine(BaseModel):
     Two things need it after resolution: the verification pass, which compares the two,
     and «інший варіант», which re-runs the same query to offer the next candidate.
     """
+    category: str | None = None
+    """The Silpo category this line was resolved from, when one matched.
+
+    Kept so «інший варіант» offers alternatives from the same shelf. Without it a swap
+    falls back to free-text search and can walk off into a different category — the
+    exact confusion the category lookup existed to prevent.
+    """
     name: str
     qty: float
     unit: str
@@ -138,6 +145,15 @@ class ResolvedCart(BaseModel):
     estimated_savings: Decimal = Decimal("0")
     """An estimate: Silpo applies coupons at checkout, not through the MCP."""
     savings_notes: list[str] = Field(default_factory=list)
+    """Per-line discounts. Owned by `apply_savings` and regenerated whenever the lines
+    change."""
+    coupon_notes: list[str] = Field(default_factory=list)
+    """The user's coupons, which have nothing to do with which products are in the cart.
+
+    Separate from `savings_notes` because the two have different lifetimes: swapping a
+    product must recompute the discounts and leave the coupons alone. Sharing one list
+    meant a swap silently dropped «-10% на онлайн чек».
+    """
     warnings: list[str] = Field(default_factory=list)
     """Degraded-mode labels, e.g. "degraded:coupons". Surfaced, never swallowed."""
 

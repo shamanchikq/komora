@@ -28,7 +28,13 @@ from komora.core.mcp.errors import McpError, NotAuthenticated
 from komora.core.mcp.protocol import SilpoClient
 from komora.core.models import ResolvedCart
 from komora.core.passes.promos import apply_savings
-from komora.core.pipeline import CartContextMissing, SilpoCache, build_cart, load_context
+from komora.core.pipeline import (
+    CartContextMissing,
+    SilpoCache,
+    build_cart,
+    categories_for,
+    load_context,
+)
 from komora.core.sync import execute_sync, preview_sync
 from komora.db.repo import BasketRepo, ConversationRepo, UserRepo
 
@@ -268,7 +274,9 @@ async def _swap(
     try:
         async with services.connect(telegram_id) as mcp:
             _, context = await load_context(mcp)
-            alternative = await next_alternative(line, mcp, context)
+            alternative = await next_alternative(
+                line, mcp, context, await categories_for(mcp, context, services.cache)
+            )
     except NotAuthenticated:
         return _auth_reply(NEED_AUTH)
     except McpError:
@@ -284,8 +292,10 @@ async def _swap(
 
     total = sum((ln.line_total for ln in updated.lines if not ln.unavailable), Decimal("0"))
     updated = updated.model_copy(update={"total": total})
+    # Only the per-line discounts are regenerated; coupon notes belong to the
+    # account, not to which cheese is in the basket.
     updated = apply_savings(updated.model_copy(update={"savings_notes": []}))
-    await services.baskets.set_total(basket_id, updated.total, updated.estimated_savings)
+    await services.baskets.update_totals(basket_id, updated)
 
     user = await services.users.get(telegram_id)
     return Reply(
@@ -304,7 +314,8 @@ async def _preview(services: Services, telegram_id: int, basket_id: int) -> Repl
 
     try:
         async with services.connect(telegram_id) as mcp:
-            preview = await preview_sync(cart, mcp)
+            _, context = await load_context(mcp)
+            preview = await preview_sync(cart, mcp, context)
     except NotAuthenticated:
         return _auth_reply(NEED_AUTH)
     except McpError:

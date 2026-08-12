@@ -14,6 +14,7 @@ from typing import Any
 
 from komora.core.mcp.protocol import SilpoClient
 from komora.core.models import ResolvedLine, SearchContext
+from komora.core.passes.categories import CategoryIndex
 from komora.core.passes.resolve import (
     clamp_quantity,
     fallback_terms,
@@ -24,13 +25,26 @@ from komora.core.passes.resolve import (
 
 
 async def next_alternative(
-    line: ResolvedLine, mcp: SilpoClient, context: SearchContext
+    line: ResolvedLine,
+    mcp: SilpoClient,
+    context: SearchContext,
+    categories: CategoryIndex | None = None,
 ) -> ResolvedLine | None:
-    """The product after this one for the same query, or None if there is no choice.
+    """The product after this one, or None if there is no choice.
 
-    The line keeps its quantity, reason and description — only the product changes.
-    A swapped line is never `unavailable`: every candidate considered is in stock.
+    The line keeps its quantity, reason, description and category — only the product
+    changes. A swapped line is never `unavailable`: every candidate is in stock.
+
+    **Alternatives come from the same shelf.** If the line was resolved by browsing a
+    category, so is its replacement; falling back to free-text here would walk off into
+    a different category and undo the disambiguation that put the line there.
     """
+    slug = categories.slug_for(line.category) if categories else None
+    if slug:
+        candidates = await _in_category(slug, mcp, context)
+        if len(candidates) >= 2:
+            return _swapped(line, candidates)
+
     query = line.description.strip()
     if not query:
         return None
@@ -43,7 +57,10 @@ async def next_alternative(
 
     if len(candidates) < 2:
         return None
+    return _swapped(line, candidates)
 
+
+def _swapped(line: ResolvedLine, candidates: list[dict[str, Any]]) -> ResolvedLine | None:
     position = next(
         (i for i, p in enumerate(candidates) if str(p.get("id")) == line.product_id), -1
     )
@@ -65,6 +82,15 @@ async def next_alternative(
             "unavailable": False,
         }
     )
+
+
+async def _in_category(slug: str, mcp: SilpoClient, context: SearchContext) -> list[dict[str, Any]]:
+    try:
+        payload = await mcp.get_products(context, category=slug, inStock=True, limit=30)
+    except Exception:
+        return []
+    products = payload.get("products") or []
+    return [p for p in products if isinstance(p, dict) and usable(p) and in_stock(p)]
 
 
 async def _candidates(query: str, mcp: SilpoClient, context: SearchContext) -> list[dict[str, Any]]:

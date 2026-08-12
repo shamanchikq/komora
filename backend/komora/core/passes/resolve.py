@@ -139,6 +139,7 @@ def _line_from(
     product: dict[str, Any],
     *,
     description: str,
+    category: str | None,
     qty: float,
     reason_kind: ReasonKind,
     reason_text: str,
@@ -149,6 +150,7 @@ def _line_from(
     old = product.get("oldPrice")
     return ResolvedLine(
         description=description,
+        category=category,
         product_id=str(product["id"]),  # search says `id`; the cart wants `productId`
         company_id=str(product["companyId"]),
         branch_id=str(product.get("branchId", "")),
@@ -260,6 +262,7 @@ async def resolve_basket(
                 _line_from(
                     available,
                     description=draft.description,
+                    category=draft.category,
                     qty=clamp_quantity(draft.quantity, available),
                     reason_kind=draft.reason_kind,
                     reason_text=draft.reason_text,
@@ -277,6 +280,7 @@ async def resolve_basket(
                 _line_from(
                     substitute,
                     description=draft.description,
+                    category=draft.category,
                     qty=clamp_quantity(draft.quantity, substitute),
                     reason_kind="sub",
                     reason_text="заміна — оригіналу немає в наявності",
@@ -290,6 +294,7 @@ async def resolve_basket(
                 _line_from(
                     original,
                     description=draft.description,
+                    category=draft.category,
                     qty=draft.quantity,
                     reason_kind=draft.reason_kind,
                     reason_text="немає в наявності",

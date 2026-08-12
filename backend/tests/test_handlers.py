@@ -418,3 +418,50 @@ class TestSwap:
         services, _, basket_id = await self._draft(sessions, catalogue)
         reply = await on_callback(services, 9999, f"swap:{basket_id}:0")
         assert reply.toast == "Ця чернетка недоступна"
+
+
+SWAPPABLE = {
+    "молоко": [product("Молоко Перше", 42.90), product("Молоко Друге", 51.00)],
+    "хліб": [product("Хліб", 28.50)],
+}
+
+
+class TestSwapPreservesTheRest:
+    """A swap changes one product. Everything else about the basket must survive."""
+
+    async def test_coupon_notes_survive(self, sessions) -> None:
+        """They belong to the account, not to which milk is in the basket. Recomputing
+        the discounts used to wipe them, so «-10% на онлайн чек» vanished on a tap."""
+        coupon = {"id": 1, "active": True, "description": "-10% на онлайн чек"}
+        services, _, _ = services_for(sessions, mcp=FakeSilpo(SWAPPABLE, coupons=[coupon]))
+        await on_text(services, USER, "купи молоко і хліб")
+        basket = await services.baskets.get_active(USER)
+        assert basket is not None
+
+        before = await services.baskets.load_cart(basket.id)
+        assert before is not None and before.coupon_notes == ["-10% на онлайн чек"]
+
+        reply = await on_callback(services, USER, f"swap:{basket.id}:0")
+        after = await services.baskets.load_cart(basket.id)
+        assert after is not None
+        assert after.coupon_notes == ["-10% на онлайн чек"]
+        assert "-10% на онлайн чек" in reply.text
+
+    async def test_discount_notes_are_regenerated_not_appended(self, sessions) -> None:
+        catalogue = {
+            "молоко": [
+                product("Молоко Перше", 42.90, old_price=50.00),
+                product("Молоко Друге", 51.00, old_price=60.00),
+            ],
+            "хліб": [product("Хліб", 28.50)],
+        }
+        services, _, _ = services_for(sessions, mcp=FakeSilpo(catalogue))
+        await on_text(services, USER, "купи молоко і хліб")
+        basket = await services.baskets.get_active(USER)
+        assert basket is not None
+
+        await on_callback(services, USER, f"swap:{basket.id}:0")
+        after = await services.baskets.load_cart(basket.id)
+        assert after is not None
+        assert len(after.savings_notes) == 1, "one line, one note — not two"
+        assert "Молоко Друге" in after.savings_notes[0]

@@ -11,7 +11,7 @@ from decimal import Decimal
 
 from komora.core.models import ResolvedCart, ResolvedLine
 from komora.core.sync import execute_sync, preview_sync
-from tests.fakes import COMPANY, CONTEXT, FakeSilpo
+from tests.fakes import COMPANY, CONTEXT, FakeSilpo, product
 
 
 def line(name: str, price: str, qty: float = 1, **kw: object) -> ResolvedLine:
@@ -272,3 +272,40 @@ class TestPrematureValidations:
         )
         report = await execute_sync(cart(line("Кава", "10.00")), mcp)
         assert report.blocking_validations == ["order.cost.min"]
+
+
+class TestLiveRepricing:
+    """The drift check compared the stored total against the sum of the stored lines —
+    the same number twice. It could never fire, while the sheet implied prices were
+    being watched."""
+
+    def _cart(self, price: str, total: str) -> ResolvedCart:
+        return ResolvedCart(
+            lines=[line("Молоко", price, description="молоко")], total=Decimal(total)
+        )
+
+    async def test_a_price_that_moved_is_caught(self) -> None:
+        mcp = FakeSilpo({"молоко": [product("Молоко", 60.00, product_id="id-Молоко")]})
+        preview = await preview_sync(self._cart("42.90", "42.90"), mcp, CONTEXT)
+        assert preview.drift == (Decimal("42.90"), Decimal("60.00"))
+        assert preview.adding_total == Decimal("60.00"), "the sheet shows what it costs now"
+
+    async def test_an_unchanged_price_is_not_reported_as_drift(self) -> None:
+        mcp = FakeSilpo({"молоко": [product("Молоко", 42.90, product_id="id-Молоко")]})
+        assert (await preview_sync(self._cart("42.90", "42.90"), mcp, CONTEXT)).drift is None
+
+    async def test_a_product_that_vanished_is_named(self) -> None:
+        mcp = FakeSilpo({"молоко": [product("Молоко", 42.90, product_id="id-Молоко", stock=0)]})
+        preview = await preview_sync(self._cart("42.90", "42.90"), mcp, CONTEXT)
+        assert preview.now_unavailable == ["Молоко"]
+
+    async def test_a_line_search_cannot_find_keeps_its_drafted_price(self) -> None:
+        """Not finding it again is not evidence the price changed."""
+        preview = await preview_sync(self._cart("42.90", "42.90"), FakeSilpo({}), CONTEXT)
+        assert preview.drift is None
+        assert preview.now_unavailable == []
+
+    async def test_without_a_context_the_preview_still_works(self) -> None:
+        """Every caller before the re-pricing existed passed no context."""
+        preview = await preview_sync(self._cart("42.90", "42.90"), FakeSilpo())
+        assert preview.adding_count == 1 and preview.drift is None

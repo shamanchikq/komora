@@ -166,6 +166,7 @@ class BasketRepo:
                 total=cart.total,
                 estimated_savings=cart.estimated_savings,
                 savings_notes=json.dumps(cart.savings_notes, ensure_ascii=False),
+                coupon_notes=json.dumps(cart.coupon_notes, ensure_ascii=False),
                 warnings=json.dumps(cart.warnings, ensure_ascii=False),
             )
             session.add(basket)
@@ -177,6 +178,7 @@ class BasketRepo:
                         basket_id=basket.id,
                         position=position,
                         description=line.description,
+                        category=line.category,
                         product_id=line.product_id,
                         company_id=line.company_id,
                         branch_id=line.branch_id,
@@ -222,6 +224,7 @@ class BasketRepo:
             lines = [
                 ResolvedLine(
                     description=item.description,
+                    category=item.category,
                     product_id=item.product_id,
                     company_id=item.company_id,
                     branch_id=item.branch_id,
@@ -245,6 +248,7 @@ class BasketRepo:
                 total=Decimal(str(basket.total)),
                 estimated_savings=Decimal(str(basket.estimated_savings)),
                 savings_notes=json.loads(basket.savings_notes),
+                coupon_notes=json.loads(basket.coupon_notes),
                 warnings=json.loads(basket.warnings),
             )
 
@@ -275,12 +279,23 @@ class BasketRepo:
             item.substituted_from = line.substituted_from
             return True
 
-    async def set_total(self, basket_id: int, total: Decimal, savings: Decimal) -> None:
+    async def update_totals(self, basket_id: int, cart: ResolvedCart) -> None:
+        """Write back everything a swap recomputes.
+
+        An earlier version persisted only the total and the savings figure, so the
+        stored notes kept naming the product that had just been replaced — the draft
+        disagreed with itself the moment it was reloaded.
+        """
         async with self._sessions() as session, session.begin():
             await session.execute(
                 update(DraftBasketRow)
                 .where(DraftBasketRow.id == basket_id)
-                .values(total=total, estimated_savings=savings)
+                .values(
+                    total=cart.total,
+                    estimated_savings=cart.estimated_savings,
+                    savings_notes=json.dumps(cart.savings_notes, ensure_ascii=False),
+                    coupon_notes=json.dumps(cart.coupon_notes, ensure_ascii=False),
+                )
             )
 
     async def set_status(self, basket_id: int, status: BasketStatus) -> None:

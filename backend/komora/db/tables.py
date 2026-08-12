@@ -73,6 +73,9 @@ class DraftBasketRow(Base):
     total: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=0)
     estimated_savings: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=0)
     savings_notes: Mapped[str] = mapped_column(Text, default="[]")
+    coupon_notes: Mapped[str] = mapped_column(Text, default="[]")
+    """Kept apart from savings_notes: a swap regenerates one and must not touch
+    the other."""
     warnings: Mapped[str] = mapped_column(Text, default="[]")
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
@@ -88,6 +91,8 @@ class DraftItem(Base):
     """Preserves the order the passes produced; the user reads it top to bottom."""
 
     description: Mapped[str] = mapped_column(Text, default="")
+    category: Mapped[str | None] = mapped_column(Text, default=None)
+    """The Silpo category the line resolved from, so a swap stays on the same shelf."""
     """What the model asked for. Kept so a line can be re-resolved after the fact —
     «інший варіант» re-runs this query rather than storing every candidate."""
 

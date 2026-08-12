@@ -227,7 +227,7 @@ class TestBuildCart:
             coupons=[{"id": 1, "active": True, "description": "на онлайн чек"}],
         )
         cart = await build_cart(basket("молоко"), mcp, CONTEXT)
-        assert "на онлайн чек" in cart.savings_notes
+        assert "на онлайн чек" in cart.coupon_notes
         assert cart.estimated_savings == Decimal("0"), "a coupon is not a computed saving"
 
     async def test_a_coupon_is_enriched_with_the_value_the_list_omits(self) -> None:
@@ -238,7 +238,7 @@ class TestBuildCart:
             coupon_details={518608454: {"rewardText": "−10%", "rewardValue": 10}},
         )
         cart = await build_cart(basket("молоко"), mcp, CONTEXT)
-        assert any(note.startswith("−10% на онлайн чек") for note in cart.savings_notes)
+        assert any(note.startswith("−10% на онлайн чек") for note in cart.coupon_notes)
 
     async def test_a_failed_enrichment_keeps_the_plain_coupon(self) -> None:
         mcp = FakeSilpo(
@@ -247,7 +247,7 @@ class TestBuildCart:
             fails={"get_coupon_details"},
         )
         cart = await build_cart(basket("молоко"), mcp, CONTEXT)
-        assert "на онлайн чек" in cart.savings_notes
+        assert "на онлайн чек" in cart.coupon_notes
         assert DEGRADED_COUPONS not in cart.warnings, "the coupon itself still arrived"
 
     async def test_coupons_failing_degrades_rather_than_fails(self) -> None:

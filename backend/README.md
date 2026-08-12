@@ -160,9 +160,9 @@ Found by the live runs on 2026-08-11/12, and left open deliberately.
   with the other intents in Plan 4.
 - **A fresh OAuth provider per message** costs two discovery requests. Caching it would
   serve stale tokens immediately after linking.
-- **`preview_sync` re-reads the cart but not current prices.** Drift is computed from
-  the resolved lines, so a price that moved between drafting and confirming is only
-  caught if the cart total moved with it.
+- **Overlapping quantities are replaced, not summed.** Silpo sets a quantity rather
+  than adding to it, so a product already in the cart ends at whatever the draft says.
+  The preview names those lines; nothing stops the user confirming.
 - **Silpo's coupon endpoints are intermittently unavailable.** One run in three saw
   `get_my_coupons` fail outright. Komora degrades as designed — the cart is built, the
   coupon is listed without its enriched value — but the enrichment is best-effort.

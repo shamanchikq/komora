@@ -188,7 +188,7 @@ class SilpoCache:
         self.categories_tried = False
 
 
-async def _categories(
+async def categories_for(
     mcp: SilpoClient, context: SearchContext, cache: SilpoCache | None
 ) -> CategoryIndex | None:
     if cache is None:
@@ -237,7 +237,7 @@ async def _verified(
         {
             line.description: line
             for line in (
-                await resolve_basket(retry, mcp, context, await _categories(mcp, context, cache))
+                await resolve_basket(retry, mcp, context, await categories_for(mcp, context, cache))
             ).lines
         }
         if retry.lines
@@ -285,7 +285,7 @@ async def build_cart(
         warnings.append(DEGRADED_RESTRICTIONS)
 
     filtered = apply_restrictions(basket, restrictions)
-    cart = await resolve_basket(filtered, mcp, context, await _categories(mcp, context, cache))
+    cart = await resolve_basket(filtered, mcp, context, await categories_for(mcp, context, cache))
     if llm is not None:
         cart, degraded = await _verified(cart, filtered, mcp, context, llm, cache)
         if degraded:
@@ -303,7 +303,7 @@ async def build_cart(
 
     cart = cart.model_copy(
         update={
-            "savings_notes": [*cart.savings_notes, *notes],
+            "coupon_notes": [*cart.coupon_notes, *notes],
             "warnings": [*cart.warnings, *warnings],
         }
     )
