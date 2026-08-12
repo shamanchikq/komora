@@ -7,6 +7,7 @@ exercised without an aiogram object anywhere.
 
 import contextlib
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from decimal import Decimal
 
 import pytest
@@ -572,3 +573,38 @@ class TestGroundingTheNextTurn:
 
         recorded = [m.content for m in await services.conversations.last_n(USER)]
         assert any("надіслано в кошик Сільпо" in text for text in recorded)
+
+
+class TestTwoModelRouting:
+    """A basket costs two model requests, and free-tier quota is per (project, model).
+
+    Pointing the proposal and the verification at different models draws them from two
+    independent daily allowances rather than halving one.
+    """
+
+    async def test_the_verifier_gets_the_verification_pass(self, sessions) -> None:
+        agent_llm = ScriptedLLM(LLMResponse(tool_calls=(BASKET_CALL,)))
+        verifier = ScriptedLLM(LLMResponse(text="ок"))
+        services, _, _ = services_for(sessions, llm=agent_llm, verify=True)
+        services = replace(services, verifier=verifier)
+
+        await on_text(services, USER, "купи молоко і хліб")
+        assert len(agent_llm.calls) == 1, "the agent loop used the agent's model"
+        assert len(verifier.calls) == 1, "the verification pass used the verifier"
+
+    async def test_it_falls_back_to_the_one_model_when_unset(self, sessions) -> None:
+        """Every existing caller passes a single client and must keep working."""
+        llm = ScriptedLLM(LLMResponse(tool_calls=(BASKET_CALL,)), LLMResponse(text="ок"))
+        services, _, _ = services_for(sessions, llm=llm, verify=True)
+        assert services.verifier is None
+
+        await on_text(services, USER, "купи молоко і хліб")
+        assert len(llm.calls) == 2, "both jobs fell back to the same client"
+
+    async def test_no_verifier_request_when_verification_is_off(self, sessions) -> None:
+        verifier = ScriptedLLM(LLMResponse(text="ок"))
+        services, _, _ = services_for(sessions, verify=False)
+        services = replace(services, verifier=verifier)
+
+        await on_text(services, USER, "купи молоко і хліб")
+        assert verifier.calls == []

@@ -111,6 +111,17 @@ class Services:
     connect: SilpoConnect
     cache: SilpoCache = field(default_factory=SilpoCache)
     """Holds Silpo's category tree for the process — see `core.pipeline`."""
+    verifier: LLMClient | None = None
+    """The model for the verification pass. Falls back to `llm` when unset.
+
+    Worth a second client because Gemini's free-tier quota is keyed on
+    (project, model) — Google's own 429 payloads name
+    `GenerateRequestsPerDayPerProjectPerModel-FreeTier` with the model as a dimension.
+    A basket costs two requests, so pointing the two jobs at two models draws them from
+    two independent daily allowances instead of halving one. They also want different
+    things: the proposal wants a model that reliably names a Silpo category, the
+    verification wants one that returns a usable re-search query.
+    """
     verify: bool = True
     """Run the verification pass. One extra model request per basket, which is the
     scarce resource on Gemini's free tier — set false if requests per day bite."""
@@ -184,7 +195,7 @@ async def on_text(services: Services, telegram_id: int, text: str) -> Reply:
                 mcp,
                 context,
                 budget_cap=budget_cap,
-                llm=services.llm if services.verify else None,
+                llm=(services.verifier or services.llm) if services.verify else None,
                 cache=services.cache,
             )
     except NotAuthenticated:

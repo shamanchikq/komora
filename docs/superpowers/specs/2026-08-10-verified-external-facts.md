@@ -146,11 +146,14 @@ Corrected pricing (per 1M tokens, standard tier):
 `gemini-3.1-flash-lite-001` will 404. This also means the IDs are floating pointers: Google
 can swap weights without changing the string, so pin behaviour with evals, not the ID.
 
-**Decision:** keep `gemini-3.1-flash-lite` (cheap tier) + `gemini-3.6-flash` (strong tier).
-It remains the best price/quality point in the Gemini 3 family, and the EOL is ~9 months out.
-Both **must** be env-overridable settings, never literals at call sites. Now that the
-retirement claim is corrected, `gemini-2.5-flash-lite` is a legitimate cost-floor fallback
-(6× cheaper on output) — one env var away.
+**Decision (superseded 2026-08-12 — see the quota section below).** The original call was
+`gemini-3.1-flash-lite` + `gemini-3.6-flash`. Now that free-tier quota is known to be
+per-model and both tiers are actually instantiated, the tiers are
+`gemini-3.5-flash-lite` (proposal) + `gemini-3.1-flash-lite` (verification): two
+allowances instead of one, and each model on the job it measures better at. `3.6-flash`
+is overkill for both. Both **must** stay env-overridable settings, never literals at call
+sites. `gemini-2.5-flash-lite` remains a legitimate cost-floor fallback (6× cheaper on
+output) — one env var away.
 
 ### Gemini 3 behavioural gotchas
 
@@ -165,6 +168,62 @@ retirement claim is corrected, `gemini-2.5-flash-lite` is a legitimate cost-floo
   hand-roll HTTP.
 - Function calling (parallel and sequential) has **full parity** between `3.1-flash-lite` and
   `3.6-flash`. Tier routing is a pure cost/quality decision, not a capability gate.
+
+### Free-tier quota is per (project, model) — verified 2026-08-12
+
+**Two models get two independent daily allowances.** This is the fact the two-tier
+routing now exists to exploit: a basket costs one request on each tier, so pointing the
+tiers at different models doubles baskets per day.
+
+Google's prose does not say it. <https://ai.google.dev/gemini-api/docs/rate-limits> only
+states *"Rate limits are applied per project, not per API key"* and *"Limits vary
+depending on the specific model being used"*, and it no longer publishes the per-model
+free-tier table at all. The evidence is Google's own quota machinery: free-tier 429
+bodies name `GenerateRequestsPerDayPerProjectPerModel-FreeTier`,
+`GenerateRequestsPerMinutePerProjectPerModel-FreeTier` and
+`GenerateContentInputTokensPerModelPerMinute-FreeTier`, each carrying
+`quotaDimensions: {location: "global", model: "<model-id>"}`. Project *and* model are
+dimensions, and that covers RPD, RPM and TPM alike.
+
+Three caveats worth keeping:
+
+- **The bucket is keyed on the *resolved* model, not the string sent.** A request for
+  `gemini-2.5-flash-image` produced a violation naming `gemini-2.5-flash-preview-image`,
+  so a GA id and its preview alias can share one bucket. Whether dated snapshots and
+  `-latest` aliases collapse the same way is **unverified** — do not assume an alias
+  buys a second allowance.
+- **Reports of "pooled" quota are a different mechanism.** Multiple API keys in one
+  project genuinely do share (project is the dimension), and the Gemini CLI's
+  Google-account path has a real 1000/user/day pool *across* the model family. Neither
+  applies to the API-key path.
+- **The numbers move.** Google stopped publishing them; third-party pages quoting
+  15 RPM / 1500 RPD contradict what the AI Studio dashboard showed on this account
+  (15 RPM / 500 RPD). Treat the dashboard as authoritative and never hard-code a budget.
+
+### 3.5-flash-lite vs 3.1-flash-lite, measured on this project — n=5×2
+
+Google published **no** multilingual, function-calling, instruction-following or
+structured-output benchmark for either model; the released gains are agentic, coding and
+long-context, run *"with high thinking"* while `3.5-flash-lite` defaults to `minimal`.
+So neither of Komora's two jobs is covered by the vendor evidence, and
+`scripts/compare_models.py` measures them instead. Two independent runs agree:
+
+| | pass rate | `category_rate` | usable `better_query` |
+|---|---|---|---|
+| `gemini-3.1-flash-lite` | 5/5 | 0.29 – 0.55 | **1.00** |
+| `gemini-3.5-flash-lite` | 4/5, 5/5 | **1.00** | 0.60 |
+
+They are **complementary, not ranked**. 3.5 names a Silpo category on essentially every
+line — the lever that lets `resolve` browse the taxonomy rather than search free text —
+while 3.1 always returns a re-search query when the verification pass flags a mismatch,
+and an empty one makes `pipeline._verified` drop the line as «Не знайшлося» instead of
+repairing it. Hence lite=3.5 (proposal), full=3.1 (verification).
+
+Watch for one open regression: `gemini-3.5-flash-lite` has been reported emitting its
+function call as pseudo-XML in the **text** part rather than a `functionCall` part
+(acknowledged by Google 2026-08-03, unresolved). The repro is narrow — Vertex,
+`VALIDATED` tool mode, streaming — and none of those match this client, but it is
+probabilistic. `compare_models.py` would show it as `no valid propose_basket`.
 
 ---
 

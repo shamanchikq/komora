@@ -37,7 +37,7 @@ import json
 import pathlib
 import sys
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from _report import INFO, note
@@ -71,6 +71,14 @@ def banner_line(title: str) -> None:
 class Outcome:
     passed: bool
     detail: str
+    metrics: dict[str, float] = field(default_factory=dict)
+    """Graded measurements that a pass/fail verdict throws away.
+
+    The first run of this harness scored both models 5/5 on the basket while one named
+    a Silpo category on 6 lines out of 21 and the other on essentially all of them —
+    a large, decision-relevant difference that survived only as prose in a detail
+    string. Anything worth comparing belongs here, where it gets averaged.
+    """
 
 
 def _basket(response: LLMResponse) -> DraftBasket | None:
@@ -125,9 +133,17 @@ def score_pizza(response: LLMResponse) -> Outcome:
     if not 3 <= len(basket.lines) <= 7:
         problems.append(f"{len(basket.lines)} lines")
 
+    # A named category lets `resolve` browse Silpo's own taxonomy instead of searching
+    # free text, which is what stops «основа для піци» resolving to an ice-cream cone.
+    # It is optional in the schema, so a model that never names one silently gives up
+    # the strongest defence the pipeline has.
     categorised = sum(1 for ln in basket.lines if ln.category)
+    metrics = {
+        "category_rate": categorised / len(basket.lines) if basket.lines else 0.0,
+        "lines": float(len(basket.lines)),
+    }
     detail = f"{len(basket.lines)} lines, {categorised} categorised"
-    return Outcome(not problems, detail if not problems else "; ".join(problems))
+    return Outcome(not problems, detail if not problems else "; ".join(problems), metrics)
 
 
 def score_edit(response: LLMResponse) -> Outcome:
@@ -224,11 +240,24 @@ async def run_verify(llm: Any) -> Outcome:
 
     flagged = set(found)
     if VERIFY_CASE["must_flag"] not in flagged:
-        return Outcome(False, f"missed the snack salami; flagged={sorted(flagged)}")
+        return Outcome(
+            False, f"missed the snack salami; flagged={sorted(flagged)}", {"usable": 0.0}
+        )
     false_positives = flagged & set(VERIFY_CASE["must_not_flag"])
     if false_positives:
-        return Outcome(False, f"false positives on {sorted(false_positives)}")
-    return Outcome(True, f"caught it; better_query={found[VERIFY_CASE['must_flag']]!r}")
+        return Outcome(False, f"false positives on {sorted(false_positives)}", {"usable": 0.0})
+
+    # Catching the mismatch is only half the job. `pipeline._verified` re-searches a
+    # flagged line with `better_query` and, when it is empty, keeps nothing — the line
+    # becomes «Не знайшлося». So a flag without a query is a correct removal and a
+    # failed repair, which a pass/fail verdict alone reports as success.
+    better = found[VERIFY_CASE["must_flag"]]
+    return Outcome(
+        True,
+        f"caught it; better_query={better!r}"
+        + ("  <- empty: line would be dropped" if not better else ""),
+        {"usable": 1.0 if better else 0.0},
+    )
 
 
 async def main(args: argparse.Namespace) -> int:
@@ -283,6 +312,32 @@ async def main(args: argparse.Namespace) -> int:
             hits = sum(1 for o in outcomes if o.passed)
             row += f"{f'{hits}/{len(outcomes)}':>12}"
         print(row)
+
+    # The graded numbers, where two models that both "pass" stop looking identical.
+    banner_line("Graded metrics — mean over repeats")
+    keys = sorted({k for outs in results.values() for o in outs for k in o.metrics})
+    if keys:
+        print(f"{'model':<{width}}" + "".join(f"{k:>16}" for k in keys))
+        for ref in args.models:
+            row = f"{ref:<{width}}"
+            for key in keys:
+                values = [
+                    o.metrics[key]
+                    for (model, _), outs in results.items()
+                    if model == ref
+                    for o in outs
+                    if key in o.metrics
+                ]
+                cell = f"{sum(values) / len(values):.2f}" if values else "-"
+                row += f"{cell:>16}"
+            print(row)
+        print(
+            f"\n{INFO} category_rate: share of basket lines naming a Silpo category — the "
+            "lever that lets\n   resolve browse the taxonomy instead of searching free "
+            "text.\n   usable: share of caught mismatches that came with a re-search "
+            "query. An empty one\n   means the wrong product is dropped and nothing "
+            "replaces it."
+        )
 
     print(
         f"\n{INFO} A rate is not a verdict. With --repeats {args.repeats} a 3/3 and a 2/3 "

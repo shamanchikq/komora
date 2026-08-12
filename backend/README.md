@@ -164,7 +164,17 @@ Found by the live runs on 2026-08-11/12, and left open deliberately.
   [local models §3.3](../docs/local-models-ollama-gemma.md).
 - **The Gemini free tier runs out.** `gemini-3.6-flash` returned `429
   RESOURCE_EXHAUSTED` during testing. The bot degrades to «модель недоступна», which is
-  honest but unhelpful; a paid key or a retry-with-backoff would fix it.
+  honest but unhelpful; a paid key or a retry-with-backoff would fix it. Quota is per
+  (project, model), so the two tiers are pointed at two different models and a basket's
+  two requests draw on two independent daily allowances — see
+  [verified external facts §3](../docs/superpowers/specs/2026-08-10-verified-external-facts.md).
+- **A flagged line with no re-search query is dropped, not repaired.** When the
+  verification pass marks a product wrong but returns an empty `better_query`,
+  `pipeline._verified` has nothing to search with and the line becomes «Не знайшлося».
+  Safe — a wrong product never survives — but a line that could have been recovered is
+  lost. Measured at 0/10 on `gemini-3.1-flash-lite` and 4/10 on `gemini-3.5-flash-lite`,
+  which is why the verification tier is the former. Falling back to the line's own
+  category would fix it properly.
 - **The agent never re-plans a line that fails to resolve.** A description that matches
   nothing is reported, not retried with a simpler term. Cheap to add, but it belongs
   with the other intents in Plan 4.
