@@ -135,10 +135,10 @@ Found by the live runs on 2026-08-11/12, and left open deliberately.
   for development, and the promotion gate has not been met.
 - **Quantity defaults are the model's guess.** Asked for "milk and eggs" it chose three
   packs of eggs. Weighted goods are handled deterministically now — an unqualified
-  amount becomes one `step`, so parmesan arrives as 100 g rather than a kilo — but
-  countable items are still whatever the model picked. Correcting it in plain language works, but nothing anchors a first
-  guess to what the household actually buys — that is what the habits engine (Plan 3)
-  is for.
+  amount becomes one `step`, so parmesan arrives as 100 g rather than a kilo — but for
+  countable items the number is still whatever the model chose. Correcting it in plain
+  language works; nothing anchors the *first* guess to what the household actually
+  buys, which is what the habits engine (Plan 3) is for.
 - **Product choice is three defences deep, and still not certain.** A vague query once
   returned an ice-cream cone for «основа для піци». Now: the model names a Silpo
   *category* alongside the query (browsing «Основи для піци» cannot return a cone); a
