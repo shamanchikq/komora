@@ -149,9 +149,14 @@ Found by the live runs on 2026-08-11/12, and left open deliberately.
   then re-searches the mismatches; and «⇄ N» offers the next candidate per line. The
   basket's purpose was one missing piece — judged alone, a dry-cured snack salami is a
   fine answer to «ковбаса салямі», and only «Інгредієнти для піци пепероні» makes it
-  obviously wrong. None of it is a guarantee: a wrong category the model is confident
-  about will still narrow to the wrong shelf, and only the swap button recovers.
-  **The intersection is unit-tested against captured shapes, not yet confirmed live.**
+  obviously wrong. **A wrongly named category is the live failure mode**, measured
+  2026-08-12: «пармезан» under «Крафтові сири» returns three artisan cheeses and no
+  parmesan, while the plain search returns thirty genuine Parmigiano Reggianos. Three
+  things now blunt it — the candidate list never discards the search, so «⇄» always
+  reaches them; the verification retry drops the category, since a rejected pick is
+  evidence the shelf was part of the mistake; and the shelf only leads when it came
+  back complete. The *first* pick can still be wrong when the model names a plausible
+  wrong aisle, and nothing deterministic can tell that from a right one.
 - **Removals are matched lexically.** «Прибери ковбаски» is matched to synced lines by
   shared word stems, so a request whose words do not land removes nothing and says so
   rather than guessing. Deliberately strict in that direction: a false positive deletes

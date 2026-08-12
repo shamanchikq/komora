@@ -9,12 +9,13 @@ from decimal import Decimal
 
 from komora.core.llm.protocol import LLMResponse, ToolCall
 from komora.core.models import DraftBasket, DraftLine, ResolvedLine
+from komora.core.passes.categories import CategoryIndex
 from komora.core.passes.verify import (
     DEGRADED_VERIFY,
     REPORT_TOOL,
     find_mismatches,
 )
-from komora.core.pipeline import build_cart
+from komora.core.pipeline import SilpoCache, build_cart
 from tests.fakes import CONTEXT, FakeSilpo, product
 
 
@@ -168,3 +169,39 @@ class TestVerificationInThePipeline:
         )
         cart = await build_cart(basket("основа для піци"), FakeSilpo(CATALOGUE), CONTEXT, llm=llm)
         assert cart.total == Decimal("159.00"), "not the 139.00 of the rejected pick"
+
+
+class TestTheRetryDropsTheCategory:
+    """A flagged line is re-searched without the shelf that helped produce it.
+
+    Probed live 2026-08-12: «пармезан» browsed under «Крафтові сири» returns three
+    artisan cheeses and no parmesan. Keeping the category on the retry re-applied the
+    very constraint that produced the rejected pick, so the pass swapped one wrong
+    cheese for another and read as broken.
+    """
+
+    CRAFT = product("Сир Лавка Традицій Чізарня Качокавалло", 839.00)
+    PARMESAN = product("Сир Auricchio «Парміджано Реджано» 50%", 2099.00)
+
+    async def test_the_re_search_is_not_confined_to_the_rejected_shelf(self) -> None:
+        basket = DraftBasket(
+            title="Паста болоньєзе",
+            intent="stated",
+            lines=[DraftLine(description="сир", category="Крафтові сири", reason_text="подача")],
+        )
+        mcp = FakeSilpo(
+            {"сир": [self.CRAFT], "пармезан": [self.PARMESAN]},
+            # The named shelf holds only the wrong cheese — as the live one did.
+            category_products=[self.CRAFT],
+        )
+        index = CategoryIndex([{"title": "Крафтові сири", "slug": "kraftovi-syry-5474"}])
+        cache = SilpoCache()
+        cache.categories, cache.categories_tried = index, True
+
+        llm = OneShotLLM(verdicts({"index": 0, "verdict": "mismatch", "better_query": "пармезан"}))
+        cart = await build_cart(basket, mcp, CONTEXT, llm=llm, cache=cache)
+
+        assert cart.lines, "the flagged line must be repaired, not dropped"
+        assert cart.lines[0].name == self.PARMESAN["name"], (
+            "the retry must reach a product outside the rejected category"
+        )

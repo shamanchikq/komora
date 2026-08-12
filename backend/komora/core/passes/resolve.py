@@ -207,11 +207,18 @@ def narrow(found: list[dict[str, Any]], shelf: list[dict[str, Any]]) -> list[dic
     (which is better than anything written here — a word-overlap scorer was tried and
     reverted for resolving «кока кола» to marmalade), the shelf supplies the aisle.
 
-    When nothing on the shelf matched the search, the fallback depends on something we
-    actually know. A shelf returned in full means the search results genuinely are not
-    in that category, and the category is the better guide — this is the case that keeps
-    an ice-cream cone out of «основа для піци». A shelf cut off at the page limit means
-    the match may simply be further down it, and there the search is the better guide.
+    **Nothing is discarded.** Filtering is what built a trap: «пармезан» with a wrongly
+    named category produced an empty intersection, the shelf won, and «⇄» cycled three
+    artisan cheeses forever while thirty genuine Parmigiano Reggianos sat in the search
+    results, unreachable. Probed live 2026-08-12 — that search is excellent; it was the
+    category that was wrong, and the code had no way to tell. So a candidate list always
+    contains every relevant product, and ordering carries the uncertainty instead.
+
+    When the two disagree completely, which leads depends on something we actually know.
+    A shelf returned in full means the search results genuinely are not in that category
+    — this is what keeps an ice-cream cone out of «основа для піци», so the shelf leads,
+    with the search immediately behind it: one tap escapes a wrong guess. A shelf cut off
+    at the page limit rules nothing out, and there the search leads.
     """
     if not shelf:
         return found
@@ -221,8 +228,10 @@ def narrow(found: list[dict[str, Any]], shelf: list[dict[str, Any]]) -> list[dic
     on_shelf = {str(p.get("id")) for p in shelf}
     preferred = [p for p in found if str(p.get("id")) in on_shelf]
     if preferred:
-        return preferred
-    return shelf if len(shelf) < CATEGORY_PAGE else found
+        return preferred + [p for p in found if str(p.get("id")) not in on_shelf]
+    if len(shelf) >= CATEGORY_PAGE:
+        return found + shelf
+    return [shelf[0], *found, *shelf[1:]]
 
 
 async def _browse_categories(

@@ -228,7 +228,15 @@ async def _verified(
         title=basket.title,
         intent=basket.intent,
         lines=[
-            (originals[cart.lines[i].description]).model_copy(update={"description": better})
+            # The category goes with it. A mismatch is evidence that the model's guess
+            # at this line was wrong, and the category is part of that guess — keeping
+            # it re-applies the constraint that produced the rejected product. Probed
+            # live: «пармезан» under «Крафтові сири» yields three artisan cheeses and no
+            # parmesan, so the retry returned another artisan cheese and the pass looked
+            # useless. The model offered a better *query*, not a better shelf.
+            (originals[cart.lines[i].description]).model_copy(
+                update={"description": better, "category": None}
+            )
             for i, better in mismatches.items()
             if better and cart.lines[i].description in originals
         ],

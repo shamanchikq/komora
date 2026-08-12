@@ -9,6 +9,7 @@ in Silpo's order — a hundred cheeses deep — instead of moving through the pa
 import json
 import pathlib
 from decimal import Decimal
+from typing import ClassVar
 
 from komora.core.alternatives import next_alternative
 from komora.core.models import ResolvedLine
@@ -112,3 +113,51 @@ class TestTheSwapStaysOnTopicAndOnShelf:
         silpo = self._silpo()
         await next_alternative(line(MUZHON), silpo, CONTEXT, INDEX)
         assert silpo.category_limits == [CATEGORY_PAGE]
+
+
+class TestAWrongCategoryIsEscapable:
+    """The trap, from the live run of 2026-08-12.
+
+    The model named a plausible but wrong category — the artisan cheeses, not the aisle
+    holding parmesan. The intersection came out empty, the shelf won outright, and «⇄»
+    cycled three craft cheeses forever while thirty genuine Parmigiano Reggianos sat in
+    the search results with no way to reach them. Probed against live Silpo: the search
+    for «пармезан» is excellent, so discarding it was the whole mistake.
+    """
+
+    CRAFT: ClassVar[list[dict]] = [
+        product("Сир Лавка Традицій Чізарня Качокавалло", 839.00),
+        product("Сир Лавка Традицій Будз Баран Драй Джек крафт", 1049.00),
+        product("Сир Лавка традицій Плай Карпатський твердий", 999.00),
+    ]
+    PARMIGIANO = product("Сир Ghidetti «Парміджано Реджано» 44%", 369.00)
+    GRANA = product("Сир Ghidetti «Грана Падано» тертий 42%", 169.00)
+
+    def _silpo(self) -> FakeSilpo:
+        # A small, complete shelf that shares nothing with the search.
+        return FakeSilpo({"пармезан": [self.PARMIGIANO, self.GRANA]}, category_products=self.CRAFT)
+
+    async def test_one_tap_reaches_the_search_result(self) -> None:
+        current = line(self.CRAFT[0]).model_copy(update={"category": "Крафтові сири"})
+        found = await next_alternative(current, self._silpo(), CONTEXT, INDEX)
+        assert found is not None
+        assert found.name == self.PARMIGIANO["name"], "a wrongly named category must not be a cage"
+
+    async def test_the_search_results_are_all_reachable(self) -> None:
+        silpo = self._silpo()
+        current = line(self.CRAFT[0]).model_copy(update={"category": "Крафтові сири"})
+        seen = []
+        for _ in range(5):
+            current = await next_alternative(current, silpo, CONTEXT, INDEX)
+            assert current is not None
+            seen.append(current.name)
+        assert self.PARMIGIANO["name"] in seen and self.GRANA["name"] in seen, seen
+
+    async def test_the_shelf_still_leads_when_it_is_complete(self) -> None:
+        """Resolution keeps the protection the category was added for; only the swap
+        list gained an escape."""
+        from komora.core.passes.resolve import narrow
+
+        ordered = narrow([self.PARMIGIANO], self.CRAFT)
+        assert ordered[0]["name"] == self.CRAFT[0]["name"]
+        assert ordered[1]["name"] == self.PARMIGIANO["name"], "escape is one step away"
