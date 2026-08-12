@@ -84,6 +84,24 @@ class TestToolRegistry:
         assert "silpo_find_products_batch" in names
         assert not names - (set(READ_TOOLS) | {PROPOSE_BASKET})
 
+    def test_the_model_is_never_told_to_call_a_tool_it_does_not_have(self) -> None:
+        """Silpo's own descriptions say "Prefer getting branchId/deliveryType/timeslot
+        from silpo_get_shopping_cart_by_id". That tool is not in READ_TOOLS and those
+        parameters are stripped, so the advice asks for the impossible."""
+        reachable = set(READ_TOOLS) | {PROPOSE_BASKET}
+        for decl in build_tool_decls(ALL_TOOLS):
+            named = {t["name"] for t in ALL_TOOLS if t["name"] in decl.description}
+            assert not named - reachable, f"{decl.name} points at {named - reachable}"
+
+    def test_the_real_advice_survives(self) -> None:
+        """Only the unreachable sentence goes — the rest of Silpo's guidance is the
+        most reliable documentation this API has."""
+        search = next(
+            d for d in build_tool_decls(ALL_TOOLS) if d.name == "silpo_find_products_batch"
+        )
+        assert "article code" in search.description.lower()
+        assert "branchId" not in search.description
+
     def test_context_parameters_are_hidden_from_the_model(self) -> None:
         """Live finding: shown the real schema, the model stalls asking which store and
         delivery slot to use. The loop knows those, so it injects them."""

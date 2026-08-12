@@ -260,6 +260,33 @@ declaration.
 
 ---
 
+## 3.3 Free-form product questions are where they break [LIVE]
+
+Measured 2026-08-12 on «яке грузинське вино є до 500 ₴?» — real model, real tool
+declarations, fake Silpo, so the only variable is whether the model calls the search
+tool at all.
+
+| | gemma4:12b | qwen3.6:27b |
+|---|---|---|
+| as shipped | searched, query «грузинське вино до 500 грн» | asked which store to use |
+| unreachable advice stripped from tool descriptions | unchanged | did not search; **said no such wine exists** |
+| + a prompt forbidding store questions | did not search | searched «грузинське вино», answered correctly |
+
+Three things worth keeping:
+
+1. **The behaviour is not stable.** gemma4:12b searched here and asked about the store
+   in a live Telegram run, on the same question. One trial per cell proves nothing on
+   its own — treat the table as directional.
+2. **A confident wrong answer is the real risk.** qwen3.6:27b's «Зараз у Сільпо немає
+   вина за ціною до 500 ₴», with no search performed, is worse than the unhelpful
+   reply, because nothing marks it as a guess.
+3. **Neither model reached for `get_products(toPrice=…)`**, the parameter that actually
+   filters by price. Both put the budget into a free-text query instead.
+
+The stated-basket path — the one the product is built around — held up on gemma4:12b in
+the same period, in Telegram, against the live server. It is the open-ended path that
+needs a frontier model, which is what §6's gate already says.
+
 ## 4. The numbers that decide it [BENCH]
 
 | Model | BFCL multi-turn |

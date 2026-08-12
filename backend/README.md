@@ -135,6 +135,19 @@ Found by the live runs on 2026-08-11/12, and left open deliberately.
   packs of eggs. Correcting it in plain language works, but nothing anchors a first
   guess to what the household actually buys — that is what the habits engine (Plan 3)
   is for.
+- **The free-form question path is the least reliable thing in the product**, and it is
+  a model limitation rather than a defect. Asked «яке грузинське вино є до 500 ₴?» a
+  local model may search, may ask which store to use (the context is injected and
+  present — it just does not know that), or may answer confidently that no such wine
+  exists. Measured on the same question, same tools, fake Silpo:
+
+  | | gemma4:12b | qwen3.6:27b |
+  |---|---|---|
+  | as shipped | searched, query «грузинське вино до 500 грн» | asked about the cart |
+  | + sharpened prompt | did not search | searched, answered correctly |
+
+  Neither model used `get_products(toPrice=…)`, which is the tool that actually filters
+  by price; both jammed the budget into a free-text query. Use Gemini for this path.
 - **The agent never re-plans a line that fails to resolve.** A description that matches
   nothing is reported, not retried with a simpler term. Cheap to add, but it belongs
   with the other intents in Plan 4.

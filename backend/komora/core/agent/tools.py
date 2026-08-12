@@ -9,7 +9,8 @@ pipeline and an explicit user confirmation.
 reaches Silpo.
 """
 
-from collections.abc import Sequence
+import re
+from collections.abc import Collection, Sequence
 from typing import Any, Final, Protocol
 
 from komora.core.llm.protocol import ToolDecl
@@ -115,12 +116,42 @@ def strip_injected(schema: dict[str, Any]) -> dict[str, Any]:
     return {**schema, "properties": properties, "required": required}
 
 
+_SENTENCE = re.compile(r"(?<=[.!?])\s+|\n+")
+
+
+def describe(tool: dict[str, Any], unreachable: Collection[str]) -> str:
+    """The description the model reads: Silpo's own, minus advice it cannot act on.
+
+    Three of the read tools tell the caller to fetch branch and timeslot from
+    `silpo_get_shopping_cart_by_id`, in two different wordings. Sound advice for a
+    general agent, impossible for this one: those parameters are hidden by
+    `strip_injected`, and no cart tool is in `READ_TOOLS`. Left in, the model is
+    instructed to call a tool it does not have, to fill a field it cannot see.
+
+    Dropping whole sentences rather than pattern-matching the known two, because the
+    first attempt did exactly that and missed `get_promotions`, which phrases it
+    differently. A sentence naming an unreachable tool has nothing else to offer.
+
+    Removed on principle rather than on measurement — an A/B against gemma4:12b and
+    qwen3.6:27b showed no reliable difference. What it guarantees is only that the
+    tool surface never asks for the impossible.
+    """
+    text = (tool.get("description") or "").strip()
+    kept = [
+        sentence
+        for sentence in _SENTENCE.split(text)
+        if not any(name in sentence for name in unreachable)
+    ]
+    return " ".join(s.strip() for s in kept if s.strip())[:400]
+
+
 def build_tool_decls(captured_tools: list[dict[str, Any]]) -> list[ToolDecl]:
     """Build the declarations offered to the model from the captured MCP schemas."""
+    unreachable = {t["name"] for t in captured_tools} - set(READ_TOOLS)
     decls = [
         ToolDecl(
             name=tool["name"],
-            description=(tool.get("description") or "").strip()[:400],
+            description=describe(tool, unreachable),
             parameters=strip_injected(tool.get("inputSchema") or {}),
         )
         for tool in captured_tools
