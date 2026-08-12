@@ -223,4 +223,10 @@ def render_sync_report(report: SyncReport) -> str:
         # can only be text. Shown anyway: Silpo's own guidance is to offer both.
         blocks += ["", f"У застосунку Сільпо: {esc(report.checkout_mobile_link)}"]
 
+    if report.blocking_validations and not report.checkout_web_link:
+        # Live: a cart holding a line that exceeds stock gets no checkout link at all.
+        # "Готово" with no link and no reason leaves the user with nowhere to go.
+        blocks += ["", "<b>Оформити поки не вийде:</b>"]
+        blocks += [f"• {validation_text(v)}" for v in dict.fromkeys(report.blocking_validations)]
+
     return "\n".join(blocks)

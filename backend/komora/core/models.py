@@ -111,3 +111,5 @@ class SyncReport(BaseModel):
     checkout_mobile_link: str | None = None
     """Silpo's tool descriptions ask for both — «Оформити на сайті» and «в застосунку».
     Present only once the cart is checkout-ready."""
+    blocking_validations: list[str] = Field(default_factory=list)
+    """Error codes from `calculation.validations[]` — why there may be no link."""

@@ -520,7 +520,9 @@ chunking for Telegram's 4096-character limit.
 OAuth gateway, the client's argument names, the agent, the passes and the preview. All
 of it now runs headlessly against the live server via `scripts/smoke_e2e.py` (14/14,
 2026-08-11/12), which also captured the three response shapes that were still being
-guessed at. Four defects found and fixed:
+guessed at. The write was verified too (`--push`): items landed in a real cart, the
+three already there were untouched, and the cart was restored exactly — which is
+acceptance criterion 4 below, minus Telegram. Five defects found and fixed:
 
 1. **Cart writes carried undeclared fields** (`name`, `price`) — on the call the whole
    product depends on.
@@ -530,6 +532,9 @@ guessed at. Four defects found and fixed:
 3. **Validation codes were shown to users untranslated** — «product.offer.stock.max».
 4. **A coupon note inlined three lines of bullets** from `limitText`, and the coupon's
    own description was a fragment; the value lives only in `get_coupon_details`.
+5. **A successful sync with no checkout link gave no reason.** Silpo issues no
+   `checkoutWebLink` for a cart carrying a blocking validation, so «Готово» arrived
+   with no link and nothing to act on.
 
 One planned check was **withdrawn as unsound**: an up-front timeslot comparison built
 without `get_time_slots`'s `start` parameter reported a valid cart as expired, because

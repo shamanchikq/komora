@@ -157,6 +157,18 @@ class TestExecute:
         assert sorted(report.added) == ["Молоко", "Хліб"]
         assert len(mcp.add_calls) > 1, "should retry item by item after the batch failed"
 
+    async def test_a_cart_that_cannot_be_checked_out_reports_why(self) -> None:
+        """Silpo issues no `checkoutWebLink` for a cart with a blocking validation, so
+        the report has to carry the reason instead."""
+        mcp = FakeSilpo(
+            checkout_links=False,
+            validations=[{"level": "error", "message": "product.offer.stock.max"}],
+        )
+        report = await execute_sync(cart(line("Молоко", "42.90")), mcp)
+        assert report.ok is True
+        assert report.checkout_web_link is None
+        assert report.blocking_validations == ["product.offer.stock.max"]
+
     async def test_empty_cart_is_a_no_op(self) -> None:
         mcp = FakeSilpo()
         report = await execute_sync(cart(), mcp)

@@ -111,10 +111,14 @@ client, so every basket action checks `basket.user_id` against the sender.
 ## Status
 
 Plan 1 Tasks 1–13 complete, and Task 14's automated half done: the whole loop —
-message → draft → pipeline → preview — **has run against the live Silpo server**
-(`scripts/smoke_e2e.py`, 14/14). It found four defects, all fixed: cart writes carried
-undeclared fields, `error_of` passed a Silpo 500 through as success, validation codes
-were shown to users untranslated, and a coupon note inlined three lines of bullets.
+message → draft → pipeline → preview → **append** — **has run against the live Silpo
+server** (`scripts/smoke_e2e.py --push`, 16/16). The write landed in a real cart with
+the three pre-existing items untouched, and the cart was restored exactly.
+
+Five defects found and fixed: cart writes carried undeclared fields, `error_of` passed a
+Silpo 500 through as success, validation codes reached users untranslated, a coupon note
+inlined three lines of bullets, and a successful sync with no checkout link gave no
+reason for it.
 
 **What remains is the Telegram surface**, which needs a bot token from @BotFather —
 see the manual checklist in [backend/README.md](backend/README.md#manual-checklist).

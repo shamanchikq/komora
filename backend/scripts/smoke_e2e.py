@@ -283,7 +283,11 @@ async def main(args: argparse.Namespace) -> int:
             report = await execute_sync(cart, silpo)
             print("\n" + render_sync_report(report))
             check("sync reported success", report.ok, f"failed: {report.failed}")
-            check("checkout link present", bool(report.checkout_web_link))
+            if report.blocking_validations:
+                # Silpo issues no link for a cart it will not check out — not a defect.
+                skip("checkout link present", f"blocked by {report.blocking_validations}")
+            else:
+                check("checkout link present", bool(report.checkout_web_link))
 
             after_payload = await silpo.get_shopping_cart_by_id(cart_id)
             after = {

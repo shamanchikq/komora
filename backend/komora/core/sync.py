@@ -67,6 +67,21 @@ def _paid_total(payload: Any) -> Decimal:
     return Decimal(str(amount or 0))
 
 
+def _blocking(payload: Any) -> list[str]:
+    """Error-level entries from `calculation.validations[]`.
+
+    These are the reason `checkoutWebLink` can be absent from an otherwise healthy
+    cart: Silpo only issues one when the cart is actually checkout-ready. The values
+    are **codes**, not prose — `bot/render.py: validation_text` translates them.
+    """
+    calculation = _cart_body(payload).get("calculation") or {}
+    return [
+        str(v.get("message", ""))
+        for v in (calculation.get("validations") or [])
+        if str(v.get("level", "")).lower() == "error"
+    ]
+
+
 def _sendable(cart: ResolvedCart) -> list[ResolvedLine]:
     return [line for line in cart.lines if not line.unavailable]
 
@@ -106,11 +121,7 @@ async def preview_sync(cart: ResolvedCart, mcp: SilpoClient) -> SyncPreview:
         adding_count=len(adding),
         adding_total=live_total,
         overlapping=[line.name for line in adding if line.product_id in existing_ids],
-        blocking_validations=[
-            str(v.get("message", ""))
-            for v in ((_cart_body(current).get("calculation") or {}).get("validations") or [])
-            if str(v.get("level", "")).lower() == "error"
-        ],
+        blocking_validations=_blocking(current),
         drift=drift,
     )
 
@@ -144,11 +155,16 @@ async def execute_sync(cart: ResolvedCart, mcp: SilpoClient) -> SyncReport:
         if line.product_id not in landed
     ]
 
-    final = _cart_body(await mcp.get_shopping_cart_by_id(cart_id))
+    final_payload = await mcp.get_shopping_cart_by_id(cart_id)
+    final = _cart_body(final_payload)
     return SyncReport(
         ok=not failed,
         added=added,
         failed=failed,
         checkout_web_link=final.get("checkoutWebLink"),
         checkout_mobile_link=final.get("checkoutMobileLink"),
+        # Why there may be no link. Observed live: a cart holding a line that exceeds
+        # stock gets no `checkoutWebLink`, and saying "Готово" with no link and no
+        # reason leaves the user with nowhere to go.
+        blocking_validations=_blocking(final_payload),
     )

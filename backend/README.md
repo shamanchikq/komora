@@ -13,9 +13,11 @@ Silpo — Komora prepares the cart and hands off.
 ## Status
 
 Plan 1 complete through Task 14's automated half. The full loop — message → draft →
-pipeline → preview — has been **run against the live Silpo server**, and what it found
-is in [Known issues](#known-issues) below. What remains is the Telegram surface itself,
-which needs a bot token (see [Manual checklist](#manual-checklist)).
+pipeline → preview → **append** — has been run against the live Silpo server, including
+the write: items landed in a real cart, the three items already there were untouched,
+and the cart was restored exactly. What it found along the way is in
+[Known issues](#known-issues). What remains is the Telegram surface itself, which needs
+a bot token (see [Manual checklist](#manual-checklist)).
 
 **Before touching Silpo calls, read [docs/silpo-mcp-reference.md](../docs/silpo-mcp-reference.md)** —
 field names, call order and domain rules, all verified against the live server. Every
@@ -126,6 +128,9 @@ Found by the live run on 2026-08-11/12, and left open deliberately.
 - **`preview_sync` re-reads the cart but not current prices.** Drift is computed from
   the resolved lines, so a price that moved between drafting and confirming is only
   caught if the cart total moved with it.
+- **Silpo's coupon endpoints are intermittently unavailable.** One run in three saw
+  `get_my_coupons` fail outright. Komora degrades as designed — the cart is built, the
+  coupon is listed without its enriched value — but the enrichment is best-effort.
 - **Telegram is untested against the real API.** Everything below it is not.
 
 ## Running against a local model

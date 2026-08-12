@@ -237,6 +237,29 @@ class TestSyncReport:
         assert "Додалося не все" in text
         assert "Ікра — немає в наявності" in text
 
+    def test_no_checkout_link_comes_with_the_reason(self) -> None:
+        """Live: a cart holding a line that exceeds stock gets no `checkoutWebLink`.
+        Reporting success with no link and no reason strands the user."""
+        report = SyncReport(
+            ok=True,
+            added=["Молоко"],
+            checkout_web_link=None,
+            blocking_validations=["product.offer.stock.max"],
+        )
+        text = render_sync_report(report)
+        assert "Готово" in text
+        assert "Оформити поки не вийде" in text
+        assert "менше, ніж замовлено" in text
+
+    def test_a_checkout_link_suppresses_the_explanation(self) -> None:
+        report = SyncReport(
+            ok=True,
+            added=["Молоко"],
+            checkout_web_link="https://silpo.ua/checkout/abc",
+            blocking_validations=["promotion.available"],
+        )
+        assert "Оформити поки не вийде" not in render_sync_report(report)
+
     def test_partial_failure_says_a_retry_is_safe(self) -> None:
         """True by construction: quantity is set, not incremented."""
         report = SyncReport(ok=False, added=[], failed=[("Ікра", "помилка")])
