@@ -11,7 +11,7 @@ import pytest
 from komora.core.models import DraftBasket, DraftLine, ResolvedCart, ResolvedLine
 from komora.core.passes.budget import apply_budget, optional_lines_total
 from komora.core.passes.promos import apply_savings, describe_coupons
-from komora.core.passes.resolve import clamp_quantity, resolve_basket
+from komora.core.passes.resolve import clamp_quantity, fallback_terms, resolve_basket
 from komora.core.passes.restrictions import apply_restrictions
 from tests.fakes import CONTEXT, FakeSilpo, product
 
@@ -141,9 +141,12 @@ class TestResolve:
         assert cart.lines[0].unavailable is True
 
     async def test_searches_are_batched_within_silpo_limit(self) -> None:
+        """30 per call, and the retry pass is deduplicated — 35 failed descriptions
+        share one fallback term, so they cost one extra query, not 35."""
         mcp = FakeSilpo({})
         await resolve_basket(draft(*[line(f"товар {i}") for i in range(35)]), mcp, CONTEXT)
-        assert [len(c) for c in mcp.search_calls] == [30, 5]
+        assert [len(c) for c in mcp.search_calls] == [30, 5, 1]
+        assert mcp.search_calls[-1] == ["товар"]
 
     async def test_restriction_warnings_survive_resolution(self) -> None:
         basket = apply_restrictions(draft(line("молоко"), line("арахіс")), ["арахіс"])
@@ -306,3 +309,78 @@ class TestPipelineOrder:
             apply_savings(await resolve_basket(draft(line("молоко")), mcp, CONTEXT)), cap
         )
         assert cart.warnings == []
+
+
+class TestFallbackTerms:
+    """Measured live: «Ковбаса (наприклад, салямі або варена)» returns 0 products,
+    «ковбаса» returns 30. A parenthetical aside is not worth losing a line over."""
+
+    def test_a_parenthetical_aside_is_dropped_first(self) -> None:
+        assert fallback_terms("Ковбаса (наприклад, салямі або варена)")[0] == "Ковбаса"
+
+    def test_then_the_head_word(self) -> None:
+        assert fallback_terms("Сир твердий (наприклад, моцарела)") == ["Сир твердий", "Сир"]
+
+    def test_a_plain_description_still_gets_a_head_word(self) -> None:
+        assert fallback_terms("Печиво або цукерки") == ["Печиво"]
+
+    def test_a_single_word_has_nothing_simpler(self) -> None:
+        assert fallback_terms("молоко") == []
+
+
+class TestSilpoOrderingIsTrusted:
+    """A word-overlap score with a cheapest-wins tie-break was tried and reverted.
+
+    It fixed «яйця» (Silpo returns guinea fowl at 257,40 ₴ ahead of hen's eggs at
+    59,39 ₴) and broke «кока кола» (the drink is written "Coca-Cola" in Latin, so
+    Cyrillic «кола» matched a 12,99 ₴ marmalade instead). The eggs case was a vague
+    query, fixed in the prompt; two alphabets in one catalogue defeat substring
+    matching.
+    """
+
+    async def test_the_first_in_stock_result_is_taken(self) -> None:
+        mcp = FakeSilpo(
+            {
+                "кока кола": [
+                    product("Напій Coca-Cola", 30.99),
+                    product("Мармелад Chupa Chups Cola Tube смак кола", 12.99),
+                ]
+            }
+        )
+        cart = await resolve_basket(draft(line("кока кола")), mcp, CONTEXT)
+        assert cart.lines[0].name == "Напій Coca-Cola", "cheaper is not more relevant"
+
+    async def test_an_out_of_stock_leader_is_skipped(self) -> None:
+        mcp = FakeSilpo(
+            {"молоко": [product("Молоко A", 10, stock=0), product("Молоко Б", 90)]},
+            {"id-Молоко A": []},
+        )
+        cart = await resolve_basket(draft(line("молоко")), mcp, CONTEXT)
+        assert cart.lines[0].name == "Молоко Б"
+
+
+class TestResolveWithFallback:
+    async def test_a_parenthetical_description_still_resolves(self) -> None:
+        """The two «не знайшлося» lines from the live pizza basket."""
+        mcp = FakeSilpo({"Ковбаса": [product("Ковбаса «Алан» Салямі Чорізо", 89.90)]})
+        cart = await resolve_basket(
+            draft(line("Ковбаса (наприклад, салямі або варена)")), mcp, CONTEXT
+        )
+        assert [ln.name for ln in cart.lines] == ["Ковбаса «Алан» Салямі Чорізо"]
+        assert not cart.warnings
+
+    async def test_the_original_description_is_preferred_when_it_matches(self) -> None:
+        mcp = FakeSilpo(
+            {
+                "сир твердий": [product("Сир Пирятин твердий", 649)],
+                "сир": [product("Сир плавлений", 30)],
+            }
+        )
+        cart = await resolve_basket(draft(line("сир твердий")), mcp, CONTEXT)
+        assert cart.lines[0].name == "Сир Пирятин твердий"
+        assert mcp.search_calls == [["сир твердий"]], "no retry when the first search works"
+
+    async def test_a_line_that_matches_nothing_at_all_is_still_reported(self) -> None:
+        cart = await resolve_basket(draft(line("Ікра (чорна)")), FakeSilpo({}), CONTEXT)
+        assert cart.lines == []
+        assert cart.warnings == ["not_found:Ікра (чорна)"]

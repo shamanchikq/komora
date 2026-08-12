@@ -11,6 +11,7 @@ import pathlib
 import pytest
 
 from komora.core.agent.loop import ForbiddenToolCall, run_agent
+from komora.core.agent.prompts import SYSTEM_PROMPT
 from komora.core.agent.tools import (
     INJECTED_PARAMS,
     PROPOSE_BASKET,
@@ -274,3 +275,30 @@ class TestPrompt:
         system = llm.calls[0]["system"].lower()
         assert "не шукай" in system
         assert PROPOSE_BASKET in system
+
+
+class TestPromptRules:
+    """Each rule here answers a failure seen in a live Telegram run."""
+
+    def test_the_schema_forbids_parenthetical_descriptions(self) -> None:
+        """«Ковбаса (наприклад, салямі або варена)» matched 0 products; «ковбаса»
+        matched 30. resolve.py retries with a simplified term, but not writing one in
+        the first place is cheaper than a second round trip."""
+        decl = next(d for d in build_tool_decls(ALL_TOOLS) if d.name == PROPOSE_BASKET)
+        text = decl.parameters["properties"]["lines"]["items"]["properties"]["description"][
+            "description"
+        ]
+        assert "дужок" in text and "наприклад" in text
+
+    def test_the_prompt_gives_worked_examples_of_good_and_bad_descriptions(self) -> None:
+        assert "ДОБРЕ:" in SYSTEM_PROMPT and "ПОГАНО:" in SYSTEM_PROMPT
+
+    def test_the_prompt_pins_the_default_quantity(self) -> None:
+        """Asked for milk and eggs it chose three cartons of eggs."""
+        assert "quantity — 1" in SYSTEM_PROMPT
+
+    def test_the_prompt_forbids_carrying_items_over_from_earlier_turns(self) -> None:
+        """A pizza basket arrived with milk in it, reasoned «за вашим проханням» —
+        the request was two turns earlier and the claim was false."""
+        assert "Не переноси товари з попередніх" in SYSTEM_PROMPT
+        assert "за вашим проханням" in SYSTEM_PROMPT

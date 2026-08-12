@@ -12,6 +12,7 @@ Three facts confirmed against the live server (spec 3.1) shape it:
 * Quantities must respect `stock` and the per-product `step`.
 """
 
+import re
 from decimal import Decimal
 from typing import Any
 
@@ -60,6 +61,45 @@ def flatten_search(payload: Any) -> dict[str, list[dict[str, Any]]]:
     return grouped
 
 
+_ASIDE = re.compile(r"\([^)]*\)")
+_MIN_WORD = 4
+"""Shorter words ("для", "з", "та") match everything and rank nothing."""
+
+
+def fallback_terms(description: str) -> list[str]:
+    """Progressively simpler queries for a description Silpo matched nothing for.
+
+    Measured live: «Ковбаса (наприклад, салямі або варена)» returns **0** products
+    while «ковбаса» returns 30. The parenthetical aside is what kills it, and a model
+    writing one is not a bug worth failing a basket over.
+    """
+    terms: list[str] = []
+    seen = {description.casefold()}
+
+    for candidate in (
+        " ".join(_ASIDE.sub(" ", description).split()),
+        " ".join(_ASIDE.sub(" ", description).split()).split(" ")[0],
+    ):
+        if candidate and candidate.casefold() not in seen:
+            terms.append(candidate)
+            seen.add(candidate.casefold())
+    return terms
+
+
+# A word-overlap score with a cheapest-wins tie-break was tried here and **reverted**.
+#
+# It was motivated by one observation: asked for «яйця», Silpo returns guinea fowl eggs
+# at 257,40 ₴ ahead of hen's eggs at 59,39 ₴. But the same heuristic then resolved
+# «кока кола» to chewy marmalade at 12,99 ₴ — Silpo writes the drink's name as
+# "Coca-Cola" in Latin, so Cyrillic «кола» matches the candy and not the cola, and the
+# candy is cheaper. Silpo's own ordering had it right.
+#
+# The eggs case turned out to be a symptom of a vague query, and it is fixed where it
+# belongs: the prompt now asks for «яйця курячі», for which Silpo's first result is
+# ordinary hen's eggs. Two alphabets in one catalogue defeat substring matching, and
+# Silpo's relevance ranking is better than anything hand-rolled here.
+
+
 def clamp_quantity(wanted: float, product: dict[str, Any]) -> float:
     """Never exceed stock, and land on a multiple of the product's step.
 
@@ -105,21 +145,45 @@ def _line_from(
     )
 
 
+async def _search(
+    mcp: SilpoClient, queries: list[str], context: SearchContext
+) -> dict[str, list[dict[str, Any]]]:
+    """Batched search, respecting Silpo's 30-query ceiling."""
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for start in range(0, len(queries), MAX_QUERIES_PER_BATCH):
+        chunk = queries[start : start + MAX_QUERIES_PER_BATCH]
+        grouped |= flatten_search(await mcp.find_products_batch(chunk, context))
+    return grouped
+
+
+def _usable_in(grouped: dict[str, list[dict[str, Any]]], term: str) -> list[dict[str, Any]]:
+    return [p for p in grouped.get(term, []) if _usable(p)]
+
+
 async def resolve_basket(
     basket: DraftBasket, mcp: SilpoClient, context: SearchContext
 ) -> ResolvedCart:
     """Turn a DraftBasket into a ResolvedCart of real products."""
     descriptions = [line.description for line in basket.lines]
-    grouped: dict[str, list[dict[str, Any]]] = {}
-    for start in range(0, len(descriptions), MAX_QUERIES_PER_BATCH):
-        chunk = descriptions[start : start + MAX_QUERIES_PER_BATCH]
-        grouped |= flatten_search(await mcp.find_products_batch(chunk, context))
+    grouped = await _search(mcp, descriptions, context)
+
+    # Second pass for anything that matched nothing. One extra batched call buys back
+    # every line a parenthetical aside would otherwise have lost.
+    retries = {d: fallback_terms(d) for d in descriptions if not _usable_in(grouped, d)}
+    extra = list(dict.fromkeys(term for terms in retries.values() for term in terms))
+    if extra:
+        grouped |= await _search(mcp, extra, context)
 
     lines: list[ResolvedLine] = []
     warnings = list(basket.warnings)
 
     for draft in basket.lines:
-        candidates = [p for p in grouped.get(draft.description, []) if _usable(p)]
+        candidates = _usable_in(grouped, draft.description)
+        for term in retries.get(draft.description, []):
+            if candidates:
+                break
+            candidates = _usable_in(grouped, term)
+
         if not candidates:
             warnings.append(f"{NOT_FOUND}:{draft.description}")
             continue
