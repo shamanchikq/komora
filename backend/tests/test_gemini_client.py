@@ -177,3 +177,87 @@ class TestFailures:
         with pytest.raises(LLMUnavailable):
             await llm.complete(system="s", messages=[Message("user", "hi")])
         assert len(sdk.models.calls) == 2, "one retry, not an unbounded loop"
+
+
+def reply_with_parts(*parts: types.Part, text: str | None = None) -> Any:
+    """A response shaped like the real SDK's: candidates -> content -> parts.
+
+    `reply()` above only implements the `function_calls` accessor, which is what the
+    convenience path reads. The signature lives on the Part, so the bug this models is
+    invisible to any fake that skips the part structure.
+    """
+
+    class R:
+        pass
+
+    r = R()
+    r.text = text  # type: ignore[attr-defined]
+    r.function_calls = [p.function_call for p in parts if p.function_call]  # type: ignore[attr-defined]
+    r.candidates = [  # type: ignore[attr-defined]
+        types.Candidate(content=types.Content(role="model", parts=list(parts)))
+    ]
+    return r
+
+
+SIGNATURE = b"opaque-thought-signature"
+
+
+def signed_call(name: str = "silpo_find_products_batch") -> types.Part:
+    return types.Part(
+        function_call=types.FunctionCall(id="c1", name=name, args={"products": ["вино"]}),
+        thought_signature=SIGNATURE,
+    )
+
+
+class TestThoughtSignature:
+    """Gemini 3 rejects the request *after* a tool call unless the signature that came
+    with it is replayed: `400 INVALID_ARGUMENT: Function call is missing a thought
+    signature`. Single-turn calls look perfectly healthy, so this only shows up once a
+    tool is actually used — which is how it reached a live run.
+    """
+
+    async def test_the_signature_is_captured_from_the_part(self) -> None:
+        llm, _ = client(reply_with_parts(signed_call()))
+        response = await llm.complete(system="s", messages=[Message("user", "вино?")])
+        assert response.tool_calls[0].provider_state == SIGNATURE
+
+    async def test_the_signature_is_replayed_on_the_next_request(self) -> None:
+        llm, sdk = client(reply_with_parts(signed_call()), reply(text="ось вино"))
+
+        first = await llm.complete(system="s", messages=[Message("user", "вино?")])
+        await llm.complete(
+            system="s",
+            messages=[
+                Message("user", "вино?"),
+                Message("assistant", tool_calls=first.tool_calls),
+                Message("tool", "[]", tool_name="silpo_find_products_batch", tool_call_id="c1"),
+            ],
+        )
+
+        sent = sdk.models.calls[1]["contents"]
+        model_turn = next(c for c in sent if c.role == "model")
+        assert model_turn.parts[0].thought_signature == SIGNATURE
+
+    async def test_a_call_without_a_signature_still_works(self) -> None:
+        """Not every part carries one, and inventing a value would be worse."""
+        llm, sdk = client(
+            reply_with_parts(
+                types.Part(function_call=types.FunctionCall(id="c1", name="t", args={}))
+            ),
+            reply(text="ok"),
+        )
+        first = await llm.complete(system="s", messages=[Message("user", "?")])
+        assert first.tool_calls[0].provider_state is None
+
+        await llm.complete(
+            system="s",
+            messages=[Message("assistant", tool_calls=first.tool_calls)],
+        )
+        model_turn = next(c for c in sdk.models.calls[1]["contents"] if c.role == "model")
+        assert model_turn.parts[0].thought_signature is None
+
+    async def test_a_response_without_candidates_falls_back_to_the_accessor(self) -> None:
+        """Losing the calls entirely would be worse than losing the signature."""
+        llm, _ = client(reply(calls=(types.FunctionCall(id="c1", name="t", args={}),)))
+        response = await llm.complete(system="s", messages=[Message("user", "?")])
+        assert [c.name for c in response.tool_calls] == ["t"]

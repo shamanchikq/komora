@@ -81,6 +81,29 @@ directly when you need to match parallel calls:
 types.Part(function_response=types.FunctionResponse(id=…, name=…, response=…))
 ```
 
+### Gemini 3: a function call carries a thought signature you must replay
+
+Gemini 3 attaches an opaque `thought_signature` to the **`Part`** holding a function
+call, and rejects the *next* request if it does not come back:
+
+```
+400 INVALID_ARGUMENT: Function call is missing a thought signature
+```
+
+The trap is `response.function_calls`. It is the obvious accessor, it yields clean
+`FunctionCall` objects — and it drops the signature, because that lives on the
+enclosing part, not on the call. Walk `candidates[].content.parts[]` instead and carry
+the signature through your own message type:
+
+```python
+part.function_call          # name, args, id
+part.thought_signature      # bytes | None — must be echoed back
+```
+
+Why this survives testing: a **single-turn** call works perfectly. Only the request
+*after* a tool call is rejected, so every "does the client talk to Gemini" check passes
+while every real agent loop dies on step two. It reached a live run here.
+
 ### Gemini 3: do not set `temperature`
 
 Google warns it risks looping or degraded output, and it is deprecated on 3.6. The

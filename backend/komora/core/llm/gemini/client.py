@@ -113,15 +113,51 @@ class GeminiClient:
         if message.content:
             parts.append(types.Part(text=message.content))
         parts.extend(
-            types.Part(function_call=types.FunctionCall(id=call.id, name=call.name, args=call.args))
+            types.Part(
+                function_call=types.FunctionCall(id=call.id, name=call.name, args=call.args),
+                # Replaying this is mandatory on Gemini 3 — see `_to_response`.
+                thought_signature=call.provider_state
+                if isinstance(call.provider_state, bytes)
+                else None,
+            )
             for call in message.tool_calls
         )
         return types.Content(role=_ROLE_TO_GEMINI[message.role], parts=parts)
 
     @staticmethod
     def _to_response(response: Any) -> LLMResponse:
-        calls = tuple(
-            ToolCall(name=call.name or "", args=dict(call.args or {}), id=call.id)
-            for call in (response.function_calls or [])
-        )
-        return LLMResponse(text=response.text, tool_calls=calls)
+        """Read the calls off the parts, not off `response.function_calls`.
+
+        The convenience accessor yields bare `FunctionCall` objects and drops the
+        `thought_signature` that sits on the enclosing `Part`. Gemini 3 then rejects
+        the *next* request with `400 INVALID_ARGUMENT: Function call is missing a
+        thought signature`, so every tool-using conversation dies on its second step
+        while single-turn calls look perfectly healthy.
+        """
+        calls: list[ToolCall] = []
+        for candidate in getattr(response, "candidates", None) or []:
+            content = getattr(candidate, "content", None)
+            for part in (getattr(content, "parts", None) or []) if content else []:
+                call = getattr(part, "function_call", None)
+                if call is None:
+                    continue
+                calls.append(
+                    ToolCall(
+                        name=call.name or "",
+                        args=dict(call.args or {}),
+                        id=call.id,
+                        provider_state=getattr(part, "thought_signature", None),
+                    )
+                )
+            if calls:
+                break  # the first candidate is the answer; the rest are alternatives
+
+        if not calls:
+            # Fall back to the accessor: a response with no parts we recognise may
+            # still carry calls, and losing them is worse than losing the signature.
+            calls = [
+                ToolCall(name=c.name or "", args=dict(c.args or {}), id=c.id)
+                for c in (response.function_calls or [])
+            ]
+
+        return LLMResponse(text=response.text, tool_calls=tuple(calls))

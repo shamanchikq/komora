@@ -31,6 +31,15 @@ class ToolCall:
     id: str | None = None
     """Present on providers that supply one. Ollama's Python surface has none, so
     results are matched by name and order there."""
+    provider_state: Any = None
+    """Opaque provider data that must be echoed back on the following request.
+
+    Gemini 3 attaches a `thought_signature` to the part carrying a function call and
+    **rejects the next request without it** — `400 INVALID_ARGUMENT: Function call is
+    missing a thought signature`. So a tool call cannot be reduced to (name, args, id)
+    and rebuilt; something has to survive the round trip. Nothing outside the provider
+    that produced it may read this.
+    """
 
 
 @dataclass(frozen=True)

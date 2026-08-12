@@ -111,7 +111,9 @@ What the script cannot cover. Needs `KOMORA_TELEGRAM_BOT_TOKEN` from
 - [x] A follow-up edit in plain language — «можна замість 3 упаковок яєць додати
       тільки 2?» — produced a corrected basket with «Ви змінили кількість з 3 на 2
       упаковки» as the reason. Not in the original plan; it works anyway.
-- [ ] «Яке грузинське вино є до 500 ₴?» → a free-form answer, no basket.
+- [x] «Яке грузинське вино є до 500 ₴?» → a free-form answer, no basket. Passes on
+      `gemini-3.1-flash-lite` (3/3 in a harness against the shipped prompt and tools);
+      fails on `gemma4:12b`, which answers without searching.
 - [ ] Clear the user's `silpo_tokens` row → any message → the re-auth prompt appears.
 
 The login link opens on **the machine running the bot**. `KOMORA_PUBLIC_BASE_URL` is
@@ -135,19 +137,15 @@ Found by the live runs on 2026-08-11/12, and left open deliberately.
   packs of eggs. Correcting it in plain language works, but nothing anchors a first
   guess to what the household actually buys — that is what the habits engine (Plan 3)
   is for.
-- **The free-form question path is the least reliable thing in the product**, and it is
-  a model limitation rather than a defect. Asked «яке грузинське вино є до 500 ₴?» a
-  local model may search, may ask which store to use (the context is injected and
-  present — it just does not know that), or may answer confidently that no such wine
-  exists. Measured on the same question, same tools, fake Silpo:
-
-  | | gemma4:12b | qwen3.6:27b |
-  |---|---|---|
-  | as shipped | searched, query «грузинське вино до 500 грн» | asked about the cart |
-  | + sharpened prompt | did not search | searched, answered correctly |
-
-  Neither model used `get_products(toPrice=…)`, which is the tool that actually filters
-  by price; both jammed the budget into a free-text query. Use Gemini for this path.
+- **The free-form question path needs a frontier model.** Asked «яке грузинське вино є
+  до 500 ₴?», three runs each on the same question and tools:
+  `gemini-3.1-flash-lite` answered correctly 3/3; `gemma4:12b` never searched, 0/3, and
+  said so in fluent apologetic Ukrainian that reads like a real answer. No model reached
+  for `get_products(toPrice=…)`, the parameter that actually filters by price. See
+  [local models §3.3](../docs/local-models-ollama-gemma.md).
+- **The Gemini free tier runs out.** `gemini-3.6-flash` returned `429
+  RESOURCE_EXHAUSTED` during testing. The bot degrades to «модель недоступна», which is
+  honest but unhelpful; a paid key or a retry-with-backoff would fix it.
 - **The agent never re-plans a line that fails to resolve.** A description that matches
   nothing is reported, not retried with a simpler term. Cheap to add, but it belongs
   with the other intents in Plan 4.

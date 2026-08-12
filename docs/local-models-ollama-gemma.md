@@ -260,31 +260,43 @@ declaration.
 
 ---
 
-## 3.3 Free-form product questions are where they break [LIVE]
+## 3.3 Free-form product questions: local fails, Gemini passes [LIVE]
 
-Measured 2026-08-12 on «яке грузинське вино є до 500 ₴?» — real model, real tool
+Measured 2026-08-12 on «яке грузинське вино є до 500 ₴?» — shipped prompt, shipped tool
 declarations, fake Silpo, so the only variable is whether the model calls the search
-tool at all.
+tool and reports what it found. Three runs each.
 
-| | gemma4:12b | qwen3.6:27b |
-|---|---|---|
-| as shipped | searched, query «грузинське вино до 500 грн» | asked which store to use |
-| unreachable advice stripped from tool descriptions | unchanged | did not search; **said no such wine exists** |
-| + a prompt forbidding store questions | did not search | searched «грузинське вино», answered correctly |
+| Model | Result |
+|---|---|
+| `gemini/gemini-3.1-flash-lite` | **3/3 answered correctly**, both wines with prices |
+| `gemini/gemini-3.6-flash` | 1 run hit the step limit, 2 hit free-tier 429s |
+| `ollama/gemma4:12b` | **0/3** — never searched; «не знайшов грузинських вин» |
 
-Three things worth keeping:
+gemma4:12b does not fail loudly here. It produces a fluent, apologetic Ukrainian reply
+that reads like a real answer, having never called the search tool at all.
 
-1. **The behaviour is not stable.** gemma4:12b searched here and asked about the store
-   in a live Telegram run, on the same question. One trial per cell proves nothing on
-   its own — treat the table as directional.
-2. **A confident wrong answer is the real risk.** qwen3.6:27b's «Зараз у Сільпо немає
-   вина за ціною до 500 ₴», with no search performed, is worse than the unhelpful
-   reply, because nothing marks it as a guess.
-3. **Neither model reached for `get_products(toPrice=…)`**, the parameter that actually
-   filters by price. Both put the budget into a free-text query instead.
+**A correction to an earlier version of this section.** It carried a table suggesting
+that stripping unreachable advice from the tool descriptions, and sharpening the
+prompt, changed which models searched. Re-running the identical harness twenty minutes
+later inverted almost every cell — qwen3.6:27b went from asking-about-the-store to
+answering correctly on the *unmodified* configuration. Those were single trials of a
+non-deterministic behaviour, and the differences were noise. The variants are not
+distinguishable at n=1; what is reproducible is the model gap in the table above.
+
+The lesson is cheap to state and was expensive to learn: **one run per cell is not a
+measurement.** Anything claimed about a model's tool-calling behaviour needs repeats
+before it goes in a document.
+
+Two details still worth keeping from that work:
+
+* No model tried `get_products(toPrice=…)`, the parameter that actually filters by
+  price. All of them put the budget into a free-text query.
+* A confident wrong answer is the real risk. qwen3.6:27b once replied «Зараз у Сільпо
+  немає вина за ціною до 500 ₴» with no search performed — worse than an unhelpful
+  reply, because nothing marks it as a guess.
 
 The stated-basket path — the one the product is built around — held up on gemma4:12b in
-the same period, in Telegram, against the live server. It is the open-ended path that
+Telegram against the live server in the same period. It is the open-ended path that
 needs a frontier model, which is what §6's gate already says.
 
 ## 4. The numbers that decide it [BENCH]
