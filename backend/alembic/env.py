@@ -3,12 +3,20 @@
 The database URL is read straight from `KOMORA_DATABASE_URL` rather than through
 `Settings`, so migrations run without a bot token or an API key — CI and a fresh
 checkout should be able to build the schema with nothing configured.
+
+**`.env` is loaded first, and that is not optional.** Without it this file saw no
+`KOMORA_DATABASE_URL` — the variable lives in `.env`, which only the app loads — fell
+through to the default below, and migrated a database the bot never opens. Everything
+looked right: `alembic upgrade head` reported success, `alembic check` reported no
+drift, and the first basket after the deploy died on a missing column.
 """
 
 import asyncio
 import os
 from logging.config import fileConfig
+from pathlib import Path
 
+from dotenv import load_dotenv
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
@@ -18,6 +26,8 @@ from alembic import context
 # Importing `tables` registers every table on Base.metadata for autogenerate.
 from komora.db import tables  # noqa: F401
 from komora.db.base import Base
+
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 config = context.config
 

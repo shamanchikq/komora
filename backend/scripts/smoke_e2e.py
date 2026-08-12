@@ -56,7 +56,8 @@ from komora.core.pipeline import (
     timeslot_is_offered,
 )
 from komora.core.sync import execute_sync, preview_sync
-from komora.db.base import Base, make_engine, make_session_factory
+from komora.db.base import make_engine, make_session_factory
+from komora.db.migrate import assert_current
 from komora.db.repo import OAuthClientRepo, UserRepo
 
 ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
@@ -155,9 +156,11 @@ async def main(args: argparse.Namespace) -> int:
     check("settings load", True, f"llm={args.llm} · mcp={settings.silpo_mcp_url}")
 
     database_url = os.environ.get("KOMORA_SMOKE_DATABASE_URL", "sqlite+aiosqlite:///./verify.db")
+    # Deliberately not `Base.metadata.create_all`: that is what left verify.db with a
+    # schema alembic had never heard of, so `upgrade head` skipped it and the bot then
+    # failed on a missing column. One path to a schema, and it is migrations.
+    assert_current(database_url)
     engine = make_engine(database_url)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
     sessions = make_session_factory(engine)
     users, clients = UserRepo(sessions), OAuthClientRepo(sessions)
 

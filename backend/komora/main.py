@@ -25,6 +25,7 @@ from komora.core.llm.factory import make_llm
 from komora.core.mcp.auth import AuthorizationBridge
 from komora.core.mcp.gateway import SilpoGateway
 from komora.db.base import make_engine, make_session_factory
+from komora.db.migrate import SchemaOutOfDate, assert_current
 from komora.db.repo import BasketRepo, ConversationRepo, OAuthClientRepo, UserRepo
 
 log = logging.getLogger("komora")
@@ -42,6 +43,10 @@ async def run() -> None:
     for stream in (sys.stdout, sys.stderr):
         with contextlib.suppress(AttributeError):
             stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+
+    # Before anything opens a session: a stale schema must fail here, with the name of
+    # the database in the message, not on the first basket write minutes later.
+    assert_current(settings.database_url)
 
     engine = make_engine(settings.database_url)
     sessions = make_session_factory(engine)
@@ -119,8 +124,12 @@ def main() -> None:
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
     )
-    with contextlib.suppress(KeyboardInterrupt):
-        asyncio.run(run())
+    try:
+        with contextlib.suppress(KeyboardInterrupt):
+            asyncio.run(run())
+    except SchemaOutOfDate as exc:
+        # A traceback would bury the one line that says what to do.
+        raise SystemExit(f"\nDatabase schema is out of date.\n\n{exc}\n") from None
 
 
 if __name__ == "__main__":

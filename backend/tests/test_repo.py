@@ -204,3 +204,50 @@ class TestBasketRepo:
         basket_id = await repo.create_from_cart(USER, "t", "stated", cart())
         await repo.set_status(basket_id, status)  # type: ignore[arg-type]
         assert await repo.get_status(basket_id) == status
+
+
+class TestSchemaGuard:
+    """The failure this guards against: `alembic upgrade head` reported success,
+    `alembic check` reported no drift, and the first basket died on a missing column —
+    because alembic had migrated a different database than the bot opened.
+    """
+
+    def test_a_database_at_head_is_accepted(self, tmp_path) -> None:
+        from komora.db.migrate import assert_current, current_and_head
+
+        url = f"sqlite:///{tmp_path / 'at-head.db'}"
+        _, head = current_and_head(url)
+        _stamp(url, head)
+        assert_current(url)  # must not raise
+
+    def test_an_unmigrated_database_is_refused(self, tmp_path) -> None:
+        from komora.db.migrate import SchemaOutOfDate, assert_current
+
+        url = f"sqlite:///{tmp_path / 'blank.db'}"
+        with pytest.raises(SchemaOutOfDate) as caught:
+            assert_current(url)
+        assert "no migration at all" in str(caught.value)
+
+    def test_the_message_names_the_database_and_the_fix(self, tmp_path) -> None:
+        """A message that does not say *which* database is what cost the live run."""
+        from komora.db.migrate import SchemaOutOfDate, assert_current
+
+        path = tmp_path / "stale.db"
+        url = f"sqlite:///{path}"
+        _stamp(url, "3de2908b9836")
+        with pytest.raises(SchemaOutOfDate) as caught:
+            assert_current(url)
+        message = str(caught.value)
+        assert str(path) in message
+        assert "alembic upgrade head" in message
+        assert "KOMORA_DATABASE_URL" in message
+
+
+def _stamp(url: str, revision: str | None) -> None:
+    from sqlalchemy import create_engine, text
+
+    engine = create_engine(url)
+    with engine.begin() as connection:
+        connection.execute(text("CREATE TABLE alembic_version (version_num VARCHAR(32))"))
+        connection.execute(text("INSERT INTO alembic_version VALUES (:v)"), {"v": revision})
+    engine.dispose()

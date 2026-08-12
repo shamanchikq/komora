@@ -46,6 +46,29 @@ and each run silently demanded a fresh Silpo login.
 For a Ukrainian-language product this fires on the entire UI copy layer. Disabled in
 `pyproject.toml`; do not re-enable.
 
+## Alembic and the app must agree on which database
+
+`alembic/env.py` reads `KOMORA_DATABASE_URL` from the **environment**. The app reads it
+from **`.env`**, via `load_dotenv()`. If env.py does not load `.env` too, the two open
+different files and nothing says so:
+
+```
+uv run alembic upgrade head   ->  success            (komora.db)
+uv run alembic check          ->  no drift detected  (komora.db)
+the bot, first basket         ->  OperationalError   (verify.db)
+```
+
+Both commands were telling the truth about a database nobody was using. env.py now
+loads `.env`, `komora/db/migrate.py: assert_current` refuses to start on a stale schema
+and names the file in the message, and no script calls `Base.metadata.create_all` any
+more — that is what left a database with tables alembic had never heard of, so
+`upgrade head` had nothing to apply.
+
+**SQLite cannot add a NOT NULL column to a table with rows** unless the DDL carries a
+`server_default`. A model-side `default=""` produces none, so autogenerate emits
+`nullable=False` with no default and the migration passes on an empty database and
+fails on every real one. Add `server_default` by hand.
+
 ## Working directory drift
 
 `uv run` resolves the project from the current directory. After a `cd` to the repo root
