@@ -231,3 +231,44 @@ class TestDrift:
         mcp = FakeSilpo()
         nearly = ResolvedCart(lines=[line("Молоко", "42.90")], total=Decimal("42.50"))
         assert (await preview_sync(nearly, mcp)).drift is None
+
+
+class TestPrematureValidations:
+    """Silpo computes validations against the cart as it stands — which, in a preview,
+    is the cart *without* the lines about to be added."""
+
+    async def test_a_minimum_order_complaint_is_not_shown_before_the_write(self) -> None:
+        """Live: an empty cart reported «сума менша за мінімальну» to a user who was in
+        the act of adding 2401 ₴ of food."""
+        mcp = FakeSilpo(validations=[{"level": "error", "message": "order.cost.min"}])
+        preview = await preview_sync(cart(line("Кава", "2401.98")), mcp)
+        assert preview.blocking_validations == []
+
+    async def test_it_is_still_shown_when_nothing_is_being_added(self) -> None:
+        mcp = FakeSilpo(validations=[{"level": "error", "message": "order.cost.min"}])
+        preview = await preview_sync(cart(), mcp)
+        assert preview.blocking_validations == ["order.cost.min"]
+
+    async def test_state_based_validations_survive(self) -> None:
+        """An expired slot or a line over stock is true regardless of what is added."""
+        mcp = FakeSilpo(
+            validations=[
+                {"level": "error", "message": "timeslot.not_available"},
+                {"level": "error", "message": "product.offer.stock.max"},
+                {"level": "error", "message": "order.cost.min"},
+            ]
+        )
+        preview = await preview_sync(cart(line("Кава", "164.90")), mcp)
+        assert preview.blocking_validations == [
+            "timeslot.not_available",
+            "product.offer.stock.max",
+        ]
+
+    async def test_the_report_after_the_write_keeps_everything(self) -> None:
+        """By then the cart is complete, so the check is meaningful again."""
+        mcp = FakeSilpo(
+            checkout_links=False,
+            validations=[{"level": "error", "message": "order.cost.min"}],
+        )
+        report = await execute_sync(cart(line("Кава", "10.00")), mcp)
+        assert report.blocking_validations == ["order.cost.min"]

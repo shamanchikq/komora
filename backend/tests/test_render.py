@@ -297,3 +297,19 @@ def test_escaping_covers_the_sync_paths_too() -> None:
     report = SyncReport(ok=False, added=[], failed=[("Сир <A&B>", "помилка")])
     assert "&lt;A&amp;B&gt;" in render_sync_report(report)
     assert esc("<x>") == "&lt;x&gt;"
+
+
+class TestSwapHint:
+    """A row of «⇄ N» arrows with no caption reads as decoration."""
+
+    def test_the_hint_appears_with_the_buttons(self) -> None:
+        text = render_cart(cart(line(), line("Хліб", "28.50")), "К", swappable=True)
+        assert "інший варіант" in text
+
+    def test_no_hint_when_the_buttons_are_absent(self) -> None:
+        text = render_cart(cart(line(), line("Хліб", "28.50")), "К")
+        assert "інший варіант" not in text
+
+    def test_no_hint_for_a_single_line(self) -> None:
+        """One line, one arrow — the numbering explains itself."""
+        assert "інший варіант" not in render_cart(cart(line()), "К", swappable=True)

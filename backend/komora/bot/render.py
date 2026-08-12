@@ -137,8 +137,22 @@ def validation_text(code: str) -> str:
     return known if known else f"Сільпо повідомляє про перешкоду: {esc(code)}"
 
 
-def render_cart(cart: ResolvedCart, title: str, *, budget_cap: int | None = None) -> str:
-    """The draft the user reviews before anything reaches Silpo."""
+SWAP_HINT = "⇄ 1…N — показати інший варіант для цієї позиції"
+
+
+def render_cart(
+    cart: ResolvedCart,
+    title: str,
+    *,
+    budget_cap: int | None = None,
+    swappable: bool = False,
+) -> str:
+    """The draft the user reviews before anything reaches Silpo.
+
+    `swappable` adds the one line that explains the «⇄ N» keyboard. A row of arrows
+    with no caption reads as decoration, and a control nobody understands is a control
+    nobody uses.
+    """
     if not cart.lines:
         return (
             f"<b>{esc(title)}</b>\n\nНічого не вдалося підібрати.\n"
@@ -167,6 +181,8 @@ def render_cart(cart: ResolvedCart, title: str, *, budget_cap: int | None = None
                 "Це ваш вибір: надіслати можна попри це."
             )
 
+    if swappable and len(cart.lines) > 1:
+        blocks.append(SWAP_HINT)
     if cart.warnings:
         blocks += ["", *(warning_text(w) for w in cart.warnings)]
     if cart.savings_notes:

@@ -193,7 +193,7 @@ async def on_text(services: Services, telegram_id: int, text: str) -> Reply:
         return Reply("Не зміг це опрацювати безпечно. Спробуйте сформулювати інакше.")
 
     basket = outcome.basket
-    rendered = render_cart(cart, basket.title, budget_cap=budget_cap)
+    rendered = render_cart(cart, basket.title, budget_cap=budget_cap, swappable=True)
     await services.conversations.append(telegram_id, "assistant", f"[чернетка] {basket.title}")
 
     if not cart.lines:
@@ -289,7 +289,9 @@ async def _swap(
 
     user = await services.users.get(telegram_id)
     return Reply(
-        render_cart(updated, title, budget_cap=user.budget_weekly if user else None),
+        render_cart(
+            updated, title, budget_cap=user.budget_weekly if user else None, swappable=True
+        ),
         buttons=_draft_buttons(basket_id, updated),
         toast=f"Замінено на {alternative.name}"[:200],
     )

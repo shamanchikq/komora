@@ -67,19 +67,34 @@ def _paid_total(payload: Any) -> Decimal:
     return Decimal(str(amount or 0))
 
 
-def _blocking(payload: Any) -> list[str]:
+SUM_DEPENDENT = frozenset({"order.cost.min"})
+"""Validations that describe the cart *total*, and so cannot be judged before a write.
+
+Silpo computes `validations[]` against the cart as it stands right now. In a preview
+that is the cart **without** the lines about to be added, so a minimum-order complaint
+about an empty cart was shown to a user who was in the act of adding 2401 ₴ of food.
+The same check after the write is meaningful, and there it correctly said nothing.
+"""
+
+
+def _blocking(payload: Any, *, adding: bool = False) -> list[str]:
     """Error-level entries from `calculation.validations[]`.
 
     These are the reason `checkoutWebLink` can be absent from an otherwise healthy
     cart: Silpo only issues one when the cart is actually checkout-ready. The values
     are **codes**, not prose — `bot/render.py: validation_text` translates them.
+
+    `adding=True` drops the sum-dependent ones, which a pending addition may resolve.
+    Everything else — an expired timeslot, a line over stock — is about what is already
+    in the cart and stays true regardless.
     """
     calculation = _cart_body(payload).get("calculation") or {}
-    return [
+    codes = [
         str(v.get("message", ""))
         for v in (calculation.get("validations") or [])
         if str(v.get("level", "")).lower() == "error"
     ]
+    return [code for code in codes if not (adding and code in SUM_DEPENDENT)]
 
 
 def _sendable(cart: ResolvedCart) -> list[ResolvedLine]:
@@ -121,7 +136,7 @@ async def preview_sync(cart: ResolvedCart, mcp: SilpoClient) -> SyncPreview:
         adding_count=len(adding),
         adding_total=live_total,
         overlapping=[line.name for line in adding if line.product_id in existing_ids],
-        blocking_validations=_blocking(current),
+        blocking_validations=_blocking(current, adding=bool(adding)),
         drift=drift,
     )
 

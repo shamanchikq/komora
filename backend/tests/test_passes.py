@@ -384,3 +384,43 @@ class TestResolveWithFallback:
         cart = await resolve_basket(draft(line("Ікра (чорна)")), FakeSilpo({}), CONTEXT)
         assert cart.lines == []
         assert cart.warnings == ["not_found:Ікра (чорна)"]
+
+
+class TestWeightedQuantities:
+    """`price` on a weighted product is per kilogram, so an unqualified «1» orders a
+    whole kilo. Live: 2099 ₴ of 36-month Parmigiano in a carbonara basket, at a
+    per-kilo price that was itself perfectly fair."""
+
+    def test_an_unqualified_weighted_line_becomes_one_step(self) -> None:
+        cheese = product("Пармезан", 2099, stock=5, step=0.1)
+        cheese["weighted"] = True
+        assert clamp_quantity(1, cheese) == 0.1, "100 g, not a kilogram"
+
+    def test_the_step_is_the_products_own(self) -> None:
+        bacon = product("Бекон", 859, stock=5, step=0.25)
+        bacon["weighted"] = True
+        assert clamp_quantity(1, bacon) == 0.25
+
+    def test_an_explicit_weight_is_honoured(self) -> None:
+        """«2 кг картоплі» must stay 2 kg."""
+        potatoes = product("Картопля", 30, stock=50, step=0.1)
+        potatoes["weighted"] = True
+        assert clamp_quantity(2, potatoes) == 2.0
+
+    def test_a_fractional_request_is_untouched(self) -> None:
+        cheese = product("Пармезан", 2099, stock=5, step=0.1)
+        cheese["weighted"] = True
+        assert clamp_quantity(0.2, cheese) == 0.2
+
+    def test_countable_products_are_unaffected(self) -> None:
+        """Only weighted goods are priced per kilo; one loaf is one loaf."""
+        assert clamp_quantity(1, product("Хліб", 28.50, step=1)) == 1
+
+    async def test_the_cart_shows_a_sane_weight(self) -> None:
+        cheese = product("Сир Парміджано Реджано", 2099, stock=5, step=0.1)
+        cheese["weighted"] = True
+        cart = await resolve_basket(
+            draft(line("пармезан")), FakeSilpo({"пармезан": [cheese]}), CONTEXT
+        )
+        assert cart.lines[0].qty == 0.1
+        assert cart.total == Decimal("209.90"), "not 2099.00"

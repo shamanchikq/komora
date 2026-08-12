@@ -101,13 +101,30 @@ def fallback_terms(description: str) -> list[str]:
 # Silpo's relevance ranking is better than anything hand-rolled here.
 
 
+DEFAULT_QUANTITY = 1.0
+"""What the schema tells the model to send when the user named no amount."""
+
+
 def clamp_quantity(wanted: float, product: dict[str, Any]) -> float:
     """Never exceed stock, and land on a multiple of the product's step.
 
     Silpo's own tool description is emphatic about the stock ceiling; `step` matters
     for weighted goods, where 1.0 may not be an orderable amount.
+
+    **On a weighted product, quantity is kilograms.** `price` is per kilogram too, so
+    an unqualified `1` orders a whole kilo: it put 2099 ₴ of 36-month Parmigiano into a
+    carbonara basket, at a per-kilo price that was itself perfectly reasonable. Nobody
+    asking for parmesan means a kilogram of it.
+
+    So an unqualified quantity on a weighted good becomes one **step** — the smallest
+    amount Silpo will sell, 100 g for that cheese and 250 g for sliced bacon. An
+    explicit amount is still honoured: «2 кг картоплі» arrives as 2 and stays 2.
+    The narrow miss is a user who really did want exactly 1 kg; they get 100 g and a
+    swap button, which is the better failure of the two.
     """
     step = product.get("step") or 1
+    if product.get("weighted") and wanted == DEFAULT_QUANTITY:
+        wanted = float(step)
     stock = product.get("stock")
     capped = min(wanted, float(stock)) if stock is not None else float(wanted)
     if step and step > 0:

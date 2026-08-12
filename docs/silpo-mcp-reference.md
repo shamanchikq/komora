@@ -91,6 +91,22 @@ construct from name."*
 **`get_replacements`** → `{"items": [{"productId", "replacements": [ /* products */ ]}]}`.
 Requires `branchId`, `companyId`, `productIds`, `deliveryType`.
 
+### ⚠ `weighted` changes what `price` and `quantity` mean
+
+| | `weighted: false` | `weighted: true` |
+|---|---|---|
+| `price` | per item | **per kilogram** |
+| `quantity` | items | **kilograms** |
+| `step` | 1 | the smallest orderable weight — 0.1 for cheese, 0.25 for sliced bacon |
+
+So an unqualified `quantity: 1` on a weighted product orders **a whole kilo**. Live,
+that put 2099 ₴ of 36-month Parmigiano into a carbonara basket — at a per-kilo price
+that was entirely fair. Nothing in the response says "you probably meant 100 g";
+`ratio` is `null` on every weighted product observed.
+
+Komora resolves an unqualified quantity on a weighted good to one `step`
+(`passes/resolve.py: clamp_quantity`), and an explicit amount is left alone.
+
 ### ⚠ The identifier trap
 
 A **search result** names the product `id`. The **cart** names the same value
