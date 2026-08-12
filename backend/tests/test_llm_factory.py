@@ -51,10 +51,10 @@ def test_malformed_ref_is_rejected(settings: Settings) -> None:
         make_llm("gemini-3.6-flash", settings)
 
 
-def test_tier_refs_from_settings_resolve(settings: Settings) -> None:
+def test_role_refs_from_settings_resolve(settings: Settings) -> None:
     """The path the agent actually uses."""
-    for tier in ("lite", "full"):
-        provider, model = settings.tier_ref(tier)  # type: ignore[arg-type]
+    for role in ("agent", "verifier"):
+        provider, model = settings.model_for(role)  # type: ignore[arg-type]
         assert isinstance(make_llm(f"{provider}/{model}", settings), LLMClient)
 
 

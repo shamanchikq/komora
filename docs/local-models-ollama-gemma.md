@@ -373,8 +373,8 @@ At most it serves `lite`.
 Switching is one env var — see `backend/.env.example`:
 
 ```bash
-KOMORA_LLM_LITE=ollama/gemma4:12b
-KOMORA_LLM_FULL=ollama/gemma4:12b
+KOMORA_LLM_AGENT=ollama/gemma4:12b
+KOMORA_LLM_VERIFIER=ollama/gemma4:12b
 KOMORA_OLLAMA_BASE_URL=http://localhost:11434
 ```
 

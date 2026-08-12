@@ -18,6 +18,10 @@ build/
 # Databases
 *.db
 *.db-journal
+# Backups taken before a destructive migration or a wipe. `*.db` does not cover
+# `verify.db.bak-20260812`, and these hold encrypted OAuth tokens.
+*.db.bak*
+*.bak-*
 *.sqlite
 *.sqlite3
 

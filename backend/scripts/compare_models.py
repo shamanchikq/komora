@@ -268,8 +268,8 @@ async def main(args: argparse.Namespace) -> int:
 
     settings = Settings(
         telegram_bot_token="unused",
-        llm_lite=args.models[0],
-        llm_full=args.models[0],
+        llm_agent=args.models[0],
+        llm_verifier=args.models[0],
         _env_file=str(ENV_FILE),
     )
     captured = json.loads(TOOLS_FIXTURE.read_text(encoding="utf-8"))

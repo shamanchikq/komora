@@ -215,17 +215,22 @@ core/llm/
 └── ollama/client.py     JSON Schema passthrough, /api/chat
 ```
 
-**Two tiers, any provider.** Tiers are `lite` (intent routing, ordinary conversation)
-and `full` (meal planning, multi-step tool loops). Each tier is bound to a model by a
-`provider/model` reference in config, so changing model — or provider — is an env var,
-never a code change:
+**Two roles, any provider.** *(Revised 2026-08-12. These were tiers named `lite` and
+`full`, implying a weak/strong pair. They are jobs: `agent` writes the basket,
+`verifier` checks it — and the verifier is deliberately the cheaper model, so a name
+suggesting a ranking invited an "upgrade" that would make the pipeline worse.)*
+
+Each role is bound to a model by a `provider/model` reference in config, so changing
+model — or provider — is an env var, never a code change. **Point them at two different
+models:** free-tier quota is keyed on (project, model) and a basket spends one request
+on each role, so one model halves the baskets available per day.
 
 ```
-KOMORA_LLM_LITE=gemini/gemini-3.1-flash-lite     # production default
-KOMORA_LLM_FULL=gemini/gemini-3.6-flash
+KOMORA_LLM_AGENT=gemini/gemini-3.5-flash-lite      # production default
+KOMORA_LLM_VERIFIER=gemini/gemini-3.1-flash-lite
 # local development — free, offline, no API key:
-KOMORA_LLM_LITE=ollama/gemma4:12b
-KOMORA_LLM_FULL=ollama/gemma4:12b
+KOMORA_LLM_AGENT=ollama/gemma4:12b
+KOMORA_LLM_VERIFIER=ollama/gemma4:12b
 ```
 
 Supported values (all verified 2026-08-10):

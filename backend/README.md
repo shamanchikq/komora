@@ -194,8 +194,8 @@ Komora binds each LLM tier to a `provider/model` ref, so switching to a local Ol
 is one env var — free, offline, no API key:
 
 ```bash
-KOMORA_LLM_LITE=ollama/gemma4:12b
-KOMORA_LLM_FULL=ollama/gemma4:12b
+KOMORA_LLM_AGENT=ollama/gemma4:12b
+KOMORA_LLM_VERIFIER=ollama/gemma4:12b
 ```
 
 **Development only.** See [docs/local-models-ollama-gemma.md](../docs/local-models-ollama-gemma.md)

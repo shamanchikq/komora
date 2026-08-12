@@ -33,7 +33,7 @@ _ROLE_TO_GEMINI = {"user": "user", "assistant": "model"}
 
 
 class GeminiClient:
-    """Bound to one model. Tier selection happens in config, not here."""
+    """Bound to one model. Which model serves which job is decided in config."""
 
     def __init__(
         self,

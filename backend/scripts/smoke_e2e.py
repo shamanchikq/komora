@@ -160,10 +160,10 @@ async def main(args: argparse.Namespace) -> int:
 
     settings = Settings(
         telegram_bot_token="unused-by-this-script",
-        # Both tiers: the startup validator checks every tier, so leaving `full`
+        # Both roles: the startup validator checks every one, so leaving the verifier
         # pointed at Gemini would demand an API key this script does not need.
-        llm_lite=args.llm,
-        llm_full=args.llm,
+        llm_agent=args.llm,
+        llm_verifier=args.llm,
         _env_file=str(ENV_FILE),
     )
     check("settings load", True, f"llm={args.llm} · mcp={settings.silpo_mcp_url}")

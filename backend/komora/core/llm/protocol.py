@@ -68,7 +68,7 @@ class LLMClient(Protocol):
     """Method-only so `isinstance` checks stay meaningful.
 
     A client is bound to one model at construction; tier selection happens in config
-    (`Settings.tier_ref`), not here.
+    (`Settings.model_for`), not here.
     """
 
     async def complete(

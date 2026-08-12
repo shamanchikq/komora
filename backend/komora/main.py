@@ -96,12 +96,12 @@ async def run() -> None:
         users=users,
         conversations=ConversationRepo(sessions),
         baskets=BasketRepo(sessions),
-        llm=make_llm(settings.llm_lite, settings),
-        # The second tier was configured and validated from the start and then never
+        llm=make_llm(settings.llm_agent, settings),
+        # This second client was configured and validated from the start and then never
         # built, so both requests in a basket went to one model and drained one daily
         # quota. Free-tier limits are per (project, model), so this is capacity as much
         # as it is model choice.
-        verifier=make_llm(settings.llm_full, settings),
+        verifier=make_llm(settings.llm_verifier, settings),
         tools=CachedTools(),
         connect=gateway.connect,
         start_linking=link,

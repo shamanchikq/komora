@@ -30,16 +30,16 @@ def test_reads_required_values_and_applies_defaults(env: pytest.MonkeyPatch) -> 
     assert s.public_base_url == "https://x.example"
     assert s.silpo_mcp_url == "https://mcp.silpo.ua/mcp"
     assert s.database_url.startswith("sqlite+aiosqlite")
-    assert s.llm_lite == "gemini/gemini-3.5-flash-lite"
-    assert s.llm_full == "gemini/gemini-3.1-flash-lite"
+    assert s.llm_agent == "gemini/gemini-3.5-flash-lite"
+    assert s.llm_verifier == "gemini/gemini-3.1-flash-lite"
     assert s.ollama_base_url == "http://localhost:11434"
 
 
-def test_the_two_tiers_default_to_different_models(env: pytest.MonkeyPatch) -> None:
+def test_the_two_roles_default_to_different_models(env: pytest.MonkeyPatch) -> None:
     """Free-tier quota is per (project, model) and a basket spends one request on each
     tier, so identical defaults would silently halve the baskets available per day."""
     s = Settings(_env_file=None)
-    assert s.llm_lite != s.llm_full
+    assert s.llm_agent != s.llm_verifier
 
 
 def test_missing_required_value_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -56,36 +56,59 @@ def test_trailing_slash_stripped_from_public_base_url(env: pytest.MonkeyPatch) -
 
 
 class TestProviderValidation:
-    def test_unknown_provider_in_a_tier_is_rejected(self, env: pytest.MonkeyPatch) -> None:
-        env.setenv("KOMORA_LLM_LITE", "openai/gpt-5")
+    def test_unknown_provider_in_a_role_is_rejected(self, env: pytest.MonkeyPatch) -> None:
+        env.setenv("KOMORA_LLM_AGENT", "openai/gpt-5")
         with pytest.raises(ValidationError, match="openai"):
             Settings(_env_file=None)
 
-    def test_gemini_tier_requires_an_api_key(self, env: pytest.MonkeyPatch) -> None:
+    def test_a_gemini_role_requires_an_api_key(self, env: pytest.MonkeyPatch) -> None:
         env.setenv("KOMORA_GEMINI_API_KEY", "")
         with pytest.raises(ValidationError) as excinfo:
             Settings(_env_file=None)
         message = str(excinfo.value)
-        assert "llm_lite" in message, "the error must name which tier needs the key"
+        assert "llm_agent" in message, "the error must name which model needs the key"
         assert "gemini_api_key" in message
 
     def test_all_ollama_config_boots_without_a_gemini_key(self, env: pytest.MonkeyPatch) -> None:
         """The local dev profile must work with no API key at all."""
         env.delenv("KOMORA_GEMINI_API_KEY", raising=False)
-        env.setenv("KOMORA_LLM_LITE", "ollama/gemma4:12b")
-        env.setenv("KOMORA_LLM_FULL", "ollama/gemma4:12b")
+        env.setenv("KOMORA_LLM_AGENT", "ollama/gemma4:12b")
+        env.setenv("KOMORA_LLM_VERIFIER", "ollama/gemma4:12b")
         s = Settings(_env_file=None)
         assert s.gemini_api_key == ""
-        assert s.tier_ref("lite") == ("ollama", "gemma4:12b")
+        assert s.model_for("agent") == ("ollama", "gemma4:12b")
 
     def test_mixed_config_still_requires_the_key(self, env: pytest.MonkeyPatch) -> None:
         env.setenv("KOMORA_GEMINI_API_KEY", "")
-        env.setenv("KOMORA_LLM_LITE", "ollama/gemma4:12b")
-        with pytest.raises(ValidationError, match="llm_full"):
+        env.setenv("KOMORA_LLM_AGENT", "ollama/gemma4:12b")
+        with pytest.raises(ValidationError, match="llm_verifier"):
             Settings(_env_file=None)
 
 
-def test_tier_ref_returns_parsed_provider_and_model(env: pytest.MonkeyPatch) -> None:
+class TestRetiredNames:
+    """A renamed variable left in a .env is invisible to pydantic-settings, so the app
+    would boot on defaults while the operator believed their config was in effect."""
+
+    @pytest.mark.parametrize(
+        ("old", "new"),
+        [("KOMORA_LLM_LITE", "KOMORA_LLM_AGENT"), ("KOMORA_LLM_FULL", "KOMORA_LLM_VERIFIER")],
+    )
+    def test_an_old_name_refuses_to_start(
+        self, env: pytest.MonkeyPatch, old: str, new: str
+    ) -> None:
+        env.setenv(old, "gemini/gemini-3.1-flash-lite")
+        with pytest.raises(ValidationError) as excinfo:
+            Settings(_env_file=None)
+        message = str(excinfo.value)
+        assert old in message and new in message, "the error must name the rename"
+
+    def test_an_empty_old_name_is_ignored(self, env: pytest.MonkeyPatch) -> None:
+        """An exported-but-blank variable is not a configuration anyone is relying on."""
+        env.setenv("KOMORA_LLM_LITE", "")
+        assert Settings(_env_file=None).llm_agent == "gemini/gemini-3.5-flash-lite"
+
+
+def test_model_for_returns_parsed_provider_and_model(env: pytest.MonkeyPatch) -> None:
     s = Settings(_env_file=None)
-    assert s.tier_ref("lite") == ("gemini", "gemini-3.5-flash-lite")
-    assert s.tier_ref("full") == ("gemini", "gemini-3.1-flash-lite")
+    assert s.model_for("agent") == ("gemini", "gemini-3.5-flash-lite")
+    assert s.model_for("verifier") == ("gemini", "gemini-3.1-flash-lite")
