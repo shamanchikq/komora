@@ -16,10 +16,12 @@ from komora.core.mcp.protocol import SilpoClient
 from komora.core.models import ResolvedLine, SearchContext
 from komora.core.passes.categories import CategoryIndex
 from komora.core.passes.resolve import (
+    CATEGORY_PAGE,
     clamp_quantity,
     fallback_terms,
     flatten_search,
     in_stock,
+    narrow,
     usable,
 )
 
@@ -35,26 +37,25 @@ async def next_alternative(
     The line keeps its quantity, reason, description and category — only the product
     changes. A swapped line is never `unavailable`: every candidate is in stock.
 
-    **Alternatives come from the same shelf.** If the line was resolved by browsing a
-    category, so is its replacement; falling back to free-text here would walk off into
-    a different category and undo the disambiguation that put the line there.
+    **Alternatives stay on the same shelf, in relevance order.** The category keeps a
+    swap from walking off into a different aisle; the search decides which item on that
+    aisle comes next. Letting the shelf answer on its own — which it did, whenever the
+    category held two or more products — turned «⇄» into a tour of the whole category in
+    Silpo's arbitrary order: asked for parmigiano, it offered cheese after unrelated
+    cheese and never arrived. `narrow` is the same rule `resolve_basket` uses, because
+    picking a product and picking the next one are the same question.
     """
     slug = categories.slug_for(line.category) if categories else None
-    if slug:
-        candidates = await _in_category(slug, mcp, context)
-        if len(candidates) >= 2:
-            return _swapped(line, candidates)
+    shelf = await _in_category(slug, mcp, context) if slug else []
 
     query = line.description.strip()
-    if not query:
-        return None
-
-    candidates = await _candidates(query, mcp, context)
-    for term in fallback_terms(query):
-        if candidates:
+    found = await _candidates(query, mcp, context) if query else []
+    for term in fallback_terms(query) if query else []:
+        if found:
             break
-        candidates = await _candidates(term, mcp, context)
+        found = await _candidates(term, mcp, context)
 
+    candidates = narrow(found, shelf)
     if len(candidates) < 2:
         return None
     return _swapped(line, candidates)
@@ -86,7 +87,9 @@ def _swapped(line: ResolvedLine, candidates: list[dict[str, Any]]) -> ResolvedLi
 
 async def _in_category(slug: str, mcp: SilpoClient, context: SearchContext) -> list[dict[str, Any]]:
     try:
-        payload = await mcp.get_products(context, category=slug, inStock=True, limit=30)
+        # Same page size as `resolve`: `narrow` decides its fallback by asking whether
+        # the shelf came back full, so a different limit here would make it guess wrong.
+        payload = await mcp.get_products(context, category=slug, inStock=True, limit=CATEGORY_PAGE)
     except Exception:
         return []
     products = payload.get("products") or []

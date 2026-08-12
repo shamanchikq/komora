@@ -65,7 +65,7 @@ komora/
 │   ├── passes/    restrictions -> resolve -> verify -> savings -> budget
 │   │              + categories.py (Silpo's taxonomy, beats free-text search)
 │   │              + removals.py («прибери ковбаски» -> a product Komora synced)
-│   ├── alternatives.py  «інший варіант» — re-runs a line's own query
+│   ├── alternatives.py  «інший варіант» — same rule as resolve (`narrow`)
 │   ├── pipeline.py  composes the passes; load_context reads branch + timeslot
 │   └── sync.py    preview + append to the real Silpo cart
 ├── db/            SQLAlchemy 2 + repos
@@ -89,6 +89,13 @@ SKUs, stock, substitutions and prices is deterministic Python.
 **Never guess an API shape.** Every parameter name assumed from a tool name in this
 project turned out wrong. Capture it (`verify_mcp.py`), read the fixture, then write
 code. Tool *descriptions* in `tools.json` are unusually detailed — read them.
+
+**A category is an aisle, not an answer.** `get_products` has no `query` parameter, so a
+category browse comes back in Silpo's order knowing nothing about what was asked. It
+narrows the search; it never replaces it. Both places that pick a product —
+`passes/resolve.py` and `alternatives.py` — go through `resolve.narrow`, because
+choosing a product and choosing the next one are the same question, and when they
+answered it differently «⇄» toured a hundred cheeses in shelf order.
 
 **Never claim more than the data supports.** Cadence claims are about receipt history,
 never the user's fridge. Savings come from `oldPrice − price`, never inferred coupon

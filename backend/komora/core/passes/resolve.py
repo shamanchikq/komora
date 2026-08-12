@@ -189,8 +189,12 @@ def _usable_in(grouped: dict[str, list[dict[str, Any]]], term: str) -> list[dict
     return [p for p in grouped.get(term, []) if usable(p)]
 
 
-def _narrow(found: list[dict[str, Any]], shelf: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def narrow(found: list[dict[str, Any]], shelf: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Silpo's relevance ranking, restricted to the shelf the model named.
+
+    Shared with `core.alternatives`: resolving a line and offering the next candidate
+    for it are the same question asked twice, and they gave different answers for a
+    while — which is how «⇄» ended up walking a hundred cheeses in aisle order.
 
     The category was meant to disambiguate near-identical names — hen's eggs from a
     guinea fowl's. It was doing something else: `get_products` has no query parameter,
@@ -290,11 +294,11 @@ async def resolve_basket(
         # answer to "which of these near-identical names did you mean", applied to
         # results it has already ranked.
         shelf = [p for p in browsed.get(draft.description, []) if usable(p)]
-        candidates = _narrow(_usable_in(grouped, draft.description), shelf)
+        candidates = narrow(_usable_in(grouped, draft.description), shelf)
         for term in retries.get(draft.description, []):
             if candidates:
                 break
-            candidates = _narrow(_usable_in(grouped, term), shelf)
+            candidates = narrow(_usable_in(grouped, term), shelf)
 
         if not candidates:
             warnings.append(f"{NOT_FOUND}:{draft.description}")
