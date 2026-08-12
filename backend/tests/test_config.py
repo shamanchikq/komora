@@ -30,9 +30,16 @@ def test_reads_required_values_and_applies_defaults(env: pytest.MonkeyPatch) -> 
     assert s.public_base_url == "https://x.example"
     assert s.silpo_mcp_url == "https://mcp.silpo.ua/mcp"
     assert s.database_url.startswith("sqlite+aiosqlite")
-    assert s.llm_lite == "gemini/gemini-3.1-flash-lite"
-    assert s.llm_full == "gemini/gemini-3.6-flash"
+    assert s.llm_lite == "gemini/gemini-3.5-flash-lite"
+    assert s.llm_full == "gemini/gemini-3.1-flash-lite"
     assert s.ollama_base_url == "http://localhost:11434"
+
+
+def test_the_two_tiers_default_to_different_models(env: pytest.MonkeyPatch) -> None:
+    """Free-tier quota is per (project, model) and a basket spends one request on each
+    tier, so identical defaults would silently halve the baskets available per day."""
+    s = Settings(_env_file=None)
+    assert s.llm_lite != s.llm_full
 
 
 def test_missing_required_value_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -80,5 +87,5 @@ class TestProviderValidation:
 
 def test_tier_ref_returns_parsed_provider_and_model(env: pytest.MonkeyPatch) -> None:
     s = Settings(_env_file=None)
-    assert s.tier_ref("lite") == ("gemini", "gemini-3.1-flash-lite")
-    assert s.tier_ref("full") == ("gemini", "gemini-3.6-flash")
+    assert s.tier_ref("lite") == ("gemini", "gemini-3.5-flash-lite")
+    assert s.tier_ref("full") == ("gemini", "gemini-3.1-flash-lite")

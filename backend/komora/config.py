@@ -29,8 +29,21 @@ class Settings(BaseSettings):
     http_port: int = 8000
 
     # Two-tier model routing as `provider/model` refs; see core.llm.refs.
-    llm_lite: str = "gemini/gemini-3.1-flash-lite"
-    llm_full: str = "gemini/gemini-3.6-flash"
+    #
+    # `lite` runs the agent loop, `full` the verification pass — despite the names,
+    # neither is "the strong one". They default to two DIFFERENT models on purpose:
+    # free-tier quota is keyed on (project, model), a basket spends one request on each
+    # tier, so two models means two daily allowances and one model means half the
+    # baskets. Measured on this project's own prompts (scripts/compare_models.py, n=5
+    # twice): 3.5-flash-lite names a Silpo category on essentially every basket line
+    # where 3.1 manages roughly half, and 3.1 always returns a usable re-search query
+    # for a flagged line where 3.5 leaves it empty two times in five.
+    #
+    # `full` was previously `gemini-3.6-flash`, which was harmless only because nothing
+    # ever built a client for this tier. It does now, so a default naming the expensive
+    # model would quietly spend it on every basket.
+    llm_lite: str = "gemini/gemini-3.5-flash-lite"
+    llm_full: str = "gemini/gemini-3.1-flash-lite"
     ollama_base_url: str = "http://localhost:11434"
 
     model_config = SettingsConfigDict(env_file=".env", env_prefix="KOMORA_")
