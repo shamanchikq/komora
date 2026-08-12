@@ -214,6 +214,12 @@ class TestSyncPreview:
         text = render_sync_preview(self._with("timeslot.not_available"))
         assert "оберіть новий" in text and "застосунку Сільпо" in text
 
+    def test_the_minimum_order_code_says_what_to_do(self) -> None:
+        """`order.cost.min` — the code the first real Telegram run produced."""
+        text = render_sync_preview(self._with("order.cost.min"))
+        assert "order.cost.min" not in text
+        assert "додайте ще щось" in text
+
     def test_an_unknown_code_is_still_shown(self) -> None:
         """A checkout blocker must never be hidden because nobody wrote the Ukrainian
         for it yet."""

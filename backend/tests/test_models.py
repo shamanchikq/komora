@@ -103,3 +103,38 @@ class TestSyncReport:
     def test_serialises_round_trip(self) -> None:
         report = SyncReport(ok=True, added=["Молоко"], failed=[], checkout_web_link="https://s/co")
         assert SyncReport.model_validate_json(report.model_dump_json()) == report
+
+
+class TestModelProse:
+    """Everything the model writes is shown to a person, so it is cleaned here rather
+    than at each render site."""
+
+    def test_stray_markup_is_stripped_from_a_title(self) -> None:
+        """Live, first Telegram run: gemma4:12b titled a basket «Базові продукти</div>».
+        Escaping kept the message intact, so the user just read a stray `</div>`."""
+        basket = DraftBasket(
+            title="Базові продукти</div>",
+            intent="stated",
+            lines=[DraftLine(description="молоко", reason_text="ви попросили")],
+        )
+        assert basket.title == "Базові продукти"
+
+    def test_markup_is_stripped_from_lines_too(self) -> None:
+        line = DraftLine(description="<b>молоко</b>", reason_text="бо <i>треба</i>")
+        assert line.description == "молоко"
+        assert line.reason_text == "бо треба"
+
+    def test_whitespace_is_collapsed(self) -> None:
+        assert DraftLine(description="молоко   2,6%\n\n", reason_text="  бо  ").description == (
+            "молоко 2,6%"
+        )
+
+    def test_over_long_prose_is_truncated_not_rejected(self) -> None:
+        """Losing a whole basket because the model was verbose would be worse than a
+        clipped title."""
+        basket = DraftBasket(
+            title="я" * 500,
+            intent="stated",
+            lines=[DraftLine(description="молоко", reason_text="ви попросили")],
+        )
+        assert len(basket.title) == 200 and basket.title.endswith("…")

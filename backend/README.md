@@ -100,26 +100,41 @@ skips the model and uses a fixed draft; `--message` changes the request.
 ### Manual checklist
 
 What the script cannot cover. Needs `KOMORA_TELEGRAM_BOT_TOKEN` from
-[@BotFather](https://t.me/BotFather).
+[@BotFather](https://t.me/BotFather). Run against **@moya_komora_bot** 2026-08-12.
 
-1. `/start` → auth link → Silpo OAuth → «Готово» page → bot confirms.
-2. «Купи молоко, хліб і щось до чаю» → draft renders with a reason on every line.
-3. «Надіслати в Сільпо» → preview names the existing cart → «Додати в кошик».
-4. Open the Silpo app: the items are there, **and nothing that was already in the cart
-   has changed.** ← the product's core promise
-5. «Яке грузинське вино є до 500 ₴?» → a free-form answer, no basket.
-6. Clear the user's `silpo_tokens` row → any message → the re-auth prompt appears.
+- [x] `/start` → auth link → Silpo OAuth → «Готово» page → bot confirms.
+- [x] «Потрібне молоко і яйця» → draft renders with a reason on every line.
+- [x] «Надіслати в Сільпо» → preview → «Додати в кошик».
+- [x] **The items appear in the real Silpo cart.** ← the product's core promise.
+      Pre-existing lines surviving was verified separately by `smoke_e2e.py --push`,
+      which ran against a cart holding three items and restored it exactly.
+- [x] A follow-up edit in plain language — «можна замість 3 упаковок яєць додати
+      тільки 2?» — produced a corrected basket with «Ви змінили кількість з 3 на 2
+      упаковки» as the reason. Not in the original plan; it works anyway.
+- [ ] «Яке грузинське вино є до 500 ₴?» → a free-form answer, no basket.
+- [ ] Clear the user's `silpo_tokens` row → any message → the re-auth prompt appears.
+
+The login link opens on **the machine running the bot**. `KOMORA_PUBLIC_BASE_URL` is
+`http://localhost:8000` by default, and Silpo accepts a loopback redirect (registered
+as a `native` client per RFC 8252), so no tunnel is needed — but `localhost` on a phone
+is the phone. Testing from another device is the one case that needs `cloudflared`.
 
 ### Known issues
 
-Found by the live run on 2026-08-11/12, and left open deliberately.
+Found by the live runs on 2026-08-11/12, and left open deliberately.
 
 - **A local model produces weaker baskets than the pipeline can rescue.** `gemma4:12b`
   emitted a line described as «Печиво або цукерки (до чаю)» — a compound phrase that
   matches no product, so it resolved to nothing and the user got «Не знайшлося». It
-  also titled a basket «Завтрак», which is Russian. Both are consistent with
+  also titled baskets «Завтрак» (Russian) and «Базові продукти</div>». The stray markup
+  is now stripped at the model boundary; the language leak is not fixable from here.
+  Both are consistent with
   [docs/local-models-ollama-gemma.md](../docs/local-models-ollama-gemma.md): local is
   for development, and the promotion gate has not been met.
+- **Quantity defaults are the model's guess.** Asked for "milk and eggs" it chose three
+  packs of eggs. Correcting it in plain language works, but nothing anchors a first
+  guess to what the household actually buys — that is what the habits engine (Plan 3)
+  is for.
 - **The agent never re-plans a line that fails to resolve.** A description that matches
   nothing is reported, not retried with a simpler term. Cheap to add, but it belongs
   with the other intents in Plan 4.

@@ -187,8 +187,19 @@ Translate the known ones and still show the unknown ones
 (`bot/render.py: validation_text`): a checkout blocker nobody has written copy for yet
 must not be hidden.
 
-Codes observed so far: `timeslot.not_available`, `product.offer.stock.max`,
-`promotion.available`. The same code can arrive more than once, one per offending line.
+Codes observed so far — **only these; do not invent siblings**:
+
+| Code | Level | Means |
+|---|---|---|
+| `timeslot.not_available` | error | the cart's delivery slot has lapsed |
+| `product.offer.stock.max` | error | a line exceeds available stock |
+| `order.cost.min` | error | the order is below the branch's minimum (`minOrderCost`) |
+| `promotion.available` | info | a promotion the cart could qualify for; `context` names the products |
+
+The naming is not guessable. An earlier version of `bot/render.py` carried a
+hand-written `order.min_sum`, on the pattern of the others — the real code is
+`order.cost.min`, and the invented one could never have fired. The same code can also
+arrive more than once, one entry per offending line.
 
 This is also the **authoritative** timeslot check. Silpo computes it against the real
 cart, so it is worth more than any client-side comparison against `get_time_slots`.

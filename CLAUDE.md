@@ -110,18 +110,19 @@ client, so every basket action checks `basket.user_id` against the sender.
 
 ## Status
 
-Plan 1 Tasks 1–13 complete, and Task 14's automated half done: the whole loop —
-message → draft → pipeline → preview → **append** — **has run against the live Silpo
-server** (`scripts/smoke_e2e.py --push`, 16/16). The write landed in a real cart with
-the three pre-existing items untouched, and the cart was restored exactly.
+**Plan 1 is done.** The loop runs end to end through Telegram against live Silpo:
+`/start` → OAuth → «Потрібне молоко і яйця» → reviewed draft → preview → items in the
+real Silpo cart. Verified on **@moya_komora_bot**, 2026-08-12. Plain-language edits to a
+draft («замість 3 упаковок — тільки 2») work, which the plan never asked for.
 
-Five defects found and fixed: cart writes carried undeclared fields, `error_of` passed a
-Silpo 500 through as success, validation codes reached users untranslated, a coupon note
-inlined three lines of bullets, and a successful sync with no checkout link gave no
-reason for it.
+`scripts/smoke_e2e.py` runs everything except Telegram headlessly against the live
+server — use it before any manual run. Seven defects came out of these runs: cart writes
+carried undeclared fields, `error_of` read a Silpo 500 as success, validation codes
+reached users untranslated, a coupon note inlined three lines of bullets, a sync with no
+checkout link gave no reason, savings printed as `15.000 ₴`, and the model's stray
+`</div>` reached a basket title.
 
-**What remains is the Telegram surface**, which needs a bot token from @BotFather —
-see the manual checklist in [backend/README.md](backend/README.md#manual-checklist).
+Still unticked on the checklist: the free-form question path and the re-auth path.
 
 Only the "stated basket" intent exists — meal plan, budget-week, deals and event
 handlers are Plan 4. The Mini App is Plan 2; habits are Plan 3.

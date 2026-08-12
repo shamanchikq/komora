@@ -112,13 +112,21 @@ _VALIDATIONS: dict[str, str] = {
         "У кошику Сільпо є позиція, якої лишилося менше, ніж замовлено — "
         "зменште кількість у застосунку."
     ),
-    "product.offer.not_available": "У кошику Сільпо є позиція, якої вже немає в наявності.",
-    "order.min_sum": "Сума замовлення менша за мінімальну для цього способу доставки.",
+    "order.cost.min": (
+        "Сума замовлення менша за мінімальну для цього магазину — "
+        "додайте ще щось, інакше Сільпо не прийме замовлення."
+    ),
 }
 """`calculation.validations[].message` is a **code**, not prose.
 
-Live examples: `timeslot.not_available`, `product.offer.stock.max`. Rendering the raw
-value put "• product.offer.stock.max" in front of a user during the Task 14 run.
+**Only codes actually observed live belong here.** An earlier version also listed
+`order.min_sum` and `product.offer.not_available`, which were invented from the shape
+of the real ones — and the code Silpo actually sends for a too-small order turned out
+to be `order.cost.min`, found in the first Telegram run. A guessed key never fires; it
+just makes the table look more complete than it is.
+
+Observed so far: `timeslot.not_available`, `product.offer.stock.max`, `order.cost.min`,
+and `promotion.available` at info level.
 """
 
 

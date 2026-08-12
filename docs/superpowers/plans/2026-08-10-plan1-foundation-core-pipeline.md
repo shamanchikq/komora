@@ -541,7 +541,18 @@ without `get_time_slots`'s `start` parameter reported a valid cart as expired, b
 Silpo answers with the current day's window. Re-implemented with `start` set to the
 cart's own slot, and verified against the live account.
 
-Steps 1 and 2 below remain open: they need a Telegram bot token.
+**Ran through Telegram on 2026-08-12 against @moya_komora_bot** — `/start`, OAuth,
+«Потрібне молоко і яйця», draft, preview, and the items landed in the real Silpo cart.
+Acceptance criterion 4 met. Two more defects came out of that run: a stray `</div>`
+from the model reached a basket title (markup is now stripped in `core/models.py`), and
+the real minimum-order code is `order.cost.min` — `bot/render.py` had a hand-written
+`order.min_sum` that could never have fired.
+
+A plain-language edit to a draft («можна замість 3 упаковок яєць додати тільки 2?»)
+produced a corrected basket. Nothing in M1 was designed for that; the agent loop plus a
+fresh pipeline pass handles it for free.
+
+Checklist items 5 (free-form question) and 6 (re-auth path) remain untried.
 
 ### Task 14 (original): End-to-end smoke (manual) + README
 

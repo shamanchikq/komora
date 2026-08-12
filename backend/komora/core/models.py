@@ -6,34 +6,62 @@ of real Silpo products. Because every intent converges here, each one inherits
 restriction filtering, substitution and coupon optimisation for free.
 """
 
+import re
 from decimal import Decimal
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints, field_validator
 
 ReasonKind = Literal["stated", "habit", "deal", "meal", "sub"]
 """Why a line is in the basket. Surfaced to the user, so it is never optional."""
 
 BasketStatus = Literal["draft", "confirmed", "synced", "discarded"]
 
+_MARKUP = re.compile(r"<[^>]*>")
+MAX_PROSE = 200
+"""Long enough for any honest description; short enough to keep one line one line."""
+
+
+def clean_prose(value: str) -> str:
+    """Strip stray markup and collapse whitespace in text the model wrote.
+
+    Observed live: gemma4:12b titled a basket «Базові продукти</div>». Escaping kept
+    the message from breaking, so the user simply read a stray `</div>` — which looks
+    like a bug in Komora rather than a slip by the model. Every string here is shown
+    to a person, so it is cleaned at the boundary rather than at each render site.
+
+    Over-long text is truncated, never rejected: losing a whole basket because the
+    model was verbose would be a worse outcome than a clipped title.
+    """
+    cleaned = " ".join(_MARKUP.sub(" ", value).split())
+    return cleaned if len(cleaned) <= MAX_PROSE else cleaned[: MAX_PROSE - 1].rstrip() + "…"
+
+
+Prose = Annotated[str, StringConstraints(strip_whitespace=True)]
+
 
 class DraftLine(BaseModel):
-    description: str
+    description: Prose
     """What to buy, in the user's terms — "молоко 2,6% ~1 л". Not a SKU."""
     quantity: float = 1
     optional: bool = False
     """Trimmed first when a cart exceeds its budget cap."""
     reason_kind: ReasonKind = "stated"
-    reason_text: str
+    reason_text: Prose
     """Shown verbatim under the product name. Ukrainian prose, never a code."""
+
+    _clean = field_validator("description", "reason_text")(clean_prose)
 
 
 class DraftBasket(BaseModel):
-    title: str
+    title: Prose
+    """Shown as the heading and stored as the basket's name."""
     intent: str
     lines: list[DraftLine]
     warnings: list[str] = Field(default_factory=list)
     """Carried forward into the ResolvedCart — e.g. a line dropped by a restriction."""
+
+    _clean = field_validator("title")(clean_prose)
 
 
 class SearchContext(BaseModel):
