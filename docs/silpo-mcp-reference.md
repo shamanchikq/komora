@@ -107,6 +107,36 @@ that was entirely fair. Nothing in the response says "you probably meant 100 g";
 Komora resolves an unqualified quantity on a weighted good to one `step`
 (`passes/resolve.py: clamp_quantity`), and an explicit amount is left alone.
 
+### ⚠ Size is not in the search result — verified 2026-08-13
+
+A search hit carries **no size, volume or weight field**, and the size is frequently not
+in the name either. Three different Coca-Cola Zero products come back as the identical
+string `"Напій Coca-Cola Zero"`, distinguishable only by price:
+
+| name | price | how you tell them apart |
+|---|---|---|
+| Напій Coca-Cola Zero | 30,99 | you cannot, from the search |
+| Напій Coca-Cola Zero | 34,49 | " |
+| Напій Coca-Cola Zero | 56,49 | " |
+
+`get_product_details(slug)` **does** carry it, under `attributes`:
+
+```jsonc
+"attributes": {
+  "Розмір/об'єм": "<=0,5",       // the only size signal Silpo exposes
+  "Торгова марка": "Coca-Cola", "Країна": "Україна", ...
+}
+```
+
+Note the shape: `"<=0,5"` is a *bucket*, not a number, with a decimal comma. One call per
+product, keyed by `slug`. Silpo is not the rate-limited resource here — the model is —
+so reading it for a handful of candidates is affordable; reading it for a whole result
+set is not.
+
+Consequence: **a size qualifier cannot be honoured from search results alone.** «велика
+кола зеро» has nothing to match on, and «велика кола зеро» as a *query* returns 0 hits
+while «кола зеро» returns 6.
+
 ### ⚠ The identifier trap
 
 A **search result** names the product `id`. The **cart** names the same value

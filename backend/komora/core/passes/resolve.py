@@ -12,6 +12,7 @@ Three facts confirmed against the live server (spec 3.1) shape it:
 * Quantities must respect `stock` and the per-product `step`.
 """
 
+import math
 import re
 from decimal import Decimal
 from typing import Any
@@ -130,12 +131,20 @@ def clamp_quantity(wanted: float, product: dict[str, Any]) -> float:
     swap button, which is the better failure of the two.
     """
     step = product.get("step") or 1
-    if product.get("weighted") and wanted == DEFAULT_QUANTITY:
+    weighted = bool(product.get("weighted"))
+    if weighted and wanted == DEFAULT_QUANTITY:
         wanted = float(step)
     stock = product.get("stock")
     capped = min(wanted, float(stock)) if stock is not None else float(wanted)
     if step and step > 0:
-        steps = max(1, round(capped / step))
+        # A COUNTABLE product never rounds up. Live: «додай велику колу зеро» reached
+        # here as 1.5 — the model encoding "1.5 litres" into a field that counts bottles
+        # — and nearest-step rounding turned it into two. On a weighted good 0.17 kg ->
+        # 0.2 kg is a rounding; on a countable one 1.5 -> 2 is a second bottle the user
+        # pays for. Where the request cannot be honoured exactly, err downwards: one
+        # bottle short is a message, one bottle over is money.
+        exact = capped / step
+        steps = max(1, round(exact) if weighted else math.floor(exact + 1e-9))
         capped = steps * step
         if stock is not None:
             capped = min(capped, float(stock))

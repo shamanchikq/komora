@@ -80,7 +80,21 @@ class TestClampQuantity:
         assert clamp_quantity(0.1, product("x", 1, step=1, stock=None)) == 1
 
     def test_step_result_still_capped_by_stock(self) -> None:
-        assert clamp_quantity(9, product("x", 1, step=2, stock=3)) == 3
+        """Two, not three: three was never orderable for a step-2 product, and the old
+        nearest-step rounding only reached it by overshooting and then clipping."""
+        assert clamp_quantity(9, product("x", 1, step=2, stock=3)) == 2
+
+    def test_a_countable_quantity_never_rounds_up(self) -> None:
+        """«велика кола зеро» arrived as quantity=1.5 — the model putting litres in a
+        field that counts bottles — and nearest-step rounding bought a second one."""
+        assert clamp_quantity(1.5, product("x", 1, step=1, stock=None)) == 1
+        assert clamp_quantity(2.9, product("x", 1, step=1, stock=None)) == 2
+
+    def test_a_weighted_quantity_still_rounds_to_the_nearest_step(self) -> None:
+        """0,17 kg of cheese is a rounding, not an extra item."""
+        cheese = product("x", 1, step=0.1, stock=None)
+        cheese["weighted"] = True
+        assert clamp_quantity(0.17, cheese) == 0.2
 
 
 class TestResolve:
