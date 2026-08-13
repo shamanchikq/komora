@@ -6,6 +6,8 @@ tests are the ones that assert **nothing** matched.
 
 from decimal import Decimal
 
+import pytest
+
 from komora.core.models import ResolvedLine
 from komora.core.passes.removals import match_removals, matches, tokens
 
@@ -96,3 +98,25 @@ class TestMatchRemovals:
         """Nothing can be removed if Komora synced nothing — the user's own cart
         contents are not candidates, however well the words fit."""
         assert match_removals(["ковбаски"], []) == []
+
+
+class TestCommonNounsInflect:
+    """A fixed stem length was tuned on «ковбаски»/«ковбаса» and failed on almost every
+    other noun a grocery list contains — «прибери колу» matched nothing at all."""
+
+    @pytest.mark.parametrize(
+        ("request_text", "product"),
+        [
+            ("колу", "Напій Coca-Cola Zero кола"),
+            ("воду", "Вода Моршинська негазована"),
+            ("сиру", "Сир Пирятин твердий 50%"),
+            ("яйця", "Яйце куряче С0"),
+        ],
+    )
+    def test_a_declined_noun_still_names_its_product(self, request_text: str, product: str) -> None:
+        assert matches(request_text, line(product))
+
+    def test_a_derived_noun_still_does_not(self) -> None:
+        """«сирок» is a curd snack. Deleting cheese because the words start alike would
+        be a false positive on a real cart."""
+        assert not matches("сирок", line("Сир Пирятин твердий 50%"))

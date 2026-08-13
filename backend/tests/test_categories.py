@@ -210,3 +210,43 @@ class TestTheShelfNarrowsTheSearch:
         mcp = FakeSilpo({"пармезан": [self.PARMESAN]}, category_products=[self.MUZHON])
         await resolve_basket(self._basket(self.HARD_CHEESE), mcp, CONTEXT, INDEX)
         assert mcp.category_limits == [CATEGORY_PAGE]
+
+
+class TestTheIndexDoesNotInventShelves:
+    """Measured against the real 992-entry tree.
+
+    `slug_for` used a substring test, which reads a morpheme boundary where there is
+    none. A model that named exactly the right category was handed the wrong shelf, and
+    no amount of prompt work could have reached it.
+    """
+
+    def test_a_correct_answer_no_longer_lands_on_collagen(self) -> None:
+        assert INDEX.slug_for("Кола") != "kolagen-5246"
+
+    def test_a_correct_answer_no_longer_lands_on_grapes(self) -> None:
+        assert INDEX.slug_for("Вино") != "vynograd-4793"
+
+    def test_frozen_food_no_longer_means_frozen_seafood(self) -> None:
+        assert INDEX.slug_for("Заморожені продукти") != "zamorozheni-moreprodukty-i-ryba-5181"
+
+    def test_no_shelf_is_better_than_a_wrong_one(self) -> None:
+        """Silpo has no «Кола» category. Returning None puts the line back on search,
+        which resolves it correctly."""
+        assert INDEX.slug_for("Кола") is None
+
+    @pytest.mark.parametrize(
+        ("title", "slug"),
+        [
+            ("Курячі яйця", "kuriachi-iaitsia-4977"),
+            ("Основи для піци", "osnovy-dlia-pitsy-5157"),
+            ("Тверді і напівтверді сири", "tverdi-i-napivtverdi-syry-5008"),
+            ("Крафтові сири", "kraftovi-syry-5474"),
+            ("Соки", "soky-5102"),
+        ],
+    )
+    def test_the_lookups_that_worked_still_work(self, title: str, slug: str) -> None:
+        assert INDEX.slug_for(title) == slug
+
+    def test_inflection_still_matches(self) -> None:
+        """The whole reason this is not string equality."""
+        assert INDEX.slug_for("яйця курячі") == "kuriachi-iaitsia-4977"

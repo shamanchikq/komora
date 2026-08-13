@@ -17,15 +17,15 @@ lemmatiser, which is the same reason the search prompt asks for nominative case.
 import re
 
 from komora.core.models import CartRemoval, ResolvedLine
+from komora.core.passes.words import same_word
 
 _WORD = re.compile(r"[^\W\d_]+", re.UNICODE)
 
-MIN_STEM = 4
-"""Shared leading characters before two inflected words count as the same word.
-
-«ковбаски»/«ковбаса» share «ковбас»; «сирок»/«сирний» share «сир» and must not match,
-which is why this is 4 and not 3. Words shorter than it must match outright.
-"""
+# Word matching lives in `passes/words.py`, shared with the category index. A fixed
+# stem length was tried here and measured wrong on the commonest nouns in a grocery
+# list: «колу»/«кола», «воду»/«вода», «сиру»/«сир» and «яйця»/«яйце» all failed it, so
+# «прибери колу» matched nothing at all. Only «ковбаски»/«ковбаса» passed — the single
+# example it had been checked against.
 
 _STOPWORDS = frozenset(
     {
@@ -68,17 +68,6 @@ def tokens(text: str) -> list[str]:
     ]
 
 
-def _same_word(request: str, candidate: str) -> bool:
-    if request == candidate:
-        return True
-    shared = 0
-    for a, b in zip(request, candidate, strict=False):
-        if a != b:
-            break
-        shared += 1
-    return shared >= MIN_STEM
-
-
 def matches(request: str, line: ResolvedLine) -> bool:
     """Does `request` name this line?
 
@@ -90,7 +79,7 @@ def matches(request: str, line: ResolvedLine) -> bool:
     if not wanted:
         return False
     have = tokens(f"{line.description} {line.name}")
-    return all(any(_same_word(word, other) for other in have) for word in wanted)
+    return all(any(same_word(word, other) for other in have) for word in wanted)
 
 
 def match_removals(

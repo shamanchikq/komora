@@ -15,6 +15,8 @@ the same object, returns "No products found" and no error at all.
 
 from typing import TYPE_CHECKING, Any
 
+from komora.core.passes.words import same_word
+
 if TYPE_CHECKING:
     from komora.core.mcp.protocol import SilpoClient
     from komora.core.models import SearchContext
@@ -87,13 +89,16 @@ class CategoryIndex:
         if not words:
             return None
 
-        # Every word of the request present in the title — «курячі яйця» matches
-        # «Курячі яйця», and a bare «яйця» does not match «Перепелині яйця» alone
-        # because the shortest title wins below.
+        # Every word of the request present in the title AS A WORD. This used to be a
+        # substring test, which reads a morpheme boundary where there is none: «Кола»
+        # matched **колаген** and «Вино» matched **виноград**, so a model that named
+        # exactly the right category was handed a shelf of collagen supplements. The
+        # shortest matching title still wins, so «яйця» prefers «Яйця» over «Яйця
+        # інших птахів».
         matches = [
             (title, slug)
             for title, slug in self._by_title.items()
-            if all(word in title for word in words)
+            if all(any(same_word(word, other) for other in title.split()) for word in words)
         ]
         if not matches:
             return None
