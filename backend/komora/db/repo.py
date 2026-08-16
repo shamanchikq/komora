@@ -301,12 +301,22 @@ class BasketRepo:
 
         Used by «інший варіант». The description is left untouched: it is the query
         the alternatives came from, and the next tap needs it again.
+
+        `position` is an index into the lines `load_cart` returned, which is what the
+        «⇄ N» button carries — not the `position` column. The two agree only while no
+        row is `removed`, and matching on the column instead would edit the wrong
+        product the moment one is: `load_cart` filters those out, so every line below a
+        removed one sits at a lower index than its stored position. Nothing sets that
+        flag today, which is exactly why the mismatch would be found by a user rather
+        than by a test. Selected the same way `load_cart` selects, so they cannot drift.
         """
         async with self._sessions() as session, session.begin():
             result = await session.execute(
-                select(DraftItem).where(
-                    DraftItem.basket_id == basket_id, DraftItem.position == position
-                )
+                select(DraftItem)
+                .where(DraftItem.basket_id == basket_id, DraftItem.removed.is_(False))
+                .order_by(DraftItem.position)
+                .offset(position)
+                .limit(1)
             )
             item = result.scalar_one_or_none()
             if item is None:

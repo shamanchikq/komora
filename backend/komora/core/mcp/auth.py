@@ -149,6 +149,8 @@ class _Pending:
     event: asyncio.Event = field(default_factory=asyncio.Event)
     result: AuthorizationCodeResult | None = None
     error: str | None = None
+    started: float = field(default_factory=time.monotonic)
+    """When this flow was registered, for pruning the ones nobody ever collects."""
 
 
 class AuthorizationBridge:
@@ -170,6 +172,20 @@ class AuthorizationBridge:
     def pending_states(self) -> list[str]:
         return list(self._pending)
 
+    def _prune(self) -> None:
+        """Drop flows nobody can still be waiting on.
+
+        Only `callback_handler` removes a state, in its `finally` — so a flow that dies
+        between the redirect and the wait leaves its entry behind for the life of the
+        process. Age is the only safe test: pruning by `telegram_id` would evict a flow
+        that is still parked on its event, and the whole point of the entry is that
+        somebody is waiting for it.
+        """
+        cutoff = time.monotonic() - self._timeout
+        for state, pending in list(self._pending.items()):
+            if pending.started < cutoff:
+                self._pending.pop(state, None)
+
     def handlers(
         self, telegram_id: int, send_url: SendUrl
     ) -> tuple[Callable[[str], Awaitable[None]], Callable[[], Awaitable[AuthorizationCodeResult]]]:
@@ -185,9 +201,14 @@ class AuthorizationBridge:
                     f"cannot be routed back to user {telegram_id}: {authorization_url}"
                 )
             state = states[0]
-            state_holder.append(state)
-            self._pending[state] = _Pending(telegram_id=telegram_id)
+            # Registered only once the URL is actually on its way. `connect()` passes a
+            # `send_url` that refuses outright, so an ordinary message from an unlinked
+            # user reached here, filed a flow nobody would ever collect, and only then
+            # raised — one leaked entry per message, for the life of the process.
             await send_url(telegram_id, authorization_url)
+            state_holder.append(state)
+            self._prune()
+            self._pending[state] = _Pending(telegram_id=telegram_id)
 
         async def callback_handler() -> AuthorizationCodeResult:
             if not state_holder:

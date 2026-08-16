@@ -22,6 +22,7 @@ from komora.core.mcp.auth import (
     PersistentOAuthClientProvider,
     build_client_metadata,
 )
+from komora.core.mcp.errors import NotAuthenticated
 from komora.db.repo import OAuthClientRepo, UserRepo
 
 KEY = base64.urlsafe_b64encode(os.urandom(32)).decode()
@@ -251,6 +252,40 @@ class TestAuthorizationBridge:
 
     async def test_unknown_state_is_rejected(self) -> None:
         assert AuthorizationBridge().resolve("never-seen", code="c") is False
+
+    async def test_a_refused_send_files_no_flow(self) -> None:
+        """`connect()` passes a `send_url` that refuses, and every message from an
+        unlinked user goes through it. Registering before the send left one entry per
+        message parked forever, since only `callback_handler` ever removes one.
+        """
+        bridge = AuthorizationBridge()
+
+        async def refuse(telegram_id: int, url: str) -> None:
+            raise NotAuthenticated("no tokens")
+
+        redirect, _ = bridge.handlers(USER, refuse)
+        for _ in range(3):
+            with pytest.raises(NotAuthenticated):
+                await redirect("https://s/authorize?state=st1")
+
+        assert bridge.pending_states() == []
+
+    async def test_flows_nobody_collects_are_pruned_once_they_expire(self) -> None:
+        """A flow abandoned between the redirect and the wait has no other way out."""
+        bridge = AuthorizationBridge(timeout_seconds=0.05)
+
+        async def send(telegram_id: int, url: str) -> None:
+            return None
+
+        redirect, _ = bridge.handlers(USER, send)
+        await redirect("https://s/authorize?state=abandoned")
+        assert bridge.pending_states() == ["abandoned"]
+
+        await asyncio.sleep(0.06)
+        redirect_again, _ = bridge.handlers(USER + 1, send)
+        await redirect_again("https://s/authorize?state=fresh")
+
+        assert bridge.pending_states() == ["fresh"], "the stale flow is gone"
 
     async def test_authorization_url_without_state_is_rejected(self) -> None:
         bridge = AuthorizationBridge()

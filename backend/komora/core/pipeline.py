@@ -163,11 +163,15 @@ async def _coupons(mcp: SilpoClient) -> list[dict[str, Any]]:
     active = [c for c in listed if isinstance(c, dict) and c.get("active")]
 
     enriched: list[dict[str, Any]] = []
+    fetched = 0
     for coupon in active:
         coupon_id = coupon.get("id")
-        if coupon_id is None or len(enriched) >= MAX_COUPON_DETAILS:
+        # Counting `enriched` instead spent the budget on coupons that cost no call at
+        # all: five id-less ones ahead of the rest meant nothing was ever enriched.
+        if coupon_id is None or fetched >= MAX_COUPON_DETAILS:
             enriched.append(coupon)
             continue
+        fetched += 1
         try:
             details = (await mcp.get_coupon_details(int(coupon_id))).get("coupon")
         except Exception:

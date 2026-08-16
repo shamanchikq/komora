@@ -192,6 +192,53 @@ class TestBasketRepo:
     async def test_no_active_basket_for_a_new_user(self, sessions: async_sessionmaker) -> None:
         assert await BasketRepo(sessions).get_active(USER) is None
 
+    async def test_a_swap_edits_the_line_the_user_tapped_past_a_removed_row(
+        self, sessions: async_sessionmaker
+    ) -> None:
+        """«⇄ N» carries an index into what `load_cart` returned, not a stored position.
+
+        `load_cart` hides `removed` rows, so every line below one sits at a lower index
+        than its `position` column. Matching on the column would have swapped a product
+        the user was not looking at. Nothing sets the flag yet, which is why this is
+        set directly — the mismatch would otherwise be found in the Mini App, by a user.
+        """
+        from sqlalchemy import select, update
+
+        from komora.db.tables import DraftItem
+
+        repo = BasketRepo(sessions)
+        await UserRepo(sessions).ensure(USER)
+        basket_id = await repo.create_from_cart(USER, "кошик", "stated", cart())
+
+        # Hide the first line: the yoghurt is now index 0 of the visible cart.
+        async with sessions() as session, session.begin():
+            await session.execute(
+                update(DraftItem)
+                .where(DraftItem.basket_id == basket_id, DraftItem.position == 0)
+                .values(removed=True)
+            )
+
+        loaded = await repo.load_cart(basket_id)
+        assert loaded is not None and [ln.name for ln in loaded.lines] == ["Йогурт «Галичина»"]
+
+        replacement = loaded.lines[0].model_copy(update={"product_id": "p9", "name": "Йогурт Live"})
+        assert await repo.replace_item(basket_id, 0, replacement) is True
+
+        reloaded = await repo.load_cart(basket_id)
+        assert reloaded is not None
+        assert [ln.name for ln in reloaded.lines] == ["Йогурт Live"]
+
+        # The hidden row is untouched — it was never the one on screen.
+        async with sessions() as session:
+            hidden = (
+                await session.execute(
+                    select(DraftItem).where(
+                        DraftItem.basket_id == basket_id, DraftItem.position == 0
+                    )
+                )
+            ).scalar_one()
+            assert hidden.product_id == "p1"
+
     async def test_load_cart_of_unknown_basket_is_none(self, sessions: async_sessionmaker) -> None:
         assert await BasketRepo(sessions).load_cart(12345) is None
 
