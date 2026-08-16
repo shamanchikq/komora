@@ -74,6 +74,30 @@ def _lines_of(payload: Any) -> list[dict[str, Any]]:
     return out
 
 
+QUANTITY_TOLERANCE = 0.0005
+"""`clamp_quantity` rounds to three decimals, so anything closer than this is the same
+amount arriving back through JSON rather than a quantity Silpo declined to set."""
+
+
+def _quantities_in(payload: Any) -> dict[str, float]:
+    """product_id -> the quantity the cart actually holds right now.
+
+    Presence alone cannot judge a write. `add_or_update_cart_products` **sets** a
+    quantity, so for a product the user already had, a write that failed outright
+    leaves it sitting in the cart at its old amount — indistinguishable from a write
+    that succeeded, if all you ask is whether the id is there. That is how a rejected
+    line was reported as «Готово. Додано 1 позицію» while the cart still held the
+    quantity from before.
+    """
+    out: dict[str, float] = {}
+    for product in _lines_of(payload):
+        try:
+            out[str(product.get("productId"))] = float(product.get("quantity") or 0)
+        except TypeError, ValueError:
+            out[str(product.get("productId"))] = 0.0
+    return out
+
+
 def _paid_total(payload: Any) -> Decimal:
     """`totalAfterDiscounts` is what the user actually pays; Silpo says never show
     `total` instead."""
@@ -266,15 +290,22 @@ async def execute_sync(cart: ResolvedCart, mcp: SilpoClient) -> SyncReport:
                 except Exception as exc:
                     errors[line.product_id] = str(exc)
 
-    # Ground truth: what is in the cart now, not what the write call claimed.
-    landed = {
-        str(p.get("productId")) for p in _lines_of(await mcp.get_shopping_cart_by_id(cart_id))
+    # Ground truth: what is in the cart now, not what the write call claimed — and at
+    # what quantity, because a product the user already had is in the cart either way.
+    landed = _quantities_in(await mcp.get_shopping_cart_by_id(cart_id))
+    # Last wins, exactly as Silpo applies them: two draft lines can resolve to one
+    # product, and the second write sets the quantity the first one asked for.
+    wanted = {line.product_id: line.qty for line in sendable}
+    applied = {
+        product_id
+        for product_id, quantity in wanted.items()
+        if abs(landed.get(product_id, quantity - 1) - quantity) < QUANTITY_TOLERANCE
     }
-    added = [line.name for line in sendable if line.product_id in landed]
+    added = [line.name for line in sendable if line.product_id in applied]
     failed = [
         (line.name, errors.get(line.product_id, "не додалося"))
         for line in sendable
-        if line.product_id not in landed
+        if line.product_id not in applied
     ]
 
     # A removal target that is no longer in the cart needs no call and is not a

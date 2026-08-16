@@ -187,6 +187,37 @@ class TestExecute:
         assert report.added == ["Молоко"]
         assert [name for name, _ in report.failed] == ["Ікра"]
 
+    async def test_a_failed_write_to_a_product_already_in_the_cart_is_not_a_success(self) -> None:
+        """Presence cannot judge a write for a product the user already had.
+
+        Re-adding **sets** a quantity, so a line the user already owns is in the cart
+        whether the write landed or not. Asking only "is the id there?" reported a
+        rejected line as «Готово. Додано 1 позицію» while the cart still held the old
+        amount — the one outcome `execute_sync` exists to make impossible.
+        """
+        mcp = FakeSilpo(existing=[in_silpo("Молоко", 42.90, qty=1)], reject={"id-Молоко"})
+        report = await execute_sync(cart(line("Молоко", "42.90", qty=3)), mcp)
+
+        assert report.ok is False
+        assert report.added == []
+        assert [name for name, _ in report.failed] == ["Молоко"]
+
+    async def test_a_swallowed_write_to_an_existing_product_is_caught_too(self) -> None:
+        """Accepted, silently not applied, and the old quantity still sitting there."""
+        mcp = FakeSilpo(existing=[in_silpo("Молоко", 42.90, qty=1)], swallow={"id-Молоко"})
+        report = await execute_sync(cart(line("Молоко", "42.90", qty=3)), mcp)
+
+        assert report.ok is False
+        assert report.added == []
+
+    async def test_an_applied_quantity_change_is_reported_as_added(self) -> None:
+        """The control: the same overlap, with the write actually landing."""
+        mcp = FakeSilpo(existing=[in_silpo("Молоко", 42.90, qty=1)])
+        report = await execute_sync(cart(line("Молоко", "42.90", qty=3)), mcp)
+
+        assert report.ok is True
+        assert report.added == ["Молоко"]
+
 
 class TestIdempotency:
     async def test_re_running_a_sync_does_not_double_quantities(self) -> None:
