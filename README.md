@@ -1,151 +1,146 @@
 # Komora
 
-**An LLM agent architecture where the model decides and never acts.**
+**A shopping agent that can suggest anything and change nothing.**
 
-Python 3.14 · 754 tests · `mypy --strict` clean · no network, model or bot needed to run the suite
+Python 3.14 · 754 tests · `mypy --strict` clean · the whole suite runs with no network, no model and no bot
 
-Komora turns a sentence — «купи молоко, хліб і щось до чаю» — into a reviewed, in-stock,
-priced shopping cart. It is built on a **real third-party MCP server** (the Ukrainian
-supermarket chain Silpo), which is what makes it interesting as engineering rather than as
-a demo: the tool schemas are somebody else's, the failure modes are real, and none of it
-can be made to work by guessing.
+You send a message — «купи молоко, хліб і щось до чаю» — and Komora comes back with a real
+cart: actual products, actual prices, in stock at your store, each line saying why it's
+there. You look it over, and only if you tap confirm does anything reach your real
+shopping cart. Checkout stays where it belongs, in the shop's own app.
 
-The grocery domain is the proving ground. The parts worth reading are the agent loop, the
-provider-agnostic LLM layer, and the deterministic pipeline underneath them.
+It's built against a **real third-party MCP server** — the Ukrainian supermarket chain
+Silpo — which is what makes it worth reading. The tool schemas belong to someone else, the
+failure modes are real ones, and nothing here works by guessing.
 
 ---
 
-## The central constraint
+## The idea
 
-Most agent frameworks give a model tools and hope the prompt holds. Komora makes the
-dangerous half **structurally unreachable**:
+Give a language model tools and it will eventually call the wrong one. The usual answer is
+a carefully worded prompt. Komora's answer is to make the dangerous half unreachable:
 
 | | |
 |---|---|
-| Tools the MCP server publishes | **39** |
-| Tools that mutate a cart | **8** |
-| Mutating tools the model can reach | **0** |
+| Tools the server publishes | **39** |
+| Tools that can change a cart | **8** |
+| Cart-changing tools the model can reach | **0** |
 | Tools the model can reach at all | **6**, all read-only |
 
-A call to anything outside that set raises `ForbiddenToolCall` before it reaches the
-network — so a hallucinated tool name cannot mutate anything. The model's only output that
-influences the cart is a `DraftBasket` of **descriptions** (`"молоко 2,6%"`), never a SKU.
-Turning descriptions into real products — search, stock, substitution, quantity, price — is
-ordinary Python that can be tested without a model in the room.
+The model can search, browse and read prices. It cannot add, remove or clear anything —
+those functions aren't merely left out of its list, they're refused at the boundary, so a
+made-up tool name fails instead of doing damage.
 
-The practical consequence: every LLM failure mode degrades into a *worse suggestion*, never
-into a wrong purchase. Nothing reaches the real cart without an explicit human confirmation,
-and the confirmation sheet is generated from a fresh read of that cart rather than from what
-the write call claimed.
+What the model actually produces is a shopping list in words: `"молоко 2,6%"`, not a product
+ID. Turning that into a specific product — searching, checking stock, handling
+substitutions, picking a sane quantity — is ordinary Python you can test without a model
+involved.
 
-## Architecture
+The practical effect: when the model gets something wrong, you get a worse *suggestion*, not
+a wrong purchase. And the confirmation screen is built from a fresh read of your real cart,
+not from what the write call claimed happened.
+
+## How it's put together
 
 ```
 komora/
-├── core/          pure domain — imports NO web framework
-│   ├── mcp/       protocol + the real client + per-user OAuth gateway
-│   ├── llm/       LLMClient protocol; gemini/ and ollama/ implementations
-│   ├── agent/     the loop: read tools only, propose_basket, guardrails
+├── core/          the domain — imports no web framework at all
+│   ├── mcp/       talking to Silpo, and per-user OAuth
+│   ├── llm/       one interface, two providers (hosted and local)
+│   ├── agent/     the loop: read-only tools, and the guardrails
 │   ├── passes/    restrictions → resolve → verify → savings → budget
-│   ├── pipeline.py  composes the passes
-│   └── sync.py    preview + write to the real cart
-├── db/            SQLAlchemy 2 + repositories
-├── api/           FastAPI — only the OAuth callback
-├── bot/           handlers.py (pure functions → Reply) + bot.py (the only aiogram file)
-└── main.py        uvicorn + Telegram polling under one asyncio.gather
+│   └── sync.py    preview, then write to the real cart
+├── db/            SQLAlchemy 2
+├── api/           FastAPI — just the OAuth callback
+├── bot/           the conversation, with Telegram in exactly one file
+└── main.py        web server and bot polling in one process
 ```
 
-`core/` takes every dependency as a `Protocol`, so the whole pipeline runs against fakes.
-The bot keeps that property: handlers are plain async functions over
-`(services, telegram_id, …)` returning a `Reply` object, and aiogram appears in exactly one
-file — so the entire conversation is tested without constructing a Telegram object.
+Everything in `core/` takes its dependencies as interfaces, so the whole pipeline runs
+against fakes. The bot keeps that property: each handler is a plain function that takes a
+user and a message and returns a reply object, so the entire conversation is tested without
+ever constructing a Telegram object.
 
-## The LLM layer
+The five passes run in one order and each is testable alone. Only *verify* asks a model, and
+its answer is advice — it can flag a line and suggest a better search, but code decides what
+happens next. A flagged line that can't be re-resolved is reported as "not found" rather
+than quietly kept, because a wrong product presented as the right one is the worst possible
+outcome: you might just buy it.
 
-One `LLMClient` protocol, two implementations (hosted Gemini, local Ollama), and tool
-parameters that travel as **raw JSON Schema** so no caller needs to know which is in use.
-Two parts of this were considerably harder than they look:
+## The parts that were hard
 
-**JSON Schema → Gemini's OpenAPI subset** ([`schema_map.py`](backend/komora/core/llm/gemini/schema_map.py)).
-Gemini has no `oneOf`, `allOf`, `const`, `$ref`, `exclusiveMinimum` or `propertyNames`, and
-the SDK does not normalise hand-built declarations — an unsupported keyword is not rejected
-locally, the request just 400s server-side with a message that rarely names the field. The
-converter degrades what it can into `description` prose rather than dropping constraints
-silently, and raises on what it cannot represent faithfully.
+**Two model providers, one interface.** A hosted model (Gemini) and a local one (Ollama)
+sit behind the same small interface, and tool definitions travel as plain JSON Schema so
+nothing upstream needs to know which is in use.
 
-**Gemini 3 thought signatures.** Reading tool calls off the convenient
-`response.function_calls` accessor drops the `thought_signature` attached to the enclosing
-part. Gemini then rejects *the next* request with `400 INVALID_ARGUMENT`, so every
-tool-using conversation dies on its second step while single-turn calls look perfectly
-healthy. The client reads calls off the parts instead and echoes the signature back.
+**Gemini doesn't accept plain JSON Schema.** It takes a narrower dialect, and the mismatch
+isn't caught locally — the request simply fails on the server with an error that rarely
+names the field at fault. So there's a converter that translates what it can, writes
+unsupported rules into the description where the model can still read them, and refuses
+loudly on anything it can't represent honestly.
 
-**Request economics as a design constraint.** Gemini's free tier limits requests per minute
-and per day, not tokens — so a longer prompt is free and a second round trip is not. The
-whole-basket verification pass is one call for N lines; category hints ride along inside an
-existing call rather than costing their own; and the two jobs point at two different models
-because quota is keyed on `(project, model)`.
+**A subtle trap in Gemini 3.** Tool calls carry a signature that has to be handed back on
+the following request. Read them via the obvious shortcut and the signature is lost, and the
+*next* request fails — so single-turn calls look fine while every real conversation dies on
+step two.
 
-## Determinism where it counts
+**Requests are the budget, not tokens.** The free tier counts requests per minute and per
+day, so a longer prompt is free and a second round trip isn't. That shapes the design: one
+check covers a whole basket instead of one per line, and extra hints ride along inside calls
+that were happening anyway.
 
-The passes are separate pure functions composed in one order, each testable alone:
-
-```
-restrictions → resolve → verify → savings → budget
-```
-
-Only `verify` consults a model, and its answer is advisory — it can flag a line and suggest
-a better query, but deterministic code decides what happens next. A flagged line that cannot
-be re-resolved is reported as "not found", never quietly kept, because a wrong product
-presented as the right one is the worst outcome available: the user may simply buy it.
-
-Money is `Decimal` and quantities are `float`, and multiplying them directly is a
-`TypeError` on purpose. Timestamps are timezone-aware UTC or they raise. OAuth tokens are
-AES-256-GCM at rest with the AAD bound to the owning user, so a ciphertext copied into
-another row fails to decrypt rather than silently granting access.
+**Small things that prevent real bugs.** Money is `Decimal` and quantities are `float`, and
+multiplying them directly raises a `TypeError` on purpose. Timestamps are UTC or they raise.
+Stored access tokens are encrypted and tied to their owner, so a copied value fails to
+decrypt rather than quietly granting someone else's access.
 
 ## Running it
 
-Everything from `backend/`. Dependencies are managed by [uv](https://docs.astral.sh/uv/).
+Everything from `backend/`, using [uv](https://docs.astral.sh/uv/):
 
 ```bash
-uv run pytest              # 754 tests, no network required
+uv run pytest              # 754 tests, no network needed
 uv run ruff check .
 uv run mypy komora
 ```
 
-The full loop against the live server, headless and read-only — everything except Telegram.
-It stops at the confirmation preview, which is exactly where the bot stops before the user's
-second tap. Add `--no-llm` to exercise the Silpo half with no model at all:
+The whole loop against the live server, minus Telegram — it stops at the confirmation
+preview, exactly where the bot stops before your second tap. Add `--no-llm` to exercise the
+shop half with no model at all:
 
 ```bash
 uv run python scripts/smoke_e2e.py
 ```
 
-To run the bot itself you need a Telegram bot token, a Gemini API key (or a local Ollama
-model), and a public HTTPS URL for the OAuth callback — see
-[`backend/.env.example`](backend/.env.example) and [`backend/README.md`](backend/README.md).
+Running the bot itself needs a Telegram token, a Gemini key (or a local Ollama model) and a
+public HTTPS address for the OAuth callback — see [`backend/.env.example`](backend/.env.example)
+and [`backend/README.md`](backend/README.md).
 
-## Status
+## Where it stands
 
-The end-to-end loop works against live Silpo: account linking over OAuth, a sentence in,
-a reviewed draft back, an explicit confirmation, then real products in a real cart with a
-checkout hand-off. Plain-language edits to a draft work, including removals after a sync.
+The full loop works against live Silpo: link your account, send a sentence, review the
+draft, confirm, and the products land in your real cart with a checkout link. Editing in
+plain language works too, including removing something after it's already been sent.
 
-Not built: the Mini App, the habits engine, and the meal-plan / budget-week / deals intents.
-Known gaps are tracked honestly in [`backend/README.md`](backend/README.md#known-issues) —
-including the ones that are still open.
+Not built yet: the Mini App, the habits engine, and the meal-plan, budget-week and deals
+flows. Open problems are listed honestly in
+[`backend/README.md`](backend/README.md#known-issues), including the ones still unsolved.
 
 ## Documentation
 
 | Document | What it covers |
 |---|---|
-| [Silpo MCP reference](docs/silpo-mcp-reference.md) | Field names, call order, domain rules, what the API does not provide |
+| [Silpo MCP reference](docs/silpo-mcp-reference.md) | Field names, call order, and what the API doesn't give you |
 | [Design spec](docs/superpowers/specs/2026-08-10-komora-design.md) | Architecture and product decisions |
-| [Verified external facts](docs/superpowers/specs/2026-08-10-verified-external-facts.md) | Gemini models and pricing, `mcp` 2.0 traps, OAuth |
-| [Local models](docs/local-models-ollama-gemma.md) | Running against Ollama, and why it is development-only |
-| [Dev environment gotchas](docs/dev-environment-gotchas.md) | SDK surfaces that differ from their own docs |
+| [Verified external facts](docs/superpowers/specs/2026-08-10-verified-external-facts.md) | Model pricing, SDK traps, OAuth |
+| [Local models](docs/local-models-ollama-gemma.md) | Running on Ollama, and why it's development-only |
+| [Dev environment gotchas](docs/dev-environment-gotchas.md) | SDKs that differ from their own documentation |
 
-Code, comments and commits are English. The user interface is Ukrainian.
+Code, comments and commits are in English. The interface is in Ukrainian.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
 
 ---
 

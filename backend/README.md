@@ -226,4 +226,4 @@ pipeline is testable without a server, a bot, or the network.
 
 ## License
 
-Not yet chosen.
+MIT — see [LICENSE](../LICENSE) at the repository root.
