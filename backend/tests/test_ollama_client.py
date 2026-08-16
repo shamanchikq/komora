@@ -183,3 +183,11 @@ class TestFailures:
         respx.post(CHAT).mock(side_effect=httpx.ConnectError("connection refused"))
         with pytest.raises(LLMUnavailable, match="Ollama"):
             await client().complete(system="s", messages=[Message("user", "hi")])
+
+    @respx.mock
+    async def test_a_rejected_request_is_not_retried(self) -> None:
+        """404 is Ollama saying it has no such model. Asking twice does not install it."""
+        route = respx.post(CHAT).mock(return_value=httpx.Response(404))
+        with pytest.raises(LLMUnavailable, match="refused"):
+            await client().complete(system="s", messages=[Message("user", "hi")])
+        assert len(route.calls) == 1

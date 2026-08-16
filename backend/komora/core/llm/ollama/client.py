@@ -77,7 +77,17 @@ class OllamaClient:
                 try:
                     response = await http.post(f"{self.base_url}/api/chat", json=payload)
                     response.raise_for_status()
-                except (httpx.HTTPError, httpx.HTTPStatusError) as exc:
+                except httpx.HTTPError as exc:
+                    # A 4xx is about what we sent — an unknown model, a schema Ollama
+                    # will not take — and asking again changes nothing. (The old
+                    # `except (HTTPError, HTTPStatusError)` was one clause: the second
+                    # is a subclass of the first, so it never caught anything of its
+                    # own and every status retried alike.)
+                    status = getattr(getattr(exc, "response", None), "status_code", None)
+                    if status is not None and status < 500:
+                        raise LLMUnavailable(
+                            f"Ollama ({self.model}) refused the request: {exc}"
+                        ) from exc
                     last_error = exc
                     if attempt == 2:
                         break

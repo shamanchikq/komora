@@ -6,7 +6,7 @@ The underlying SDK client is injected, so these run without an API key or networ
 from typing import Any
 
 import pytest
-from google.genai import types
+from google.genai import errors, types
 
 from komora.core.llm.gemini.client import GeminiClient
 from komora.core.llm.protocol import LLMUnavailable, Message, ToolCall, ToolDecl
@@ -58,7 +58,12 @@ def reply(text: str | None = None, calls: tuple[types.FunctionCall, ...] = ()) -
 
 def client(*responses: Any) -> tuple[GeminiClient, FakeSdk]:
     sdk = FakeSdk(*responses)
-    return GeminiClient(model="gemini-3.1-flash-lite", api_key="x", sdk=sdk), sdk
+    # No delay between retries here: the wait is real in production and pure latency
+    # in a test.
+    return (
+        GeminiClient(model="gemini-3.1-flash-lite", api_key="x", sdk=sdk, retry_delay=0),
+        sdk,
+    )
 
 
 class TestRequestShape:
@@ -177,6 +182,39 @@ class TestFailures:
         with pytest.raises(LLMUnavailable):
             await llm.complete(system="s", messages=[Message("user", "hi")])
         assert len(sdk.models.calls) == 2, "one retry, not an unbounded loop"
+
+    async def test_an_exhausted_quota_is_not_retried(self) -> None:
+        """A basket spends one request per model, and the free tier counts requests.
+
+        Retrying a 429 draws on the very allowance that just reported itself spent, so
+        the second call cannot succeed and costs a unit of quota to find that out.
+        """
+        quota = errors.ClientError(
+            429, {"error": {"message": "Quota exceeded", "status": "RESOURCE_EXHAUSTED"}}
+        )
+        llm, sdk = client(quota, quota)
+        with pytest.raises(LLMUnavailable):
+            await llm.complete(system="s", messages=[Message("user", "hi")])
+        assert len(sdk.models.calls) == 1, "a spent quota must not be asked twice"
+
+    async def test_a_malformed_request_is_not_retried(self) -> None:
+        """A 400 is about what we sent; sending it again changes nothing."""
+        bad = errors.ClientError(
+            400, {"error": {"message": "Invalid schema", "status": "INVALID_ARGUMENT"}}
+        )
+        llm, sdk = client(bad, bad)
+        with pytest.raises(LLMUnavailable):
+            await llm.complete(system="s", messages=[Message("user", "hi")])
+        assert len(sdk.models.calls) == 1
+
+    async def test_a_server_error_is_still_retried(self) -> None:
+        """5xx is the case a retry exists for."""
+        llm, sdk = client(
+            errors.ServerError(503, {"error": {"message": "overloaded"}}), reply("recovered")
+        )
+        result = await llm.complete(system="s", messages=[Message("user", "hi")])
+        assert result.text == "recovered"
+        assert len(sdk.models.calls) == 2
 
 
 def reply_with_parts(*parts: types.Part, text: str | None = None) -> Any:

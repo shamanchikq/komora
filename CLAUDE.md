@@ -25,7 +25,7 @@ hand off with a checkout link.
 All from `backend/`.
 
 ```bash
-uv run pytest              # 664 tests
+uv run pytest              # 754 tests
 uv run ruff check .        # lint
 uv run ruff format .       # format
 uv run mypy komora         # strict

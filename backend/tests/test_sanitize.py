@@ -88,3 +88,49 @@ class TestPreserves:
 
     def test_scalar_personal_data_is_still_redacted(self) -> None:
         assert sanitize({"address": "вул. Хрещатик 1"})["address"] == REDACTED
+
+
+class TestLeavesUnderASensitiveKey:
+    """A sensitive key's leaves are its own, however they are wrapped."""
+
+    def test_a_list_of_scalars_is_redacted(self) -> None:
+        """The elements have no key of their own, so walking them as ordinary data
+        left every one of them in the clear."""
+        assert sanitize({"phone": ["+380671111111", "+380672222222"]})["phone"] == [
+            REDACTED,
+            REDACTED,
+        ]
+
+    def test_a_nested_list_is_reached(self) -> None:
+        assert sanitize({"address": [["вул. Хрещатик"], ["кв. 5"]]})["address"] == [
+            [REDACTED],
+            [REDACTED],
+        ]
+
+    def test_a_dict_under_a_sensitive_key_keeps_its_structure(self) -> None:
+        """The `find_address` schema case: recursion, not wholesale redaction."""
+        schema = {"address": {"type": "object", "properties": {"city": {"type": "string"}}}}
+        assert sanitize(schema) == schema
+
+
+class TestKeyNameVariants:
+    """Exact matching only ever caught the exact spelling."""
+
+    @pytest.mark.parametrize(
+        "key",
+        ["phones", "contactPhone", "addresses", "deliveryAddress", "emails", "recipientEmail"],
+    )
+    def test_plurals_and_compounds_are_caught(self, key: str) -> None:
+        assert sanitize({key: "личное"})[key] == REDACTED
+
+    @pytest.mark.parametrize("key", ["warehouseId", "translateTo", "zipperCount", "latest"])
+    def test_a_fragment_does_not_swallow_an_innocent_field(self, key: str) -> None:
+        """`house`, `lat` and `zip` stay exact-match precisely for these."""
+        assert sanitize({key: "keep me"})[key] == "keep me"
+
+    @pytest.mark.parametrize(
+        "key",
+        ["name", "price", "barcode", "productId", "slug", "ratio", "stock", "oldPrice"],
+    )
+    def test_every_product_field_survives(self, key: str) -> None:
+        assert sanitize({key: "keep me"})[key] == "keep me"

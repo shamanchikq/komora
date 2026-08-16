@@ -24,12 +24,15 @@ from collections.abc import Sequence
 from typing import Any
 
 from google import genai
-from google.genai import types
+from google.genai import errors, types
 
 from komora.core.llm.gemini.schema_map import json_schema_to_gemini
 from komora.core.llm.protocol import LLMResponse, LLMUnavailable, Message, ToolCall, ToolDecl
 
 _ROLE_TO_GEMINI = {"user": "user", "assistant": "model"}
+
+RETRY_DELAY_SECONDS = 0.5
+"""A retry that leaves immediately mostly re-asks a server that has not changed."""
 
 
 class GeminiClient:
@@ -42,9 +45,11 @@ class GeminiClient:
         *,
         thinking_level: str = "low",
         sdk: Any | None = None,
+        retry_delay: float = RETRY_DELAY_SECONDS,
     ) -> None:
         self.model = model
         self._thinking_level = thinking_level
+        self._retry_delay = retry_delay
         self._sdk = sdk if sdk is not None else genai.Client(api_key=api_key)
 
     async def complete(
@@ -63,11 +68,18 @@ class GeminiClient:
                 response = await self._sdk.aio.models.generate_content(
                     model=self.model, contents=contents, config=config
                 )
+            except errors.ClientError as exc:
+                # 4xx, and not one of them is worth a second request. A malformed
+                # request never becomes well-formed by being sent again, and a 429 is
+                # the quota saying it is spent — the retry draws on the allowance that
+                # just ran out. Free-tier limits are requests per minute and per day,
+                # so an immediate re-ask cost a second one and could not have worked.
+                raise LLMUnavailable(f"Gemini ({self.model}) refused the request: {exc}") from exc
             except Exception as exc:
                 last_error = exc
                 if attempt == 2:
                     break
-                await asyncio.sleep(0)
+                await asyncio.sleep(self._retry_delay)
                 continue
             return self._to_response(response)
 
