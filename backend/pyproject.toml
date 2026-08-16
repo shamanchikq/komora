@@ -38,6 +38,12 @@ select = ["E", "F", "I", "UP", "B", "ASYNC", "RUF"]
 # the norm, not a homoglyph attack. Without these the whole UI copy layer fails lint.
 ignore = ["RUF001", "RUF002", "RUF003"]
 
+[tool.ruff.lint.isort]
+# `backend/alembic/` is a migrations directory, not our package — but it sits in the
+# project root, so ruff's first-party detection claims the `alembic` import and demands
+# it move out of the third-party block. Say what it actually is.
+known-third-party = ["alembic"]
+
 [tool.mypy]
 python_version = "3.14"
 strict = true

@@ -9,7 +9,6 @@ Create Date: 2026-08-12 03:01:36.768024
 from collections.abc import Sequence
 
 import sqlalchemy as sa
-
 from alembic import op
 
 # Custom TypeDecorators (e.g. UtcDateTime) are rendered fully qualified by

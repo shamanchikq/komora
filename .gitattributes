@@ -1,4 +1,5 @@
-# Normalise to LF in the repository. CI runs on Linux; development is on Windows.
+# Normalise to LF in the repository. CI and development both run on Linux; the rule
+# stays because the history was written on Windows and .bat/.cmd/.ps1 still need CRLF.
 * text=auto eol=lf
 
 # Windows-only files keep CRLF.

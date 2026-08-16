@@ -9,11 +9,11 @@ Create Date: 2026-08-11 02:13:38.963798
 from collections.abc import Sequence
 
 import sqlalchemy as sa
+from alembic import op
 
 # Custom TypeDecorators (e.g. UtcDateTime) are rendered fully qualified by
 # autogenerate, so the module must be importable in every migration.
 import komora.db.base
-from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "3de2908b9836"
