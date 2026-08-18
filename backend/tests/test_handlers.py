@@ -3,6 +3,10 @@
 These drive the handler functions directly against a real (in-memory) database, a
 scripted LLM and the Silpo fake, so the whole loop — message, draft, preview, sync — is
 exercised without an aiogram object anywhere.
+
+Handlers return an `Outcome`, not a rendered message. Assertions about *wording* go
+through `to_reply`, which is what the bot does; assertions about *decisions* read the
+outcome directly, which is what the Mini App will do.
 """
 
 import contextlib
@@ -23,6 +27,8 @@ from komora.bot.handlers import (
     on_start,
     on_text,
 )
+from komora.bot.outcomes import DraftReady, PreviewReady, Spoke, Synced
+from komora.bot.render import to_reply
 from komora.core.agent.tools import PROPOSE_BASKET
 from komora.core.llm.protocol import LLMResponse, ToolCall
 from komora.core.mcp.errors import McpUnavailable, NotAuthenticated
@@ -104,7 +110,7 @@ def button_data(reply) -> list[str | None]:  # type: ignore[no-untyped-def]
 class TestStart:
     async def test_unlinked_user_is_told_why_access_is_needed(self, sessions) -> None:
         services, _, _ = services_for(sessions)
-        reply = await on_start(services, USER)
+        reply = to_reply(await on_start(services, USER))
         assert "доступ до вашого акаунта Сільпо" in reply.text
         assert "нічого не додає" in reply.text, "the promise has to be made up front"
         assert button_data(reply) == ["link"]
@@ -112,13 +118,13 @@ class TestStart:
     async def test_linked_user_is_ready_to_go(self, sessions) -> None:
         services, _, _ = services_for(sessions)
         await services.users.set_token_blob(USER, b"encrypted", None)
-        reply = await on_start(services, USER)
+        reply = to_reply(await on_start(services, USER))
         assert "підключено" in reply.text.lower()
         assert reply.buttons == ()
 
     async def test_the_link_button_starts_the_flow(self, sessions) -> None:
         services, _, linked = services_for(sessions)
-        await on_callback(services, USER, "link")
+        to_reply(await on_callback(services, USER, "link"))
         assert linked == [USER]
 
 
@@ -126,13 +132,13 @@ class TestConversation:
     async def test_a_plain_question_is_answered_as_text(self, sessions) -> None:
         llm = ScriptedLLM(LLMResponse(text="Є грузинське вино за 420 ₴"))
         services, _, _ = services_for(sessions, llm=llm)
-        reply = await on_text(services, USER, "яке грузинське вино є до 500 ₴?")
+        reply = to_reply(await on_text(services, USER, "яке грузинське вино є до 500 ₴?"))
         assert reply.text == "Є грузинське вино за 420 ₴"
         assert reply.buttons == ()
 
     async def test_a_stated_list_becomes_a_reviewable_draft(self, sessions) -> None:
         services, silpo, _ = services_for(sessions)
-        reply = await on_text(services, USER, "купи молоко і хліб")
+        reply = to_reply(await on_text(services, USER, "купи молоко і хліб"))
 
         assert "Молоко Яготинське" in reply.text and "Хліб Київський" in reply.text
         assert reply.text.count("— ви попросили") == 2, "every line carries its reason"
@@ -142,7 +148,7 @@ class TestConversation:
 
     async def test_the_draft_is_persisted_for_the_confirm_tap(self, sessions) -> None:
         services, _, _ = services_for(sessions)
-        await on_text(services, USER, "купи молоко і хліб")
+        to_reply(await on_text(services, USER, "купи молоко і хліб"))
         basket = await services.baskets.get_active(USER)
         assert basket is not None and basket.status == "draft"
         cart = await services.baskets.load_cart(basket.id)
@@ -151,8 +157,8 @@ class TestConversation:
     async def test_history_is_recorded_without_duplicating_the_new_message(self, sessions) -> None:
         llm = ScriptedLLM(LLMResponse(text="перша"), LLMResponse(text="друга"))
         services, _, _ = services_for(sessions, llm=llm)
-        await on_text(services, USER, "привіт")
-        await on_text(services, USER, "ще раз")
+        to_reply(await on_text(services, USER, "привіт"))
+        to_reply(await on_text(services, USER, "ще раз"))
 
         second_prompt = [m.content for m in llm.calls[1]["messages"]]
         assert second_prompt == ["привіт", "перша", "ще раз"]
@@ -161,12 +167,12 @@ class TestConversation:
         services, _, _ = services_for(sessions)
         await services.users.ensure(USER)
         await services.users.set_budget(USER, 50)
-        reply = await on_text(services, USER, "купи молоко і хліб")
+        reply = to_reply(await on_text(services, USER, "купи молоко і хліб"))
         assert "перевищено" in reply.text
 
     async def test_nothing_found_produces_no_send_button(self, sessions) -> None:
         services, _, _ = services_for(sessions, mcp=FakeSilpo({}))
-        reply = await on_text(services, USER, "купи молоко і хліб")
+        reply = to_reply(await on_text(services, USER, "купи молоко і хліб"))
         assert reply.buttons == ()
         assert "Не знайшлося" in reply.text
 
@@ -174,7 +180,7 @@ class TestConversation:
 class TestFailurePaths:
     async def test_an_unlinked_account_is_offered_the_login(self, sessions) -> None:
         services, _, _ = services_for(sessions, connect_error=NotAuthenticated())
-        reply = await on_text(services, USER, "купи молоко")
+        reply = to_reply(await on_text(services, USER, "купи молоко"))
         assert reply.text == NEED_AUTH
         assert button_data(reply) == ["link"]
 
@@ -191,25 +197,25 @@ class TestFailurePaths:
 
         broken.get_shopping_cart_by_id = no_context  # type: ignore[method-assign]
         services, _, _ = services_for(sessions, mcp=broken)
-        reply = await on_text(services, USER, "купи молоко")
+        reply = to_reply(await on_text(services, USER, "купи молоко"))
         assert reply.text == NO_CONTEXT
 
     async def test_silpo_being_down_is_reported_as_such(self, sessions) -> None:
         services, _, _ = services_for(sessions, connect_error=McpUnavailable("down"))
-        assert (await on_text(services, USER, "купи молоко")).text == SILPO_DOWN
+        assert (to_reply(await on_text(services, USER, "купи молоко"))).text == SILPO_DOWN
 
 
 class TestConfirmation:
     async def _draft(self, sessions, **kw):  # type: ignore[no-untyped-def]
         services, silpo, _ = services_for(sessions, **kw)
-        await on_text(services, USER, "купи молоко і хліб")
+        to_reply(await on_text(services, USER, "купи молоко і хліб"))
         basket = await services.baskets.get_active(USER)
         assert basket is not None
         return services, silpo, basket.id
 
     async def test_confirming_shows_a_preview_before_anything_is_sent(self, sessions) -> None:
         services, silpo, basket_id = await self._draft(sessions)
-        reply = await on_callback(services, USER, f"sync:{basket_id}")
+        reply = to_reply(await on_callback(services, USER, f"sync:{basket_id}"))
         assert "Надіслати в Сільпо?" in reply.text
         assert [d and d.split(":")[0] for d in button_data(reply)] == ["push", "cancel"]
         assert silpo.add_calls == [], "the preview must not write anything"
@@ -228,13 +234,13 @@ class TestConfirmation:
         services, _, basket_id = await self._draft(
             sessions, mcp=FakeSilpo(CATALOGUE, existing=existing)
         )
-        reply = await on_callback(services, USER, f"sync:{basket_id}")
+        reply = to_reply(await on_callback(services, USER, f"sync:{basket_id}"))
         assert "вже 1 позиція" in reply.text and "не чіпаємо" in reply.text
 
     async def test_pushing_adds_to_the_cart_and_offers_checkout(self, sessions) -> None:
         services, silpo, basket_id = await self._draft(sessions)
-        await on_callback(services, USER, f"sync:{basket_id}")
-        reply = await on_callback(services, USER, f"push:{basket_id}")
+        to_reply(await on_callback(services, USER, f"sync:{basket_id}"))
+        reply = to_reply(await on_callback(services, USER, f"push:{basket_id}"))
 
         assert "Готово" in reply.text
         assert [b.url for b in reply.buttons] == ["https://silpo.ua/checkout/abc"]
@@ -243,13 +249,13 @@ class TestConfirmation:
 
     async def test_a_completed_sync_closes_the_draft(self, sessions) -> None:
         services, _, basket_id = await self._draft(sessions)
-        await on_callback(services, USER, f"push:{basket_id}")
+        to_reply(await on_callback(services, USER, f"push:{basket_id}"))
         assert await services.baskets.get_status(basket_id) == "synced"
 
     async def test_a_partial_failure_keeps_the_draft_open_for_a_retry(self, sessions) -> None:
         silpo = FakeSilpo(CATALOGUE, reject={"id-Хліб Київський"})
         services, _, basket_id = await self._draft(sessions, mcp=silpo)
-        reply = await on_callback(services, USER, f"push:{basket_id}")
+        reply = to_reply(await on_callback(services, USER, f"push:{basket_id}"))
 
         assert "Вийшло не все" in reply.text
         assert "Хліб Київський" in reply.text
@@ -258,16 +264,16 @@ class TestConfirmation:
 
     async def test_cancelling_discards_the_draft_and_touches_nothing(self, sessions) -> None:
         services, silpo, basket_id = await self._draft(sessions)
-        reply = await on_callback(services, USER, f"cancel:{basket_id}")
+        reply = to_reply(await on_callback(services, USER, f"cancel:{basket_id}"))
         assert "у кошику Сільпо нічого не змінилося" in reply.text
         assert await services.baskets.get_status(basket_id) == "discarded"
         assert silpo.add_calls == []
 
     async def test_a_stale_draft_cannot_be_synced_twice(self, sessions) -> None:
         services, silpo, basket_id = await self._draft(sessions)
-        await on_callback(services, USER, f"push:{basket_id}")
+        to_reply(await on_callback(services, USER, f"push:{basket_id}"))
         before = len(silpo.add_calls)
-        reply = await on_callback(services, USER, f"push:{basket_id}")
+        reply = to_reply(await on_callback(services, USER, f"push:{basket_id}"))
         assert reply.toast is not None
         assert len(silpo.add_calls) == before, "a second tap must not re-send"
 
@@ -276,45 +282,45 @@ class TestOwnership:
     async def test_a_basket_belonging_to_someone_else_is_refused(self, sessions) -> None:
         """The id arrives from the client, so ownership is checked, not assumed."""
         services, silpo, _ = services_for(sessions)
-        await on_text(services, USER, "купи молоко і хліб")
+        to_reply(await on_text(services, USER, "купи молоко і хліб"))
         basket = await services.baskets.get_active(USER)
         assert basket is not None
 
         intruder = 9999
-        reply = await on_callback(services, intruder, f"push:{basket.id}")
+        reply = to_reply(await on_callback(services, intruder, f"push:{basket.id}"))
         assert reply.toast == "Ця чернетка недоступна"
         assert silpo.add_calls == []
         assert await services.baskets.get_status(basket.id) == "draft"
 
     async def test_an_unknown_basket_is_refused(self, sessions) -> None:
         services, _, _ = services_for(sessions)
-        assert (await on_callback(services, USER, "push:12345")).toast is not None
+        assert (to_reply(await on_callback(services, USER, "push:12345"))).toast is not None
 
     @pytest.mark.parametrize("data", ["push:абв", "нісенітниця", "sync:"])
     async def test_malformed_callback_data_is_survivable(self, sessions, data: str) -> None:
         services, _, _ = services_for(sessions)
-        assert (await on_callback(services, USER, data)).text
+        assert (to_reply(await on_callback(services, USER, data))).text
 
 
 class TestBudgetCommand:
     async def test_setting_and_clearing(self, sessions) -> None:
         services, _, _ = services_for(sessions)
-        assert "1500" in (await on_budget(services, USER, "1500")).text
+        assert "1500" in (to_reply(await on_budget(services, USER, "1500"))).text
         user = await services.users.get(USER)
         assert user is not None and user.budget_weekly == 1500
 
-        await on_budget(services, USER, "0")
+        to_reply(await on_budget(services, USER, "0"))
         user = await services.users.get(USER)
         assert user is not None and user.budget_weekly is None
 
     async def test_showing_the_current_value(self, sessions) -> None:
         services, _, _ = services_for(sessions)
-        await on_budget(services, USER, "800")
-        assert "800 ₴" in (await on_budget(services, USER, "")).text
+        to_reply(await on_budget(services, USER, "800"))
+        assert "800 ₴" in (to_reply(await on_budget(services, USER, ""))).text
 
     async def test_nonsense_gets_the_help_text(self, sessions) -> None:
         services, _, _ = services_for(sessions)
-        assert "/budget" in (await on_budget(services, USER, "багато")).text
+        assert "/budget" in (to_reply(await on_budget(services, USER, "багато"))).text
 
 
 async def test_the_full_happy_path(sessions) -> None:
@@ -332,14 +338,14 @@ async def test_the_full_happy_path(sessions) -> None:
     silpo = FakeSilpo(CATALOGUE, existing=existing)
     services, _, _ = services_for(sessions, mcp=silpo)
 
-    await on_start(services, USER)
-    draft = await on_text(services, USER, "купи молоко і хліб")
+    to_reply(await on_start(services, USER))
+    draft = to_reply(await on_text(services, USER, "купи молоко і хліб"))
     basket_id = int(str(draft.buttons[0].data).split(":")[1])
 
-    preview = await on_callback(services, USER, f"sync:{basket_id}")
+    preview = to_reply(await on_callback(services, USER, f"sync:{basket_id}"))
     assert "не чіпаємо" in preview.text
 
-    report = await on_callback(services, USER, f"push:{basket_id}")
+    report = to_reply(await on_callback(services, USER, f"push:{basket_id}"))
     assert "Готово" in report.text
 
     cart = (await silpo.get_shopping_cart_by_id("x"))["cart"]
@@ -359,7 +365,7 @@ class TestSwap:
 
     async def _draft(self, sessions, catalogue):  # type: ignore[no-untyped-def]
         services, silpo, _ = services_for(sessions, mcp=FakeSilpo(catalogue))
-        await on_text(services, USER, "купи молоко і хліб")
+        to_reply(await on_text(services, USER, "купи молоко і хліб"))
         basket = await services.baskets.get_active(USER)
         assert basket is not None
         return services, silpo, basket.id
@@ -373,7 +379,7 @@ class TestSwap:
         before = await services.baskets.load_cart(basket_id)
         assert before is not None and before.lines[0].name == "Молоко Перше"
 
-        reply = await on_callback(services, USER, f"swap:{basket_id}:0")
+        reply = to_reply(await on_callback(services, USER, f"swap:{basket_id}:0"))
         assert "Молоко Друге" in reply.text
         assert reply.toast is not None and "Молоко Друге" in reply.toast
 
@@ -388,7 +394,7 @@ class TestSwap:
             "хліб": [product("Хліб", 28.50)],
         }
         services, _, basket_id = await self._draft(sessions, catalogue)
-        await on_callback(services, USER, f"swap:{basket_id}:0")
+        to_reply(await on_callback(services, USER, f"swap:{basket_id}:0"))
         after = await services.baskets.load_cart(basket_id)
         assert after is not None and after.total == Decimal("130.50"), "2 x 51.00 + 28.50"
 
@@ -398,26 +404,28 @@ class TestSwap:
             "хліб": [product("Хліб", 28.50)],
         }
         services, _, basket_id = await self._draft(sessions, catalogue)
-        await on_callback(services, USER, f"swap:{basket_id}:0")
-        await on_callback(services, USER, f"swap:{basket_id}:0")
+        to_reply(await on_callback(services, USER, f"swap:{basket_id}:0"))
+        to_reply(await on_callback(services, USER, f"swap:{basket_id}:0"))
         after = await services.baskets.load_cart(basket_id)
         assert after is not None and after.lines[0].name == "Молоко Перше"
 
     async def test_a_line_with_no_alternative_says_so(self, sessions) -> None:
         catalogue = {"молоко": [product("Молоко", 42.90)], "хліб": [product("Хліб", 28.50)]}
         services, _, basket_id = await self._draft(sessions, catalogue)
-        reply = await on_callback(services, USER, f"swap:{basket_id}:0")
+        reply = to_reply(await on_callback(services, USER, f"swap:{basket_id}:0"))
         assert "Інших варіантів" in reply.text
 
     async def test_an_out_of_range_position_is_refused(self, sessions) -> None:
         catalogue = {"молоко": [product("Молоко", 42.90)], "хліб": [product("Хліб", 28.50)]}
         services, _, basket_id = await self._draft(sessions, catalogue)
-        assert (await on_callback(services, USER, f"swap:{basket_id}:99")).toast is not None
+        assert (
+            to_reply(await on_callback(services, USER, f"swap:{basket_id}:99"))
+        ).toast is not None
 
     async def test_someone_else_cannot_swap_your_basket(self, sessions) -> None:
         catalogue = {"молоко": [product("Молоко", 42.90)], "хліб": [product("Хліб", 28.50)]}
         services, _, basket_id = await self._draft(sessions, catalogue)
-        reply = await on_callback(services, 9999, f"swap:{basket_id}:0")
+        reply = to_reply(await on_callback(services, 9999, f"swap:{basket_id}:0"))
         assert reply.toast == "Ця чернетка недоступна"
 
 
@@ -435,14 +443,14 @@ class TestSwapPreservesTheRest:
         the discounts used to wipe them, so «-10% на онлайн чек» vanished on a tap."""
         coupon = {"id": 1, "active": True, "description": "-10% на онлайн чек"}
         services, _, _ = services_for(sessions, mcp=FakeSilpo(SWAPPABLE, coupons=[coupon]))
-        await on_text(services, USER, "купи молоко і хліб")
+        to_reply(await on_text(services, USER, "купи молоко і хліб"))
         basket = await services.baskets.get_active(USER)
         assert basket is not None
 
         before = await services.baskets.load_cart(basket.id)
         assert before is not None and before.coupon_notes == ["-10% на онлайн чек"]
 
-        reply = await on_callback(services, USER, f"swap:{basket.id}:0")
+        reply = to_reply(await on_callback(services, USER, f"swap:{basket.id}:0"))
         after = await services.baskets.load_cart(basket.id)
         assert after is not None
         assert after.coupon_notes == ["-10% на онлайн чек"]
@@ -457,11 +465,11 @@ class TestSwapPreservesTheRest:
             "хліб": [product("Хліб", 28.50)],
         }
         services, _, _ = services_for(sessions, mcp=FakeSilpo(catalogue))
-        await on_text(services, USER, "купи молоко і хліб")
+        to_reply(await on_text(services, USER, "купи молоко і хліб"))
         basket = await services.baskets.get_active(USER)
         assert basket is not None
 
-        await on_callback(services, USER, f"swap:{basket.id}:0")
+        to_reply(await on_callback(services, USER, f"swap:{basket.id}:0"))
         after = await services.baskets.load_cart(basket.id)
         assert after is not None
         assert len(after.savings_notes) == 1, "one line, one note — not two"
@@ -489,10 +497,10 @@ class TestEditingWhatIsAlreadyInTheCart:
     async def _synced(self, sessions, silpo: FakeSilpo) -> Services:
         """Get to the state the bug needs: a basket already in the real Silpo cart."""
         services, _, _ = services_for(sessions, mcp=silpo)
-        await on_text(services, USER, "молоко і хліб")
+        to_reply(await on_text(services, USER, "молоко і хліб"))
         basket_id = (await services.baskets.get_active(USER)).id
-        await on_callback(services, USER, f"sync:{basket_id}")
-        await on_callback(services, USER, f"push:{basket_id}")
+        to_reply(await on_callback(services, USER, f"sync:{basket_id}"))
+        to_reply(await on_callback(services, USER, f"push:{basket_id}"))
         assert {p["name"] for p in silpo._cart} == {"Молоко Яготинське 2,6%", "Хліб Київський"}
         return services
 
@@ -501,14 +509,14 @@ class TestEditingWhatIsAlreadyInTheCart:
         services = await self._synced(sessions, silpo)
 
         services.llm._responses.append(LLMResponse(tool_calls=(REPLACEMENT_CALL,)))
-        reply = await on_text(services, USER, "заміни хліб на салямі")
+        reply = to_reply(await on_text(services, USER, "заміни хліб на салямі"))
         assert "Приберемо з кошика" in reply.text and "Хліб Київський" in reply.text
 
         basket_id = (await services.baskets.get_active(USER)).id
-        preview = await on_callback(services, USER, f"sync:{basket_id}")
+        preview = to_reply(await on_callback(services, USER, f"sync:{basket_id}"))
         assert "Приберемо з кошика" in preview.text, "the tap that authorises it says so"
 
-        await on_callback(services, USER, f"push:{basket_id}")
+        to_reply(await on_callback(services, USER, f"push:{basket_id}"))
         names = {p["name"] for p in silpo._cart}
         assert names == {"Молоко Яготинське 2,6%", "Ковбаса Салямі"}, (
             "the replaced product must be gone, and the untouched one must remain"
@@ -533,12 +541,12 @@ class TestEditingWhatIsAlreadyInTheCart:
         services, _, _ = services_for(sessions, mcp=silpo)
         services.llm._responses.append(LLMResponse(tool_calls=(REPLACEMENT_CALL,)))
 
-        reply = await on_text(services, USER, "заміни хліб на салямі")
+        reply = to_reply(await on_text(services, USER, "заміни хліб на салямі"))
         assert "Приберемо з кошика" not in reply.text
 
         basket_id = (await services.baskets.get_active(USER)).id
-        await on_callback(services, USER, f"sync:{basket_id}")
-        await on_callback(services, USER, f"push:{basket_id}")
+        to_reply(await on_callback(services, USER, f"sync:{basket_id}"))
+        to_reply(await on_callback(services, USER, f"push:{basket_id}"))
         assert "id-Хліб Домашній" in {p["productId"] for p in silpo._cart}
 
     async def test_the_removal_survives_the_two_taps(self, sessions) -> None:
@@ -547,7 +555,7 @@ class TestEditingWhatIsAlreadyInTheCart:
         silpo = FakeSilpo(CATALOGUE | {"салямі": [product("Ковбаса Салямі", 123.00)]})
         services = await self._synced(sessions, silpo)
         services.llm._responses.append(LLMResponse(tool_calls=(REPLACEMENT_CALL,)))
-        await on_text(services, USER, "заміни хліб на салямі")
+        to_reply(await on_text(services, USER, "заміни хліб на салямі"))
 
         reloaded = await services.baskets.load_cart((await services.baskets.get_active(USER)).id)
         assert [r.name for r in reloaded.removals] == ["Хліб Київський"]
@@ -558,7 +566,7 @@ class TestGroundingTheNextTurn:
         """History used to carry the title alone, so a follow-up edit had nothing to
         edit and the model invented a replacement basket."""
         services, _, _ = services_for(sessions)
-        await on_text(services, USER, "молоко і хліб")
+        to_reply(await on_text(services, USER, "молоко і хліб"))
 
         recorded = [m.content for m in await services.conversations.last_n(USER)]
         assert any("Молоко Яготинське 2,6%" in text for text in recorded)
@@ -566,10 +574,10 @@ class TestGroundingTheNextTurn:
 
     async def test_the_model_is_told_the_products_reached_the_real_cart(self, sessions) -> None:
         services, _, _ = services_for(sessions)
-        await on_text(services, USER, "молоко і хліб")
+        to_reply(await on_text(services, USER, "молоко і хліб"))
         basket_id = (await services.baskets.get_active(USER)).id
-        await on_callback(services, USER, f"sync:{basket_id}")
-        await on_callback(services, USER, f"push:{basket_id}")
+        to_reply(await on_callback(services, USER, f"sync:{basket_id}"))
+        to_reply(await on_callback(services, USER, f"push:{basket_id}"))
 
         recorded = [m.content for m in await services.conversations.last_n(USER)]
         assert any("надіслано в кошик Сільпо" in text for text in recorded)
@@ -588,7 +596,7 @@ class TestTwoModelRouting:
         services, _, _ = services_for(sessions, llm=agent_llm, verify=True)
         services = replace(services, verifier=verifier)
 
-        await on_text(services, USER, "купи молоко і хліб")
+        to_reply(await on_text(services, USER, "купи молоко і хліб"))
         assert len(agent_llm.calls) == 1, "the agent loop used the agent's model"
         assert len(verifier.calls) == 1, "the verification pass used the verifier"
 
@@ -598,7 +606,7 @@ class TestTwoModelRouting:
         services, _, _ = services_for(sessions, llm=llm, verify=True)
         assert services.verifier is None
 
-        await on_text(services, USER, "купи молоко і хліб")
+        to_reply(await on_text(services, USER, "купи молоко і хліб"))
         assert len(llm.calls) == 2, "both jobs fell back to the same client"
 
     async def test_no_verifier_request_when_verification_is_off(self, sessions) -> None:
@@ -606,7 +614,7 @@ class TestTwoModelRouting:
         services, _, _ = services_for(sessions, verify=False)
         services = replace(services, verifier=verifier)
 
-        await on_text(services, USER, "купи молоко і хліб")
+        to_reply(await on_text(services, USER, "купи молоко і хліб"))
         assert verifier.calls == []
 
 
@@ -629,10 +637,10 @@ class TestAStaleRemovalIsNotPromised:
 
     async def _synced_then_emptied(self, sessions, silpo: FakeSilpo) -> Services:
         services, _, _ = services_for(sessions, mcp=silpo)
-        await on_text(services, USER, "молоко і хліб")
+        to_reply(await on_text(services, USER, "молоко і хліб"))
         basket_id = (await services.baskets.get_active(USER)).id
-        await on_callback(services, USER, f"sync:{basket_id}")
-        await on_callback(services, USER, f"push:{basket_id}")
+        to_reply(await on_callback(services, USER, f"sync:{basket_id}"))
+        to_reply(await on_callback(services, USER, f"push:{basket_id}"))
         # The user takes it out themselves, in the Silpo app.
         silpo._cart = [p for p in silpo._cart if p["productId"] != "id-Хліб Київський"]
         return services
@@ -642,7 +650,7 @@ class TestAStaleRemovalIsNotPromised:
         services = await self._synced_then_emptied(sessions, silpo)
 
         services.llm._responses.append(LLMResponse(tool_calls=(self.REMOVE_CALL,)))
-        reply = await on_text(services, USER, "прибери хліб")
+        reply = to_reply(await on_text(services, USER, "прибери хліб"))
         assert "Приберемо з кошика" not in reply.text, (
             "the draft must not promise a removal the sync will silently skip"
         )
@@ -651,11 +659,70 @@ class TestAStaleRemovalIsNotPromised:
         """The guard must not swallow the real case."""
         silpo = FakeSilpo(CATALOGUE)
         services, _, _ = services_for(sessions, mcp=silpo)
-        await on_text(services, USER, "молоко і хліб")
+        to_reply(await on_text(services, USER, "молоко і хліб"))
         basket_id = (await services.baskets.get_active(USER)).id
-        await on_callback(services, USER, f"sync:{basket_id}")
-        await on_callback(services, USER, f"push:{basket_id}")
+        to_reply(await on_callback(services, USER, f"sync:{basket_id}"))
+        to_reply(await on_callback(services, USER, f"push:{basket_id}"))
 
         services.llm._responses.append(LLMResponse(tool_calls=(self.REMOVE_CALL,)))
-        reply = await on_text(services, USER, "прибери хліб")
+        reply = to_reply(await on_text(services, USER, "прибери хліб"))
         assert "Приберемо з кошика" in reply.text and "Хліб Київський" in reply.text
+
+
+class TestTheSeamASecondSurfaceWillUse:
+    """A handler hands back a decision, not a rendering of one.
+
+    These read the outcome directly — no `to_reply` — which is what the Mini App does.
+    If any of this needs HTML parsed out of a string, the seam has regressed.
+    """
+
+    async def test_a_draft_arrives_as_a_cart_not_as_markup(self, sessions) -> None:
+        services, _, _ = services_for(sessions)
+        outcome = await on_text(services, USER, "молоко і хліб")
+
+        assert isinstance(outcome, DraftReady)
+        assert outcome.basket_id is not None, "persisted, so a surface can act on it"
+        assert [line.name for line in outcome.cart.lines] == [
+            "Молоко Яготинське 2,6%",
+            "Хліб Київський",
+        ]
+        assert outcome.cart.total > 0
+        assert all(line.reason_text for line in outcome.cart.lines), "every line says why"
+
+    async def test_an_empty_draft_carries_its_reason_and_nothing_to_act_on(self, sessions) -> None:
+        services, _, _ = services_for(sessions, mcp=FakeSilpo({}))
+        outcome = await on_text(services, USER, "молоко і хліб")
+
+        assert isinstance(outcome, DraftReady)
+        assert outcome.cart.lines == []
+        assert outcome.basket_id is None, "nothing persisted, so nothing to act on"
+        assert any(w.startswith("not_found:") for w in outcome.cart.warnings)
+
+    async def test_the_confirmation_sheet_is_a_preview_object(self, sessions) -> None:
+        services, _, _ = services_for(sessions)
+        draft = await on_text(services, USER, "молоко і хліб")
+        assert isinstance(draft, DraftReady) and draft.basket_id is not None
+
+        outcome = await on_callback(services, USER, f"sync:{draft.basket_id}")
+
+        assert isinstance(outcome, PreviewReady)
+        assert outcome.preview.adding_count == 2
+        assert outcome.preview.adding_total > 0
+
+    async def test_a_sync_reports_what_landed(self, sessions) -> None:
+        services, _, _ = services_for(sessions)
+        draft = await on_text(services, USER, "молоко і хліб")
+        assert isinstance(draft, DraftReady) and draft.basket_id is not None
+        await on_callback(services, USER, f"sync:{draft.basket_id}")
+
+        outcome = await on_callback(services, USER, f"push:{draft.basket_id}")
+
+        assert isinstance(outcome, Synced)
+        assert outcome.report.ok is True
+        assert sorted(outcome.report.added) == ["Молоко Яготинське 2,6%", "Хліб Київський"]
+
+    async def test_prose_outcomes_say_whether_linking_is_offered(self, sessions) -> None:
+        services, _, _ = services_for(sessions)
+        outcome = await on_start(services, USER)
+        assert isinstance(outcome, Spoke)
+        assert outcome.needs_link is True, "an unlinked user is offered the login"

@@ -13,7 +13,9 @@ from aiogram.enums import ParseMode
 from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
-from komora.bot.handlers import Reply, Services, on_budget, on_callback, on_start, on_text
+from komora.bot.handlers import Services, on_budget, on_callback, on_start, on_text
+from komora.bot.outcomes import Outcome
+from komora.bot.render import Reply, to_reply
 
 log = logging.getLogger(__name__)
 
@@ -75,10 +77,11 @@ async def send_to(bot: Bot, chat_id: int, reply: Reply) -> None:
     await bot.send_message(chat_id, parts[-1], reply_markup=_keyboard(reply))
 
 
-async def send(message: Message, reply: Reply) -> None:
+async def send(message: Message, outcome: Outcome) -> None:
+    """Say an outcome. Rendering happens here, at the edge, and nowhere earlier."""
     if message.bot is None:  # only on a detached model — never inside a handler
         raise RuntimeError("message is not bound to a bot")
-    await send_to(message.bot, message.chat.id, reply)
+    await send_to(message.bot, message.chat.id, to_reply(outcome))
 
 
 def build_router(services: Services) -> Router:
@@ -99,7 +102,7 @@ def build_router(services: Services) -> Router:
     @router.callback_query(F.data)
     async def callback(query: CallbackQuery) -> None:
         data = query.data or ""
-        reply = await on_callback(services, _sender(query), data)
+        reply = to_reply(await on_callback(services, _sender(query), data))
         await query.answer(reply.toast or "")
 
         if data.partition(":")[0] in TERMINAL_ACTIONS and isinstance(query.message, Message):

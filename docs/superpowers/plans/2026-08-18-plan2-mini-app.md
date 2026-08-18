@@ -11,10 +11,20 @@ about giving the existing pipeline a second face, not about changing what it doe
 
 ---
 
-## Task 0 — Handlers return domain objects (do this first)
+## Task 0 — Handlers return domain objects — **DONE 2026-08-18**
 
-**Why first:** it is cheap with one consumer and expensive with two. Every day the Mini
-App exists before this lands is a day the refactor has to be done twice.
+Landed before any frontend existed, which was the whole point: cheap with one consumer,
+expensive with two.
+
+`bot/outcomes.py` holds `DraftReady | PreviewReady | Synced | Spoke`. `render.to_reply`
+is the only place a decision becomes markup, and it owns `Reply`, `Button` and the
+keyboard. `handlers.py` has zero Telegram vocabulary — asserted by grep, not by hope.
+
+The test migration was mechanical: wording assertions call `to_reply(...)`, and a new
+`TestTheSeamASecondSurfaceWillUse` reads outcomes directly, which is the Mini App's
+path. 746 tests green.
+
+What follows is the original reasoning, kept because it is why the shape is this shape.
 
 **The problem.** `bot/handlers.py` calls itself "the same seam the Mini App will use
 later", and `bot/render.py` says the Mini App can reuse its rules. Neither is true as

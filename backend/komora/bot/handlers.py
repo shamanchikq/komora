@@ -1,9 +1,13 @@
 """What the bot does, with Telegram kept at arm's length.
 
-Every handler is a plain async function over `(services, telegram_id, …)` returning a
-`Reply`. aiogram appears only in `bot.py`, which adapts these to updates and sends the
-result. That is what makes the conversation testable without constructing Telegram
-objects, and it is the same seam the Mini App will use later.
+Every handler is a plain async function over `(services, telegram_id, …)` returning an
+`Outcome` — a decision carrying domain objects, with no idea how it will be shown.
+`bot/render.py: to_reply` turns one into a Telegram message and `bot.py` sends it; a
+Mini App serialises the same object and draws its own screen.
+
+They used to return a `Reply` of Telegram HTML, which made "the seam the Mini App will
+use" untrue in the way that mattered: a second surface needs the cart, not markup
+describing it.
 
 Two rules are enforced here rather than trusted:
 
@@ -19,7 +23,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Protocol
 
-from komora.bot.render import render_cart, render_sync_preview, render_sync_report
+from komora.bot.outcomes import DraftReady, Outcome, PreviewReady, Spoke, Synced
 from komora.core.agent.loop import ForbiddenToolCall, run_agent
 from komora.core.agent.recap import draft_recap, sync_recap
 from komora.core.agent.tools import ToolSource
@@ -27,7 +31,6 @@ from komora.core.alternatives import next_alternative
 from komora.core.llm.protocol import LLMClient, LLMUnavailable, Message
 from komora.core.mcp.errors import McpError, NotAuthenticated
 from komora.core.mcp.protocol import SilpoClient
-from komora.core.models import ResolvedCart
 from komora.core.passes.promos import apply_savings
 from komora.core.passes.removals import match_removals
 from komora.core.pipeline import (
@@ -75,24 +78,6 @@ async def _unlinked(telegram_id: int) -> None:
     raise NotImplementedError("Services.start_linking was not provided")
 
 
-@dataclass(frozen=True)
-class Button:
-    label: str
-    data: str | None = None
-    url: str | None = None
-    same_row: bool = False
-    """Pack with the button before it. The swap controls are one per line, so a row
-    each would bury the actual actions under a wall of buttons."""
-
-
-@dataclass(frozen=True)
-class Reply:
-    text: str
-    buttons: tuple[Button, ...] = field(default_factory=tuple)
-    toast: str | None = None
-    """Short answer for a callback query — Telegram shows it without a new message."""
-
-
 class SilpoConnect(Protocol):
     """Opens a Silpo session for one user. Raises `NotAuthenticated` if unlinked."""
 
@@ -130,17 +115,17 @@ class Services:
     as its own message, because the OAuth round-trip can take minutes."""
 
 
-def _auth_reply(text: str) -> Reply:
-    return Reply(text, buttons=(Button("Підключити Сільпо", data="link"),))
+def _needs_link(text: str) -> Spoke:
+    return Spoke(text, needs_link=True)
 
 
-async def on_start(services: Services, telegram_id: int) -> Reply:
+async def on_start(services: Services, telegram_id: int) -> Outcome:
     await services.users.ensure(telegram_id)
     blob, _ = await services.users.get_token_blob(telegram_id)
-    return Reply(READY) if blob else _auth_reply(WELCOME)
+    return Spoke(READY) if blob else _needs_link(WELCOME)
 
 
-async def on_budget(services: Services, telegram_id: int, argument: str) -> Reply:
+async def on_budget(services: Services, telegram_id: int, argument: str) -> Outcome:
     await services.users.ensure(telegram_id)
     argument = argument.strip()
 
@@ -148,21 +133,21 @@ async def on_budget(services: Services, telegram_id: int, argument: str) -> Repl
         user = await services.users.get(telegram_id)
         cap = user.budget_weekly if user else None
         current = f"Зараз тижневий бюджет: {cap} ₴." if cap else "Бюджет не встановлено."
-        return Reply(f"{current}\n\n{BUDGET_HELP}")
+        return Spoke(f"{current}\n\n{BUDGET_HELP}")
 
     try:
         amount = int(argument.replace(" ", "").replace("₴", ""))
     except ValueError:
-        return Reply(BUDGET_HELP)
+        return Spoke(BUDGET_HELP)
 
     if amount <= 0:
         await services.users.set_budget(telegram_id, None)
-        return Reply("Бюджет прибрано.")
+        return Spoke("Бюджет прибрано.")
     await services.users.set_budget(telegram_id, amount)
-    return Reply(f"Тижневий бюджет: {amount} ₴. Показуватиму, коли кошик виходить за межі.")
+    return Spoke(f"Тижневий бюджет: {amount} ₴. Показуватиму, коли кошик виходить за межі.")
 
 
-async def on_text(services: Services, telegram_id: int, text: str) -> Reply:
+async def on_text(services: Services, telegram_id: int, text: str) -> Outcome:
     """One user turn: history -> agent -> pipeline -> a draft to review."""
     await services.users.ensure(telegram_id)
     history = [
@@ -188,7 +173,7 @@ async def on_text(services: Services, telegram_id: int, text: str) -> Reply:
             if outcome.basket is None:
                 answer = outcome.reply or SILPO_DOWN
                 await services.conversations.append(telegram_id, "assistant", answer)
-                return Reply(answer)
+                return Spoke(answer)
 
             cart = await build_cart(
                 outcome.basket,
@@ -210,91 +195,74 @@ async def on_text(services: Services, telegram_id: int, text: str) -> Reply:
                     }
                 )
     except NotAuthenticated:
-        return _auth_reply(NEED_AUTH)
+        return _needs_link(NEED_AUTH)
     except CartContextMissing:
-        return Reply(NO_CONTEXT)
+        return Spoke(NO_CONTEXT)
     except McpError:
-        return Reply(SILPO_DOWN)
+        return Spoke(SILPO_DOWN)
     except LLMUnavailable:
-        return Reply(LLM_DOWN)
+        return Spoke(LLM_DOWN)
     except ForbiddenToolCall:
         # The model reached for a write tool. It never got through — say so plainly
         # rather than showing the user an error they cannot act on.
-        return Reply("Не зміг це опрацювати безпечно. Спробуйте сформулювати інакше.")
+        return Spoke("Не зміг це опрацювати безпечно. Спробуйте сформулювати інакше.")
 
     basket = outcome.basket
-    rendered = render_cart(cart, basket.title, budget_cap=budget_cap, swappable=True)
     # The whole basket, not just its title. A follow-up edit is only possible if the
     # model can see what it is editing — see core/agent/recap.py.
     await services.conversations.append(telegram_id, "assistant", draft_recap(basket.title, cart))
 
+    # Nothing found and nothing to remove: still worth showing, because the cart
+    # carries the warnings that say why. Not persisted, so there is nothing to act on.
     if not cart.lines and not cart.removals:
-        return Reply(rendered)
+        return DraftReady(title=basket.title, cart=cart, budget_cap=budget_cap)
 
     basket_id = await services.baskets.create_from_cart(
         telegram_id, basket.title, basket.intent, cart
     )
-    return Reply(rendered, buttons=_draft_buttons(basket_id, cart))
+    return DraftReady(title=basket.title, cart=cart, budget_cap=budget_cap, basket_id=basket_id)
 
 
-MAX_SWAP_BUTTONS = 8
-"""Telegram tolerates more, but a keyboard longer than this reads as noise."""
-
-
-def _draft_buttons(basket_id: int, cart: ResolvedCart) -> tuple[Button, ...]:
-    """Send/cancel, plus one «⇄ N» per line matching the numbers in the text."""
-    swaps = tuple(
-        Button(f"⇄ {i}", data=f"swap:{basket_id}:{i - 1}", same_row=i > 1)
-        for i, line in enumerate(cart.lines[:MAX_SWAP_BUTTONS], start=1)
-        if not line.unavailable
-    )
-    return (
-        *swaps,
-        Button("Надіслати в Сільпо", data=f"sync:{basket_id}"),
-        Button("Скасувати", data=f"cancel:{basket_id}"),
-    )
-
-
-async def on_callback(services: Services, telegram_id: int, data: str) -> Reply:
+async def on_callback(services: Services, telegram_id: int, data: str) -> Outcome:
     action, _, raw_id = data.partition(":")
 
     if action == "link":
         await services.start_linking(telegram_id)
-        return Reply(LINK_SENT)
+        return Spoke(LINK_SENT)
 
     basket_id, _, raw_position = raw_id.partition(":")
     try:
         position = int(raw_position) if raw_position else -1
         basket_id_int = int(basket_id)
     except ValueError:
-        return Reply(STALE, toast="Невідома дія")
+        return Spoke(STALE, toast="Невідома дія")
 
     basket = await services.baskets.get(basket_id_int)
     if basket is None or basket.user_id != telegram_id:
         # Ids come from the client; a mismatch is either stale UI or somebody guessing.
-        return Reply(STALE, toast="Ця чернетка недоступна")
+        return Spoke(STALE, toast="Ця чернетка недоступна")
     if basket.status != "draft":
-        return Reply(STALE, toast="Чернетка вже неактуальна")
+        return Spoke(STALE, toast="Чернетка вже неактуальна")
 
     if action == "cancel":
         await services.baskets.set_status(basket_id_int, "discarded")
-        return Reply(CANCELLED)
+        return Spoke(CANCELLED)
     if action == "sync":
         return await _preview(services, telegram_id, basket_id_int)
     if action == "push":
         return await _push(services, telegram_id, basket_id_int)
     if action == "swap":
         return await _swap(services, telegram_id, basket_id_int, position, basket.title)
-    return Reply(STALE, toast="Невідома дія")
+    return Spoke(STALE, toast="Невідома дія")
 
 
 async def _swap(
     services: Services, telegram_id: int, basket_id: int, position: int, title: str
-) -> Reply:
+) -> Outcome:
     """Offer the next product Silpo returns for the same query."""
     cart = await services.baskets.load_cart(basket_id)
     if cart is None or not 0 <= position < len(cart.lines):
-        return Reply(STALE, toast="Ця позиція недоступна")
+        return Spoke(STALE, toast="Ця позиція недоступна")
 
     line = cart.lines[position]
     try:
@@ -304,17 +272,17 @@ async def _swap(
                 line, mcp, context, await categories_for(mcp, context, services.cache)
             )
     except NotAuthenticated:
-        return _auth_reply(NEED_AUTH)
+        return _needs_link(NEED_AUTH)
     except McpError:
-        return Reply(SILPO_DOWN)
+        return Spoke(SILPO_DOWN)
 
     if alternative is None:
-        return Reply(NO_ALTERNATIVE.format(name=line.name), toast="Інших варіантів нема")
+        return Spoke(NO_ALTERNATIVE.format(name=line.name), toast="Інших варіантів нема")
 
     await services.baskets.replace_item(basket_id, position, alternative)
     updated = await services.baskets.load_cart(basket_id)
     if updated is None:
-        return Reply(STALE)
+        return Spoke(STALE)
 
     total = sum((ln.line_total for ln in updated.lines if not ln.unavailable), Decimal("0"))
     updated = updated.model_copy(update={"total": total})
@@ -324,52 +292,46 @@ async def _swap(
     await services.baskets.update_totals(basket_id, updated)
 
     user = await services.users.get(telegram_id)
-    return Reply(
-        render_cart(
-            updated, title, budget_cap=user.budget_weekly if user else None, swappable=True
-        ),
-        buttons=_draft_buttons(basket_id, updated),
+    return DraftReady(
+        title=title,
+        cart=updated,
+        budget_cap=user.budget_weekly if user else None,
+        basket_id=basket_id,
         toast=f"Замінено на {alternative.name}"[:200],
     )
 
 
-async def _preview(services: Services, telegram_id: int, basket_id: int) -> Reply:
+async def _preview(services: Services, telegram_id: int, basket_id: int) -> Outcome:
     cart = await services.baskets.load_cart(basket_id)
     if cart is None:
-        return Reply(STALE)
+        return Spoke(STALE)
     if not [ln for ln in cart.lines if not ln.unavailable] and not cart.removals:
-        return Reply(NOTHING_TO_SEND)
+        return Spoke(NOTHING_TO_SEND)
 
     try:
         async with services.connect(telegram_id) as mcp:
             _, context = await load_context(mcp)
             preview = await preview_sync(cart, mcp, context)
     except NotAuthenticated:
-        return _auth_reply(NEED_AUTH)
+        return _needs_link(NEED_AUTH)
     except McpError:
-        return Reply(SILPO_DOWN)
+        return Spoke(SILPO_DOWN)
 
-    return Reply(
-        render_sync_preview(preview),
-        buttons=(
-            Button("Додати в кошик", data=f"push:{basket_id}"),
-            Button("Скасувати", data=f"cancel:{basket_id}"),
-        ),
-    )
+    return PreviewReady(basket_id=basket_id, preview=preview)
 
 
-async def _push(services: Services, telegram_id: int, basket_id: int) -> Reply:
+async def _push(services: Services, telegram_id: int, basket_id: int) -> Outcome:
     cart = await services.baskets.load_cart(basket_id)
     if cart is None:
-        return Reply(STALE)
+        return Spoke(STALE)
 
     try:
         async with services.connect(telegram_id) as mcp:
             report = await execute_sync(cart, mcp)
     except NotAuthenticated:
-        return _auth_reply(NEED_AUTH)
+        return _needs_link(NEED_AUTH)
     except McpError:
-        return Reply(SILPO_DOWN)
+        return Spoke(SILPO_DOWN)
 
     # Only a complete sync closes the draft. A partial one stays open so the same
     # basket can be retried — safe, because re-adding sets quantities rather than
@@ -381,10 +343,4 @@ async def _push(services: Services, telegram_id: int, basket_id: int) -> Reply:
     # only «[чернетка] …» cannot know these products left the draft and became goods.
     await services.conversations.append(telegram_id, "assistant", sync_recap(report))
 
-    buttons: list[Button] = []
-    if report.checkout_web_link:
-        buttons.append(Button("Оформити на сайті", url=report.checkout_web_link))
-    if not report.ok:
-        buttons.append(Button("Спробувати ще раз", data=f"push:{basket_id}"))
-
-    return Reply(render_sync_report(report), buttons=tuple(buttons))
+    return Synced(basket_id=basket_id, report=report)

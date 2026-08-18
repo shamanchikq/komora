@@ -26,7 +26,7 @@ hand off with a checkout link.
 All from `backend/`.
 
 ```bash
-uv run pytest              # 737 tests
+uv run pytest              # 746 tests
 uv run ruff check .        # lint
 uv run ruff format .       # format
 uv run mypy komora         # strict
@@ -71,14 +71,18 @@ komora/
 │   └── sync.py    preview + append to the real Silpo cart
 ├── db/            SQLAlchemy 2 + repos
 ├── api/           FastAPI — only the OAuth callback
-├── bot/           handlers.py (Reply objects) + bot.py (the only aiogram file)
+├── bot/           handlers.py (Outcome objects) + render.py (to_reply)
+│                  + bot.py (the only aiogram file)
 └── main.py        uvicorn + polling under one asyncio.gather
 ```
 
 `core/` takes its dependencies as protocols, so the whole pipeline is testable with no
 network, no bot and no LLM. The bot keeps that property: handlers are plain functions
-over `(services, telegram_id, …)` returning a `Reply`, and aiogram appears only in
-`bot.py` — so the conversation is tested without constructing a Telegram object.
+over `(services, telegram_id, …)` returning an **`Outcome`** — a decision carrying
+domain objects, with no idea how it will be shown. `render.to_reply` turns one into
+Telegram HTML and a keyboard; a second surface serialises the same object instead. So
+the conversation is tested without constructing a Telegram object, and `handlers.py`
+contains no markup at all.
 
 ## The rules that matter
 

@@ -14,9 +14,11 @@ Output is Telegram HTML, so every value that came from Silpo or the model goes t
 `esc()` — product names contain `&` and «» routinely.
 """
 
+from dataclasses import dataclass, field
 from decimal import Decimal
 from html import escape
 
+from komora.bot.outcomes import DraftReady, Outcome, PreviewReady, Spoke, Synced
 from komora.core.models import ResolvedCart, ResolvedLine, SyncReport
 from komora.core.money import CURRENCY, uah
 from komora.core.passes.budget import optional_lines_total
@@ -306,3 +308,98 @@ def render_sync_report(report: SyncReport) -> str:
             blocks += ["", NO_CHECKOUT_LINK]
 
     return "\n".join(blocks)
+
+
+# --- Telegram shape -------------------------------------------------------------
+#
+# `Reply` and `Button` live here rather than with the handlers because they are
+# Telegram's vocabulary: HTML in the text, a callback string in the button. A handler
+# that built one was deciding how to say a thing at the moment it decided what to say.
+
+
+@dataclass(frozen=True)
+class Button:
+    label: str
+    data: str | None = None
+    url: str | None = None
+    same_row: bool = False
+    """Pack with the button before it. The swap controls are one per line, so a row
+    each would bury the actual actions under a wall of buttons."""
+
+
+@dataclass(frozen=True)
+class Reply:
+    text: str
+    buttons: tuple[Button, ...] = field(default_factory=tuple)
+    toast: str | None = None
+    """Short answer for a callback query — Telegram shows it without a new message."""
+
+
+LINK_BUTTON = "Підключити Сільпо"
+SEND_BUTTON = "Надіслати в Сільпо"
+PUSH_BUTTON = "Додати в кошик"
+CANCEL_BUTTON = "Скасувати"
+RETRY_BUTTON = "Спробувати ще раз"
+CHECKOUT_BUTTON = "Оформити на сайті"
+
+MAX_SWAP_BUTTONS = 8
+"""Telegram tolerates more, but a keyboard longer than this reads as noise."""
+
+
+def draft_buttons(basket_id: int, cart: ResolvedCart) -> tuple[Button, ...]:
+    """Send/cancel, plus one «⇄ N» per line matching the numbers in the text.
+
+    `i` counts every line, including unavailable ones, because `render_cart` numbers
+    them all — the label has to match what the user is reading. Only the unavailable
+    ones lose their button; there is nothing to swap for a product Silpo does not have.
+    """
+    swaps = tuple(
+        Button(f"⇄ {i}", data=f"swap:{basket_id}:{i - 1}", same_row=i > 1)
+        for i, line in enumerate(cart.lines[:MAX_SWAP_BUTTONS], start=1)
+        if not line.unavailable
+    )
+    return (
+        *swaps,
+        Button(SEND_BUTTON, data=f"sync:{basket_id}"),
+        Button(CANCEL_BUTTON, data=f"cancel:{basket_id}"),
+    )
+
+
+def to_reply(outcome: Outcome) -> Reply:
+    """Say an outcome in Telegram. The only place a decision becomes markup."""
+    match outcome:
+        case DraftReady():
+            buttons: tuple[Button, ...] = ()
+            if outcome.basket_id is not None:
+                buttons = draft_buttons(outcome.basket_id, outcome.cart)
+            return Reply(
+                render_cart(
+                    outcome.cart,
+                    outcome.title,
+                    budget_cap=outcome.budget_cap,
+                    swappable=True,
+                ),
+                buttons=buttons,
+                toast=outcome.toast,
+            )
+
+        case PreviewReady():
+            return Reply(
+                render_sync_preview(outcome.preview),
+                buttons=(
+                    Button(PUSH_BUTTON, data=f"push:{outcome.basket_id}"),
+                    Button(CANCEL_BUTTON, data=f"cancel:{outcome.basket_id}"),
+                ),
+            )
+
+        case Synced():
+            actions: list[Button] = []
+            if outcome.report.checkout_web_link:
+                actions.append(Button(CHECKOUT_BUTTON, url=outcome.report.checkout_web_link))
+            if not outcome.report.ok:
+                actions.append(Button(RETRY_BUTTON, data=f"push:{outcome.basket_id}"))
+            return Reply(render_sync_report(outcome.report), buttons=tuple(actions))
+
+        case Spoke():
+            offer = (Button(LINK_BUTTON, data="link"),) if outcome.needs_link else ()
+            return Reply(outcome.text, buttons=offer, toast=outcome.toast)
