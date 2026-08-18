@@ -17,10 +17,12 @@ hand off with a checkout link.
 | [Dev environment gotchas](docs/dev-environment-gotchas.md) | Windows/PowerShell, Cyrillic, SDK surfaces that differ from their docs. |
 | [Local models](docs/local-models-ollama-gemma.md) | Anything touching Ollama/Gemma. |
 
-The design spec and the numbered plans live in `docs/superpowers/` **on the dev machine
-only** — deliberately untracked, so the public repo stays code and reference docs. Read
-them from disk; **Plan 2 (Mini App) is current**, and its Task 0 is a refactor to do
-before any frontend exists.
+The design spec, the numbered plans and the design prompts live in `docs/superpowers/`,
+which this repo ignores — it is its own private repo,
+[shamanchikq/komora-docs](https://github.com/shamanchikq/komora-docs), so the public one
+stays code and reference docs. Read them from disk; commits there never touch this repo.
+**Plan 2 (Mini App) is current**, and its Task 0 is a refactor to do before any frontend
+exists.
 
 ## Commands
 

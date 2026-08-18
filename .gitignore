@@ -43,6 +43,5 @@ scratch/
 # Local artefacts from scripts/verify_mcp.py
 backend/verify.db
 
-# Design prompts and scratch artefacts — useful locally, not project source.
-docs/design/
+# Specs, plans and design prompts. Their own private repo — see CLAUDE.md.
 docs/superpowers/
