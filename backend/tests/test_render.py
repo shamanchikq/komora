@@ -10,6 +10,7 @@ import pytest
 
 from komora.bot.bot import MAX_MESSAGE, chunks
 from komora.bot.render import (
+    NO_CHECKOUT_LINK,
     esc,
     items,
     money,
@@ -309,3 +310,31 @@ class TestSwapHint:
     def test_no_hint_for_a_single_line(self) -> None:
         """One line, one arrow — the numbering explains itself."""
         assert "інший варіант" not in render_cart(cart(line()), "К", swappable=True)
+
+
+class TestASyncWithNoCheckoutLink:
+    """Silpo issues `checkoutWebLink` only for a cart it judges ready, and does not
+    always say why in `validations[]` — so «Готово.» must never be the whole message."""
+
+    def test_a_reason_is_given_when_there_is_one(self) -> None:
+        text = render_sync_report(
+            SyncReport(ok=True, added=["Хліб"], blocking_validations=["order.cost.min"])
+        )
+        assert "Оформити поки не вийде" in text
+        assert "менша за мінімальну" in text
+
+    def test_a_next_step_is_given_when_there_is_no_reason(self) -> None:
+        """Measured live: 236,60 ₴, no link, one info-level validation about a payment
+        type. Nothing is an error, so nothing explained the missing link."""
+        text = render_sync_report(SyncReport(ok=True, added=["Хліб"]))
+        assert NO_CHECKOUT_LINK in text
+
+    def test_nothing_is_added_where_a_link_exists(self) -> None:
+        text = render_sync_report(
+            SyncReport(ok=True, added=["Хліб"], checkout_web_link="https://silpo.ua/c/1")
+        )
+        assert NO_CHECKOUT_LINK not in text
+        assert "Оформити поки не вийде" not in text
+
+    def test_an_empty_sync_is_not_told_to_check_out(self) -> None:
+        assert NO_CHECKOUT_LINK not in render_sync_report(SyncReport(ok=True))

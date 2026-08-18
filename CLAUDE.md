@@ -143,8 +143,10 @@ Editing a basket **after** it reached Silpo took a second pass: the reply «Го
 was still in the cart next to its replacement. Three things were wrong at once — history
 recorded a draft as its title alone, so the model could not see what it was editing; no
 bot path could take a product out; and the verification pass judged each line without
-knowing the basket was a pizza. Untested on the live bot — it is the open checklist item
-in [backend/README.md](backend/README.md#manual-checklist).
+knowing the basket was a pizza. Verified on the live bot 2026-08-18: «заміни ковбаски на
+салямі» took the sausage out of the real Silpo cart, left the milk alone, and reported
+both. The re-auth path passed the same day, so the
+[manual checklist](backend/README.md#manual-checklist) is complete.
 
 `scripts/smoke_e2e.py` runs everything except Telegram headlessly against the live
 server — use it before any manual run. Seven defects came out of these runs: cart writes

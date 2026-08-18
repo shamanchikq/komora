@@ -135,6 +135,17 @@ def validation_text(code: str) -> str:
 
 SWAP_HINT = "⇄ 1…N — показати інший варіант для цієї позиції"
 
+NO_CHECKOUT_LINK = "Оформити замовлення — у застосунку або на сайті Сільпо."
+"""Said whenever a sync lands with no checkout link and no error to blame it on.
+
+Silpo issues `checkoutWebLink` only for a cart it considers ready, and readiness is
+not always something `validations[]` explains: measured live 2026-08-18, a cart of
+236,60 ₴ carried no link and exactly one validation, at **info** level, about a
+payment type needing a 1000 ₴ minimum. `_blocking` is right to ignore it — it is not
+an error — but that left «Готово.» as the entire message, with nowhere to go next.
+Naming no reason is honest here; leaving the user at a dead end is not.
+"""
+
 
 def render_cart(
     cart: ResolvedCart,
@@ -283,10 +294,15 @@ def render_sync_report(report: SyncReport) -> str:
         # can only be text. Shown anyway: Silpo's own guidance is to offer both.
         blocks += ["", f"У застосунку Сільпо: {esc(report.checkout_mobile_link)}"]
 
-    if report.blocking_validations and not report.checkout_web_link:
-        # Live: a cart holding a line that exceeds stock gets no checkout link at all.
-        # "Готово" with no link and no reason leaves the user with nowhere to go.
-        blocks += ["", "<b>Оформити поки не вийде:</b>"]
-        blocks += [f"• {validation_text(v)}" for v in dict.fromkeys(report.blocking_validations)]
+    if not report.checkout_web_link and (report.added or report.removed):
+        if report.blocking_validations:
+            # Live: a cart holding a line that exceeds stock gets no checkout link at
+            # all. "Готово" with no link and no reason leaves the user nowhere to go.
+            blocks += ["", "<b>Оформити поки не вийде:</b>"]
+            blocks += [
+                f"• {validation_text(v)}" for v in dict.fromkeys(report.blocking_validations)
+            ]
+        else:
+            blocks += ["", NO_CHECKOUT_LINK]
 
     return "\n".join(blocks)

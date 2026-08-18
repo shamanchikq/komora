@@ -12,7 +12,7 @@ Silpo — Komora prepares the cart and hands off.
 
 ## Status
 
-Plan 1 complete through Task 14's automated half. The full loop — message → draft →
+Plan 1 complete, manual checklist included. The full loop — message → draft →
 pipeline → preview → **append** — has been run against the live Silpo server, including
 the write: items landed in a real cart, the three items already there were untouched,
 and the cart was restored exactly. What it found along the way is in
@@ -111,13 +111,20 @@ What the script cannot cover. Needs `KOMORA_TELEGRAM_BOT_TOKEN` from
 - [x] A follow-up edit in plain language — «можна замість 3 упаковок яєць додати
       тільки 2?» — produced a corrected basket with «Ви змінили кількість з 3 на 2
       упаковки» as the reason. Not in the original plan; it works anyway.
-- [ ] An edit **after** the basket reached Silpo — «заміни ковбаски на салямі» →
-      the sheet says «Приберемо з кошика: …» → «Додати в кошик» → the replaced
-      product is gone from the real cart and the untouched lines are still there.
+- [x] An edit **after** the basket reached Silpo — «заміни ковбаски на салямі» →
+      the sheet said «Приберемо з кошика: Ковбаски Глобино Салямки…» → «Додати в
+      кошик» → the sausage left the real cart, the milk was untouched, and the
+      salami arrived as 0,15 кг, one `step` of a weighted good. Verified
+      2026-08-18 by reading the cart back: two lines, the replaced product absent,
+      and the recap recorded both the add and the removal for the next turn.
 - [x] «Яке грузинське вино є до 500 ₴?» → a free-form answer, no basket. Passes on
       `gemini-3.1-flash-lite` (3/3 in a harness against the shipped prompt and tools);
       fails on `gemma4:12b`, which answers without searching.
-- [ ] Clear the user's `silpo_tokens` row → any message → the re-auth prompt appears.
+- [x] Clear the user's `silpo_tokens` row → any message → the re-auth prompt appears.
+      Verified 2026-08-18: «купи хліб» → «Потрібно наново підключити акаунт Сільпо» →
+      **Підключити Сільпо** → the authorize URL arrived with PKCE `S256` and a
+      loopback `redirect_uri` → sign-in → «Готово — акаунт Сільпо підключено», about
+      five seconds end to end. The same message then built a basket normally.
 
 The login link opens on **the machine running the bot**. `KOMORA_PUBLIC_BASE_URL` is
 `http://localhost:8000` by default, and Silpo accepts a loopback redirect (registered
