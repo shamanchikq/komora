@@ -403,7 +403,7 @@ _listed` keeps accepting several plausible shapes for that reason.
 - `client_secret_expires_at` exists — an expired DCR secret needs the shared
   registration row wiped so the next attempt re-registers.
 
-See [verified external facts §2](superpowers/specs/2026-08-10-verified-external-facts.md)
+See verified external facts §2 (kept outside this repo)
 for the `mcp` 2.0 SDK traps (renamed transport, httpx2, the open #3250 expiry bug).
 
 ## 8. Errors

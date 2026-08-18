@@ -384,6 +384,6 @@ KOMORA_OLLAMA_BASE_URL=http://localhost:11434
 
 - Design spec §4.1 (kept outside this repo) — provider abstraction and
   the read/write split that makes any local path arguable.
-- [Verified external facts](superpowers/specs/2026-08-10-verified-external-facts.md) — Gemini,
+- Verified external facts (kept outside this repo) — Gemini,
   the `mcp` 2.0 SDK, Silpo's OAuth server.
 - `backend/scripts/probe_ollama.py` — the probe, rerunnable.

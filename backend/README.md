@@ -23,9 +23,7 @@ a bot token (see [Manual checklist](#manual-checklist)).
 field names, call order and domain rules, all verified against the live server. Every
 parameter name assumed from a tool name in this project turned out to be wrong.
 
-- [Plan 1](../docs/superpowers/plans/2026-08-10-plan1-foundation-core-pipeline.md) — the current implementation plan
 - [Dev environment gotchas](../docs/dev-environment-gotchas.md) — Windows, Cyrillic, SDK surprises
-- [Verified external facts](../docs/superpowers/specs/2026-08-10-verified-external-facts.md) — Gemini, `mcp` 2.0, OAuth
 - [Local models](../docs/local-models-ollama-gemma.md) — Ollama/Gemma
 
 ## Requirements
@@ -190,7 +188,7 @@ Found by the live runs on 2026-08-11/12, and left open deliberately.
   honest but unhelpful; a paid key or a retry-with-backoff would fix it. Quota is per
   (project, model), so the two tiers are pointed at two different models and a basket's
   two requests draw on two independent daily allowances — see
-  [verified external facts §3](../docs/superpowers/specs/2026-08-10-verified-external-facts.md).
+  verified external facts §3 (kept outside this repo).
 - **A flagged line with no re-search query is dropped, not repaired.** When the
   verification pass marks a product wrong but returns an empty `better_query`,
   `pipeline._verified` has nothing to search with and the line becomes «Не знайшлося».

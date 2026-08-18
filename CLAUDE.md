@@ -15,10 +15,12 @@ hand off with a checkout link.
 |---|---|
 | [Silpo MCP reference](docs/silpo-mcp-reference.md) | **Any** Silpo call. Field names, call order, domain rules, what the API does not provide. |
 | [Dev environment gotchas](docs/dev-environment-gotchas.md) | Windows/PowerShell, Cyrillic, SDK surfaces that differ from their docs. |
-| [Verified external facts](docs/superpowers/specs/2026-08-10-verified-external-facts.md) | Gemini models/pricing, `mcp` 2.0 traps, OAuth. |
 | [Local models](docs/local-models-ollama-gemma.md) | Anything touching Ollama/Gemma. |
-| [Plan 1](docs/superpowers/plans/2026-08-10-plan1-foundation-core-pipeline.md) | M0–M1. Done, checklist included. |
-| [Plan 2](docs/superpowers/plans/2026-08-18-plan2-mini-app.md) | **Current.** Mini App (M2). Task 0 is a refactor to do before any frontend exists. |
+
+The design spec and the numbered plans live in `docs/superpowers/` **on the dev machine
+only** — deliberately untracked, so the public repo stays code and reference docs. Read
+them from disk; **Plan 2 (Mini App) is current**, and its Task 0 is a refactor to do
+before any frontend exists.
 
 ## Commands
 
