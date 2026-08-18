@@ -97,6 +97,12 @@ def warning_text(code: str) -> str:
         return {
             "coupons": "Купони зараз недоступні — показано без них.",
             "replacements": "Сільпо не підказав заміни — деякі позиції могли бути кращими.",
+            # Without this the fallback printed «Часткові дані: verification» — an
+            # English word, in the one place the user is being told to look harder.
+            "verification": (
+                "Не вдалося перевірити, чи товари відповідають запиту — "
+                "перегляньте позиції уважніше."
+            ),
         }.get(rest, f"Часткові дані: {esc(rest)}")
     return esc(code)
 

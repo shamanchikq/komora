@@ -20,6 +20,7 @@ from komora.bot.render import (
     render_cart,
     render_sync_preview,
     render_sync_report,
+    warning_text,
 )
 from komora.core.models import ResolvedCart, ResolvedLine, SyncReport
 from komora.core.sync import SyncPreview
@@ -129,6 +130,22 @@ class TestCart:
 class TestWarnings:
     def test_not_found_names_what_was_missing(self) -> None:
         assert "«кава»" in render_cart(cart(line(), warnings=["not_found:кава"]), "К")
+
+    def test_every_degraded_code_the_pipeline_emits_has_ukrainian(self) -> None:
+        """The fallback exists for codes nobody has written copy for yet — not for the
+        three the pipeline emits itself. `degraded:verification` fell through it and
+        printed the English word «verification» to a Ukrainian reader, in the one
+        message whose whole job is to say «look at these more carefully»."""
+        from komora.core.passes.promos import DEGRADED_COUPONS
+        from komora.core.passes.resolve import DEGRADED_REPLACEMENTS
+        from komora.core.passes.verify import DEGRADED_VERIFY
+
+        for code in (DEGRADED_COUPONS, DEGRADED_REPLACEMENTS, DEGRADED_VERIFY):
+            text = warning_text(code)
+            assert "Часткові дані" not in text, f"{code} fell through to the fallback"
+            assert not any(ch.isascii() and ch.isalpha() for ch in text), (
+                f"{code} leaks a latin word: {text}"
+            )
 
     def test_degraded_coupons_is_admitted(self) -> None:
         assert "Купони зараз недоступні" in render_cart(
