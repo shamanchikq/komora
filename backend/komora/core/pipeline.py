@@ -1,9 +1,7 @@
 """Draft basket in, reviewed cart out.
 
 The passes are separate functions so each can be tested alone; this composes them in
-the one order that works. Restrictions run on *descriptions*, before anything is
-resolved, so an excluded item never costs a search. Savings and budget run last,
-because both need real prices.
+the one order that works. Savings and budget run last, because both need real prices.
 
 Everything Silpo can fail to answer degrades rather than aborts: a cart with no coupon
 notes is worth having, a cart the user never sees is not. Each degradation leaves a
@@ -21,10 +19,8 @@ from komora.core.passes.budget import apply_budget
 from komora.core.passes.categories import CategoryIndex, fetch_categories
 from komora.core.passes.promos import DEGRADED_COUPONS, apply_savings, describe_coupons
 from komora.core.passes.resolve import NOT_FOUND, resolve_basket
-from komora.core.passes.restrictions import apply_restrictions
 from komora.core.passes.verify import DEGRADED_VERIFY, find_mismatches
 
-DEGRADED_RESTRICTIONS = "degraded:restrictions"
 TIMESLOT_EXPIRED = "timeslot:expired"
 
 MAX_COUPON_DETAILS = 5
@@ -128,25 +124,6 @@ async def timeslot_is_offered(mcp: SilpoClient, context: SearchContext) -> bool 
     except Exception:
         return None
     return slot_verdict(payload, context.timeslot_start)
-
-
-def extract_restrictions(payload: Any) -> list[str]:
-    """Restriction terms, from whichever shape arrived.
-
-    `apply_restrictions` matches lexically on Ukrainian words, so a term is whatever
-    string names the restriction.
-    """
-    terms: list[str] = []
-    for item in _listed(payload, "restrictions", "items", "data", "result"):
-        if isinstance(item, str):
-            terms.append(item)
-        elif isinstance(item, dict):
-            for key in ("name", "title", "value", "restriction"):
-                value = item.get(key)
-                if isinstance(value, str) and value.strip():
-                    terms.append(value)
-                    break
-    return [term.strip() for term in terms if term.strip()]
 
 
 async def _coupons(mcp: SilpoClient) -> list[dict[str, Any]]:
@@ -283,23 +260,16 @@ async def build_cart(
     llm: LLMClient | None = None,
     cache: SilpoCache | None = None,
 ) -> ResolvedCart:
-    """Run the full pipeline: restrictions -> resolve -> verify -> savings -> budget.
+    """Run the full pipeline: resolve -> verify -> savings -> budget.
 
     `llm` enables the verification pass — one extra request per basket, which is the
     scarce resource on the free tier. `cache` holds the category tree.
     """
     warnings: list[str] = []
 
-    try:
-        restrictions = extract_restrictions(await mcp.get_my_food_restrictions())
-    except Exception:
-        restrictions = []
-        warnings.append(DEGRADED_RESTRICTIONS)
-
-    filtered = apply_restrictions(basket, restrictions)
-    cart = await resolve_basket(filtered, mcp, context, await categories_for(mcp, context, cache))
+    cart = await resolve_basket(basket, mcp, context, await categories_for(mcp, context, cache))
     if llm is not None:
-        cart, degraded = await _verified(cart, filtered, mcp, context, llm, cache)
+        cart, degraded = await _verified(cart, basket, mcp, context, llm, cache)
         if degraded:
             warnings.append(DEGRADED_VERIFY)
     cart = apply_savings(cart)

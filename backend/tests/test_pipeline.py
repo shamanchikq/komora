@@ -9,12 +9,10 @@ import pytest
 from komora.core.models import DraftBasket, DraftLine
 from komora.core.passes.promos import DEGRADED_COUPONS
 from komora.core.pipeline import (
-    DEGRADED_RESTRICTIONS,
     TIMESLOT_EXPIRED,
     CartContextMissing,
     _listed,
     build_cart,
-    extract_restrictions,
     load_context,
     slot_verdict,
     timeslot_is_offered,
@@ -107,35 +105,17 @@ class TestCapturedEnvelopes:
         assert coupon["description"] == "на онлайн чек", "a fragment, not a description"
 
     def test_restrictions_arrive_under_restrictions(self) -> None:
+        """Nothing reads this yet — the dietary pass was removed until a populated
+        response has actually been seen. The captured envelope is kept so the shape
+        is on record for whoever builds it."""
         payload = _fixture("my_food_restrictions")
         assert sorted(payload) == ["restrictions", "success", "summary"]
-        assert extract_restrictions(payload) == [], "none set on the captured account"
+        assert payload["restrictions"] == [], "none set on the captured account"
 
     def test_time_slots_arrive_under_slots(self) -> None:
         payload = _fixture("time_slots")
         assert "slots" in payload and "timeslots" not in payload
         assert {"start", "end", "available", "deliveryType"} <= set(payload["slots"][0])
-
-
-class TestExtractRestrictions:
-    """Tolerance kept on purpose: the captured account has no restrictions set, so a
-    populated response has still never been seen."""
-
-    @pytest.mark.parametrize(
-        "payload",
-        [
-            {"restrictions": ["арахіс", "лактоза"]},
-            {"items": [{"name": "арахіс"}, {"name": "лактоза"}]},
-            ["арахіс", "лактоза"],
-            {"data": [{"title": "арахіс"}, {"value": "лактоза"}]},
-        ],
-    )
-    def test_plausible_shapes(self, payload: object) -> None:
-        assert extract_restrictions(payload) == ["арахіс", "лактоза"]
-
-    @pytest.mark.parametrize("payload", [None, {}, {"restrictions": None}, "текст", 42])
-    def test_anything_else_is_empty_rather_than_an_error(self, payload: object) -> None:
-        assert extract_restrictions(payload) == []
 
 
 FIXTURES = pathlib.Path(__file__).parent / "fixtures" / "mcp"
@@ -205,15 +185,6 @@ class TestBuildCart:
         assert cart.total == Decimal("71.40")
         assert cart.estimated_savings == Decimal("6.50"), "35.00 - 28.50 on the bread"
 
-    async def test_restrictions_are_applied_before_anything_is_searched(self) -> None:
-        """An excluded line should not cost a search — and must leave a visible trace."""
-        mcp = FakeSilpo(CATALOGUE, restrictions={"restrictions": ["арахіс"]})
-        cart = await build_cart(basket("молоко", "арахісове масло"), mcp, CONTEXT)
-
-        assert [line.name for line in cart.lines] == ["Молоко"]
-        assert any(w.startswith("excluded:") for w in cart.warnings)
-        assert mcp.search_calls == [["молоко"]]
-
     async def test_a_budget_cap_annotates_without_removing_anything(self) -> None:
         mcp = FakeSilpo(CATALOGUE)
         cart = await build_cart(basket("молоко", "хліб"), mcp, CONTEXT, budget_cap=50)
@@ -255,14 +226,6 @@ class TestBuildCart:
         cart = await build_cart(basket("молоко"), mcp, CONTEXT)
         assert [line.name for line in cart.lines] == ["Молоко"]
         assert DEGRADED_COUPONS in cart.warnings
-
-    async def test_restrictions_failing_degrades_rather_than_fails(self) -> None:
-        """Worth stating plainly: the cart is still built, and the user is told the
-        check did not run."""
-        mcp = FakeSilpo(CATALOGUE, fails={"get_my_food_restrictions"})
-        cart = await build_cart(basket("молоко"), mcp, CONTEXT)
-        assert [line.name for line in cart.lines] == ["Молоко"]
-        assert DEGRADED_RESTRICTIONS in cart.warnings
 
     async def test_an_expired_timeslot_warns_without_blocking_the_cart(self) -> None:
         """Silpo asks for this check up front. The cart is still worth building — the

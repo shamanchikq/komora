@@ -2,7 +2,7 @@
 
 **A shopping agent that can suggest anything and change nothing.**
 
-Python 3.14 · 754 tests · `mypy --strict` clean · the whole suite runs with no network, no model and no bot
+Python 3.14 · 737 tests · `mypy --strict` clean · the whole suite runs with no network, no model and no bot
 
 You send a message — «купи молоко, хліб і щось до чаю» — and Komora comes back with a real
 cart: actual products, actual prices, in stock at your store, each line saying why it's
@@ -48,7 +48,7 @@ komora/
 │   ├── mcp/       talking to Silpo, and per-user OAuth
 │   ├── llm/       one interface, two providers (hosted and local)
 │   ├── agent/     the loop: read-only tools, and the guardrails
-│   ├── passes/    restrictions → resolve → verify → savings → budget
+│   ├── passes/    resolve → verify → savings → budget
 │   └── sync.py    preview, then write to the real cart
 ├── db/            SQLAlchemy 2
 ├── api/           FastAPI — just the OAuth callback
@@ -99,7 +99,7 @@ decrypt rather than quietly granting someone else's access.
 Everything from `backend/`, using [uv](https://docs.astral.sh/uv/):
 
 ```bash
-uv run pytest              # 754 tests, no network needed
+uv run pytest              # 737 tests, no network needed
 uv run ruff check .
 uv run mypy komora
 ```

@@ -128,10 +128,6 @@ class TestWarnings:
     def test_not_found_names_what_was_missing(self) -> None:
         assert "«кава»" in render_cart(cart(line(), warnings=["not_found:кава"]), "К")
 
-    def test_exclusion_names_both_the_item_and_the_restriction(self) -> None:
-        text = render_cart(cart(line(), warnings=["excluded:арахісове масло:арахіс"]), "К")
-        assert "«арахісове масло»" in text and "(арахіс)" in text
-
     def test_degraded_coupons_is_admitted(self) -> None:
         assert "Купони зараз недоступні" in render_cart(
             cart(line(), warnings=["degraded:coupons"]), "К"

@@ -25,7 +25,7 @@ hand off with a checkout link.
 All from `backend/`.
 
 ```bash
-uv run pytest              # 754 tests
+uv run pytest              # 737 tests
 uv run ruff check .        # lint
 uv run ruff format .       # format
 uv run mypy komora         # strict
@@ -62,7 +62,7 @@ komora/
 │   ├── llm/       LLMClient protocol; gemini/ and ollama/ implementations
 │   ├── agent/     the loop: read tools only, propose_basket, guardrails
 │   │              + recap.py (what the model is told it did last turn)
-│   ├── passes/    restrictions -> resolve -> verify -> savings -> budget
+│   ├── passes/    resolve -> verify -> savings -> budget
 │   │              + categories.py (Silpo's taxonomy, beats free-text search)
 │   │              + removals.py («прибери ковбаски» -> a product Komora synced)
 │   ├── alternatives.py  «інший варіант» — same rule as resolve (`narrow`)

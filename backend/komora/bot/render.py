@@ -84,9 +84,6 @@ def warning_text(code: str) -> str:
     kind, _, rest = code.partition(":")
     if kind == "not_found":
         return f"Не знайшлося: «{esc(rest)}»"
-    if kind == "excluded":
-        item, _, restriction = rest.rpartition(":")
-        return f"Прибрано через ваші обмеження: «{esc(item)}» ({esc(restriction)})"
     if kind == "over_budget":
         return f"Понад тижневий бюджет на {money(Decimal(rest))}"
     if kind == "timeslot":
@@ -98,7 +95,6 @@ def warning_text(code: str) -> str:
         return {
             "coupons": "Купони зараз недоступні — показано без них.",
             "replacements": "Сільпо не підказав заміни — деякі позиції могли бути кращими.",
-            "restrictions": "Не вдалося перевірити ваші харчові обмеження.",
         }.get(rest, f"Часткові дані: {esc(rest)}")
     return esc(code)
 

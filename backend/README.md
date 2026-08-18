@@ -128,6 +128,18 @@ is the phone. Testing from another device is the one case that needs `cloudflare
 
 Found by the live runs on 2026-08-11/12, and left open deliberately.
 
+- **There is no dietary-restriction filtering.** The pass was removed rather than
+  shipped wrong. It matched restriction terms as substrings, which fails in the
+  dangerous direction on inflected Ukrainian: «горіхи» did **not** drop «горіх
+  волоський», and «яйця» did not drop «яйце куряче», while «мед» wrongly dropped
+  «медальйони». A partial allergen filter is worse than none, because it invites
+  trust it has not earned. `same_word` (`passes/words.py`) fixes the inflection
+  cases but would then drop «молоко без лактози» for a «лактоза» restriction —
+  neither matcher understands negation. `silpo_get_my_food_restrictions` has never
+  returned a populated response, so the shape of a real term is still unknown;
+  `smoke_e2e.py` keeps capturing it. Rebuild this against one real payload, not
+  against a guess.
+
 - **A local model produces weaker baskets than the pipeline can rescue.** `gemma4:12b`
   emitted a line described as «Печиво або цукерки (до чаю)» — a compound phrase that
   matches no product, so it resolved to nothing and the user got «Не знайшлося». It
@@ -215,7 +227,7 @@ komora/
 │   ├── mcp/   Silpo MCP client: typed wrappers, retry, per-user OAuth
 │   ├── llm/   provider-agnostic LLM client (Gemini implementation)
 │   ├── agent/ the agent loop; read-only tool access
-│   └── passes/ deterministic pipeline: restrictions, resolve, promos, budget
+│   └── passes/ deterministic pipeline: resolve, promos, budget
 ├── db/        SQLAlchemy models and repositories
 ├── api/       FastAPI — OAuth callback and health
 └── bot/       aiogram adapter — conversation and push

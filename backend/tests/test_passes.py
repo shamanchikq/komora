@@ -1,4 +1,4 @@
-"""The deterministic pipeline: restrictions, resolve, savings, budget.
+"""The deterministic pipeline: resolve, savings, budget.
 
 Every intent converges here, so each pass is tested on its own rather than through a
 model. Product shapes come from the real captured search response.
@@ -12,7 +12,6 @@ from komora.core.models import DraftBasket, DraftLine, ResolvedCart, ResolvedLin
 from komora.core.passes.budget import apply_budget, optional_lines_total
 from komora.core.passes.promos import apply_savings, describe_coupons
 from komora.core.passes.resolve import clamp_quantity, fallback_terms, resolve_basket
-from komora.core.passes.restrictions import apply_restrictions
 from tests.fakes import CONTEXT, FakeSilpo, product
 
 
@@ -39,32 +38,6 @@ def resolved(**kw: object) -> ResolvedLine:
         "reason_text": "r",
     }
     return ResolvedLine.model_validate(base | kw)
-
-
-class TestRestrictions:
-    def test_no_restrictions_is_identity(self) -> None:
-        basket = draft(line("молоко"), line("арахісова паста"))
-        assert apply_restrictions(basket, []) == basket
-
-    def test_matching_line_is_dropped_with_a_reason(self) -> None:
-        """A line that vanishes without explanation reads as a bug — and for an
-        allergy the reason matters more than the item."""
-        out = apply_restrictions(draft(line("молоко"), line("Арахісова паста")), ["арахіс"])
-        assert [ln.description for ln in out.lines] == ["молоко"]
-        assert out.warnings == ["excluded:Арахісова паста:арахіс"]
-
-    def test_matching_is_case_insensitive(self) -> None:
-        out = apply_restrictions(draft(line("ЛАКТОЗА free молоко")), ["лактоза"])
-        assert out.lines == []
-
-    def test_blank_restrictions_are_ignored(self) -> None:
-        basket = draft(line("молоко"))
-        assert apply_restrictions(basket, ["", "   "]).lines == basket.lines
-
-    def test_input_is_not_mutated(self) -> None:
-        basket = draft(line("арахіс"))
-        apply_restrictions(basket, ["арахіс"])
-        assert len(basket.lines) == 1
 
 
 class TestClampQuantity:
@@ -162,11 +135,13 @@ class TestResolve:
         assert [len(c) for c in mcp.search_calls] == [30, 5, 1]
         assert mcp.search_calls[-1] == ["товар"]
 
-    async def test_restriction_warnings_survive_resolution(self) -> None:
-        basket = apply_restrictions(draft(line("молоко"), line("арахіс")), ["арахіс"])
+    async def test_draft_warnings_survive_resolution(self) -> None:
+        """Whatever a pass put on the draft has to reach the rendered cart."""
+        basket = draft(line("молоко"))
+        basket = basket.model_copy(update={"warnings": ["some_earlier_pass:молоко"]})
         mcp = FakeSilpo({"молоко": [product("Молоко", 10)]})
         cart = await resolve_basket(basket, mcp, CONTEXT)
-        assert any(w.startswith("excluded:") for w in cart.warnings)
+        assert "some_earlier_pass:молоко" in cart.warnings
 
     async def test_old_price_is_carried_through(self) -> None:
         mcp = FakeSilpo({"молоко": [product("Молоко", 39.99, old_price=60.99)]})
@@ -297,7 +272,6 @@ class TestPipelineOrder:
     async def test_full_pipeline_produces_a_coherent_cart(self) -> None:
         basket = draft(
             line("молоко", 2),
-            line("арахісова паста"),
             line("торт", optional=True),
         )
         mcp = FakeSilpo(
@@ -306,14 +280,12 @@ class TestPipelineOrder:
                 "торт": [product("Торт", 219.00)],
             }
         )
-        filtered = apply_restrictions(basket, ["арахіс"])
-        cart = await resolve_basket(filtered, mcp, CONTEXT)
+        cart = await resolve_basket(basket, mcp, CONTEXT)
         cart = apply_savings(cart)
         cart = apply_budget(cart, 200)
 
         assert [ln.name for ln in cart.lines] == ["Молоко", "Торт"]
         assert cart.estimated_savings == Decimal("42.00")
-        assert any(w.startswith("excluded:") for w in cart.warnings)
         assert any(w.startswith("over_budget:") for w in cart.warnings)
 
     @pytest.mark.parametrize("cap", [None, 10_000])
