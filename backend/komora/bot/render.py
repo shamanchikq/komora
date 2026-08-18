@@ -210,6 +210,23 @@ def render_cart(
     return "\n".join(blocks)
 
 
+MIXED_TOTALS = "Це різні суми — остаточну рахує Сільпо вже в кошику."
+"""Shown when both figures appear, because they are not the same kind of number.
+
+Measured live 2026-08-18. `existing_total` is Silpo's own `totalAfterDiscounts`: the
+account's -10% coupon already applied to every line that was not already on promotion,
+plus a flat 9,00 ₴ that does not scale with the basket — 41,99 ₴ of milk read back as
+50,99 ₴, and six lines summing to 522,56 ₴ read back as 531,56 ₴. `adding_total` is
+the plain sum of catalogue prices for the lines about to be sent, because Komora
+deliberately never predicts a coupon (`passes/promos.py`).
+
+Both are honest on their own. Printed one under the other with «на …» twice they read
+as addends, and they are not: adding them overstates by the coupon and understates by
+the fee. Naming what each one is costs a word; naming the 9,00 would be a guess, so it
+is not named.
+"""
+
+
 def render_sync_preview(preview: SyncPreview) -> str:
     """The confirmation sheet. Its whole job is to promise nothing gets removed — and
     to be exact about the one case where a quantity is replaced rather than added."""
@@ -221,13 +238,20 @@ def render_sync_preview(preview: SyncPreview) -> str:
         rest = "решти не чіпаємо" if preview.removing else "не чіпаємо"
         blocks.append(
             f"У вашому кошику Сільпо вже {items(preview.existing_count)} "
-            f"на {money(preview.existing_total)} — {rest}."
+            f"— до сплати {money(preview.existing_total)}, {rest}."
         )
     else:
         blocks.append("Ваш кошик Сільпо зараз порожній.")
 
     if preview.adding_count:
-        blocks.append(f"Додаємо {items(preview.adding_count)} на {money(preview.adding_total)}.")
+        blocks.append(
+            f"Додаємо {items(preview.adding_count)} — "
+            f"{money(preview.adding_total)} за цінами каталогу."
+        )
+        # Only where the two sit side by side and invite being added together. With an
+        # empty cart there is one figure, and «за цінами каталогу» already qualifies it.
+        if preview.existing_count:
+            blocks.append(MIXED_TOTALS)
 
     if preview.removing:
         names = ", ".join(esc(n) for n in preview.removing)

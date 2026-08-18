@@ -10,6 +10,7 @@ import pytest
 
 from komora.bot.bot import MAX_MESSAGE, chunks
 from komora.bot.render import (
+    MIXED_TOTALS,
     NO_CHECKOUT_LINK,
     esc,
     items,
@@ -167,6 +168,35 @@ class TestSyncPreview:
         text = render_sync_preview(preview)
         assert "вже 2 позиції" in text and "не чіпаємо" in text
         assert "Додаємо 3 позиції" in text
+
+    def test_the_two_totals_are_labelled_as_different_kinds_of_number(self) -> None:
+        """`existing_total` is Silpo's payable figure — coupon applied, plus a flat
+        charge. `adding_total` is the catalogue sum, because coupons are never
+        predicted. Printed as «на X» twice they read as addends and are not."""
+        text = render_sync_preview(
+            SyncPreview(
+                existing_count=1,
+                existing_total=Decimal("50.99"),
+                adding_count=5,
+                adding_total=Decimal("533.97"),
+            )
+        )
+        assert "до сплати 50,99 ₴" in text
+        assert "533,97 ₴ за цінами каталогу" in text
+        assert MIXED_TOTALS in text
+
+    def test_an_empty_cart_needs_no_caveat(self) -> None:
+        """One figure cannot be added to another, and it is already qualified."""
+        text = render_sync_preview(
+            SyncPreview(
+                existing_count=0,
+                existing_total=Decimal("0"),
+                adding_count=1,
+                adding_total=Decimal("41.99"),
+            )
+        )
+        assert "за цінами каталогу" in text
+        assert MIXED_TOTALS not in text
 
     def test_overlap_says_replaced_not_added(self) -> None:
         """Quantity is SET, not incremented — promising addition here would be a lie."""
