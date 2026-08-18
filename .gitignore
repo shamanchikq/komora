@@ -45,3 +45,4 @@ backend/verify.db
 
 # Design prompts and scratch artefacts — useful locally, not project source.
 docs/design/
+docs/superpowers/specs/2026-08-10-komora-design.md

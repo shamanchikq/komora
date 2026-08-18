@@ -131,7 +131,6 @@ flows. Open problems are listed honestly in
 | Document | What it covers |
 |---|---|
 | [Silpo MCP reference](docs/silpo-mcp-reference.md) | Field names, call order, and what the API doesn't give you |
-| [Design spec](docs/superpowers/specs/2026-08-10-komora-design.md) | Architecture and product decisions |
 | [Verified external facts](docs/superpowers/specs/2026-08-10-verified-external-facts.md) | Model pricing, SDK traps, OAuth |
 | [Local models](docs/local-models-ollama-gemma.md) | Running on Ollama, and why it's development-only |
 | [Dev environment gotchas](docs/dev-environment-gotchas.md) | SDKs that differ from their own documentation |

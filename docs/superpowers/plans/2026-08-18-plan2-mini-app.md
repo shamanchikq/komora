@@ -3,7 +3,7 @@
 **Status:** not started. Written 2026-08-18, immediately after the Plan 1 manual
 checklist reached 8/8 against live Silpo.
 
-Scope from the [design spec](../specs/2026-08-10-komora-design.md) §14: *draft cart
+Scope from the design spec §14 (kept outside this repo): *draft cart
 screen + sync sheet (from approved design), initData auth, deep links.*
 
 Everything below the surface already works and is verified end to end. This plan is

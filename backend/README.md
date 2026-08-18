@@ -23,7 +23,6 @@ a bot token (see [Manual checklist](#manual-checklist)).
 field names, call order and domain rules, all verified against the live server. Every
 parameter name assumed from a tool name in this project turned out to be wrong.
 
-- [Design spec](../docs/superpowers/specs/2026-08-10-komora-design.md) — architecture and product decisions
 - [Plan 1](../docs/superpowers/plans/2026-08-10-plan1-foundation-core-pipeline.md) — the current implementation plan
 - [Dev environment gotchas](../docs/dev-environment-gotchas.md) — Windows, Cyrillic, SDK surprises
 - [Verified external facts](../docs/superpowers/specs/2026-08-10-verified-external-facts.md) — Gemini, `mcp` 2.0, OAuth

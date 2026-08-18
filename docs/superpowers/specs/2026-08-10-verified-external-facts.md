@@ -1,6 +1,6 @@
 # Verified external facts — 2026-08-10
 
-Companion to the [Komora design spec](2026-08-10-komora-design.md). Everything here was
+Companion to the Komora design spec (kept outside this repo). Everything here was
 verified on 2026-08-10 against official documentation, live HTTP probes, or the actually
 installed package in `backend/.venv` — **not** from model memory.
 

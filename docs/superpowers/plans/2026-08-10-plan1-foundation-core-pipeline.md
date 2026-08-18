@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.12, uv, FastAPI, aiogram 3, official `mcp` SDK (streamable HTTP + OAuth 2.1/PKCE/DCR), `google-genai` (Gemini 3.1 Flash-Lite / 3.6 Flash), SQLAlchemy 2 + aiosqlite + Alembic, `cryptography` (AES-GCM), pytest + pytest-asyncio + respx, ruff + mypy, GitHub Actions.
 
-**Spec:** `docs/superpowers/specs/2026-08-10-komora-design.md` (committed). This plan implements milestones **M0 + M1** only.
+**Spec:** the Komora design spec (kept outside this repo). This plan implements milestones **M0 + M1** only.
 
 ---
 
@@ -380,7 +380,7 @@ class SilpoClient(Protocol):
   2. `list_tools` → dump every tool's JSON Schema to `tests/fixtures/mcp/tools.json`.
   3. Call `find_products_batch(["молоко", "хліб"])`, `get_my_shopping_cart`, `get_shopping_cart_by_id` → dump sanitized responses to fixtures.
   4. **A1 probe:** record current cart contents → add 1× cheap item → re-read (assert existing items untouched, item added) → add same item again (assert qty upserted to 2, not duplicated row) → remove it (`silpo_remove_cart_products`) → re-read (assert cart restored). Print PASS/FAIL per assertion.
-- [x] **Step 2: DONE 2026-08-11 — 17/17 passed, A1 CONFIRMED.** Adding a second product left the first in place (3 → 5 lines), pre-existing lines untouched, cart restored exactly. Full findings in [spec §3.1](../specs/2026-08-10-komora-design.md). The plan proceeds.
+- [x] **Step 2: DONE 2026-08-11 — 17/17 passed, A1 CONFIRMED.** Adding a second product left the first in place (3 → 5 lines), pre-existing lines untouched, cart restored exactly. Full findings in spec §3.1. The plan proceeds.
 
   **Carry these into Tasks 10 and 12** — each contradicts an assumption the plan was written on:
   - Re-adding a product **sets** quantity rather than incrementing it. Sync is therefore idempotent by construction (good for the retry path), but overlapping products do **not** sum — the confirm sheet must not promise addition for a product already in the cart.

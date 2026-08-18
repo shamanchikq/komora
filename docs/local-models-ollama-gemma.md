@@ -382,7 +382,7 @@ KOMORA_OLLAMA_BASE_URL=http://localhost:11434
 
 ## 8. Related
 
-- [Design spec §4.1](superpowers/specs/2026-08-10-komora-design.md) — provider abstraction and
+- Design spec §4.1 (kept outside this repo) — provider abstraction and
   the read/write split that makes any local path arguable.
 - [Verified external facts](superpowers/specs/2026-08-10-verified-external-facts.md) — Gemini,
   the `mcp` 2.0 SDK, Silpo's OAuth server.
