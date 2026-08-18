@@ -108,9 +108,25 @@ async def run() -> None:
     )
 
     dispatcher = build_dispatcher(services)
+    # ONE process, deliberately — not merely the default.
+    #
+    # `AuthorizationBridge` keeps pending OAuth flows in a dict in this process, and the
+    # redirect that resolves one arrives as a separate HTTP request. Under two workers
+    # that request lands in the wrong process perhaps half the time, `resolve()` finds no
+    # pending state, and account linking simply never completes — no error, just a user
+    # waiting on a callback nobody is holding. Long polling has the same shape: two
+    # pollers would fight over the same updates.
+    #
+    # Serving this app from `uvicorn --workers N`, gunicorn, or more than one container
+    # therefore breaks linking silently. Fix it by moving the bridge's state into shared
+    # storage before scaling out, not by adding workers and hoping.
     server = uvicorn.Server(
         uvicorn.Config(
-            create_app(bridge), host="0.0.0.0", port=settings.http_port, log_level="info"
+            create_app(bridge),
+            host="0.0.0.0",
+            port=settings.http_port,
+            log_level="info",
+            workers=1,
         )
     )
 

@@ -6,6 +6,19 @@ publicly reachable is Silpo's OAuth callback.
 There is no `/auth/silpo/start/{telegram_id}`. Linking is initiated by the bot, which
 already knows who is asking; an unauthenticated endpoint accepting a telegram_id would
 let anyone start a flow on anyone's behalf.
+
+**Single process, by design.** The callback resolves a flow held in this process's
+`AuthorizationBridge`. Run this app under more than one worker and roughly half the
+callbacks land where nothing is waiting — linking then fails silently rather than
+loudly. See the comment at the `uvicorn.Config` in `main.py`.
+
+**Anything added here authenticates on its own.** Every endpoint below is public by
+necessity: the callback is reached by Silpo's redirect, not by a user Komora can
+identify. The bot's guarantees do not extend here — in particular the ownership check
+in `bot/handlers.on_callback` (`basket.user_id != telegram_id`), which is the only
+thing stopping one user from acting on another's basket. A Mini App surface must verify
+Telegram `initData` (HMAC over the bot token) and re-apply that check per request; it
+cannot inherit either.
 """
 
 from fastapi import FastAPI, HTTPException, Query
