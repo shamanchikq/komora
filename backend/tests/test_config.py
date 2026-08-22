@@ -4,6 +4,8 @@ Every Settings(...) here passes `_env_file=None`. Without it a developer's real
 local .env leaks into the test run and defaults become unassertable.
 """
 
+import re
+
 import pytest
 from pydantic import ValidationError
 
@@ -112,3 +114,22 @@ def test_model_for_returns_parsed_provider_and_model(env: pytest.MonkeyPatch) ->
     s = Settings(_env_file=None)
     assert s.model_for("agent") == ("gemini", "gemini-3.5-flash-lite")
     assert s.model_for("verifier") == ("gemini", "gemini-3.1-flash-lite")
+
+
+class TestTheMiniAppLink:
+    """It cannot be derived — BotFather chooses the short name and no API reports it —
+    so the only two honest states are "configured correctly" and "absent"."""
+
+    def test_absent_by_default(self, env: pytest.MonkeyPatch) -> None:
+        assert Settings(_env_file=None).telegram_mini_app_url == ""
+
+    def test_a_t_me_link_is_kept_without_its_trailing_slash(self, env: pytest.MonkeyPatch) -> None:
+        env.setenv("KOMORA_TELEGRAM_MINI_APP_URL", "https://t.me/bot/komora/")
+        assert Settings(_env_file=None).telegram_mini_app_url == "https://t.me/bot/komora"
+
+    def test_anything_else_refuses_to_start(self, env: pytest.MonkeyPatch) -> None:
+        """A button pointing somewhere else is worse than no button: it opens in
+        Telegram and blames Komora."""
+        env.setenv("KOMORA_TELEGRAM_MINI_APP_URL", "https://komora.example/app")
+        with pytest.raises(ValidationError, match=re.escape("t.me")):
+            Settings(_env_file=None)

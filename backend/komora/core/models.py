@@ -10,7 +10,7 @@ import re
 from decimal import Decimal
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, StringConstraints, field_validator
+from pydantic import BaseModel, Field, StringConstraints, computed_field, field_validator
 
 ReasonKind = Literal["stated", "habit", "deal", "meal", "sub"]
 """Why a line is in the basket. Surfaced to the user, so it is never optional."""
@@ -153,10 +153,22 @@ class ResolvedLine(BaseModel):
     optional: bool = False
     unavailable: bool = False
     """Kept visible so the user sees what is missing, but excluded from totals and sync."""
+    weighted: bool = False
+    """Priced and ordered per kilogram: `unit_price` is then ₴/kg and `qty` is kg.
+    A search hit carries no size field at all, so this is also the only signal a
+    surface has for showing «0,15 кг × 999,00 ₴/кг» instead of a piece count."""
+    step: float | None = None
+    """The smallest orderable weight of a weighted good (0,1 cheese, 0,25 bacon).
+    An unqualified request resolves to exactly one of these — never one kilo."""
+    stock: float | None = None
+    """Silpo's remaining stock when the search returned it. The ceiling a quantity
+    control must respect; `None` means unknown, not unlimited."""
 
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def line_total(self) -> Decimal:
-        """Price for this line.
+        """Price for this line, and part of every serialisation (`model_dump`) so a
+        second surface never multiplies money itself.
 
         `qty` is a measurement (1.2 kg) and `unit_price` is money, so multiplying them
         directly is a TypeError. Converting through `str` keeps the float's binary

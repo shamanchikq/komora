@@ -180,7 +180,14 @@ def _line_from(
         substituted_from=substituted_from,
         optional=optional,
         unavailable=unavailable,
+        weighted=bool(product.get("weighted")),
+        step=_maybe_float(product.get("step")),
+        stock=_maybe_float(product.get("stock")),
     )
+
+
+def _maybe_float(value: Any) -> float | None:
+    return float(value) if value is not None else None
 
 
 async def _search(

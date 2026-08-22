@@ -17,6 +17,7 @@ Two rules are enforced here rather than trusted:
   client, so a user could otherwise sync somebody else's cart by guessing a number.
 """
 
+import math
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
@@ -31,6 +32,7 @@ from komora.core.alternatives import next_alternative
 from komora.core.llm.protocol import LLMClient, LLMUnavailable, Message
 from komora.core.mcp.errors import McpError, NotAuthenticated
 from komora.core.mcp.protocol import SilpoClient
+from komora.core.models import ResolvedCart
 from komora.core.passes.promos import apply_savings
 from komora.core.passes.removals import match_removals
 from komora.core.pipeline import (
@@ -42,6 +44,7 @@ from komora.core.pipeline import (
 )
 from komora.core.sync import cart_product_ids, execute_sync, preview_sync
 from komora.db.repo import BasketRepo, ConversationRepo, UserRepo
+from komora.db.tables import DraftBasketRow
 
 HISTORY_TURNS = 20
 
@@ -64,9 +67,14 @@ NO_CONTEXT = (
 )
 SILPO_DOWN = "Сільпо зараз не відповідає. Спробуйте, будь ласка, за кілька хвилин."
 LLM_DOWN = "Не можу зараз подумати над кошиком — модель недоступна. Спробуйте пізніше."
+UNEXPECTED = (
+    "Сталася неочікувана помилка. Спробуйте, будь ласка, ще раз — "
+    "якщо повториться, напишіть трохи пізніше."
+)
 STALE = "Ця чернетка вже неактуальна — напишіть, що потрібно, і зберемо нову."
 CANCELLED = "Скасовано. Чернетку прибрано, у кошику Сільпо нічого не змінилося."
 NOTHING_TO_SEND = "У цій чернетці нема чого надсилати."
+NOTHING_OPTIONAL = "У цій чернетці нема необовʼязкових позицій — прибирати нічого."
 BUDGET_HELP = (
     "Тижневий бюджет допомагає бачити, коли кошик виходить за межі.\n"
     "«/budget 1500» — встановити, «/budget 0» — прибрати."
@@ -237,23 +245,193 @@ async def on_callback(services: Services, telegram_id: int, data: str) -> Outcom
     except ValueError:
         return Spoke(STALE, toast="Невідома дія")
 
-    basket = await services.baskets.get(basket_id_int)
+    if action == "cancel":
+        return await on_cancel(services, telegram_id, basket_id_int)
+    if action == "sync":
+        return await on_preview(services, telegram_id, basket_id_int)
+    if action == "push":
+        return await on_push(services, telegram_id, basket_id_int)
+    if action == "swap":
+        return await on_swap(services, telegram_id, basket_id_int, position)
+    return Spoke(STALE, toast="Невідома дія")
+
+
+async def _own_draft(
+    services: Services, telegram_id: int, basket_id: int
+) -> DraftBasketRow | Spoke:
+    """The checks every basket-scoped request owes its sender.
+
+    A basket id arrives from the client on both surfaces — a Telegram callback and an
+    HTTP path are equally guessable — so ownership is re-derived here, never trusted.
+    The same gate refuses anything that is not an open draft: after a sync or a
+    discard, a replayed id must not act again.
+
+    Returns the row, or the `Spoke` refusal to show instead. The Mini App routes call
+    this too; there is no second copy of these rules to fall out of sync.
+    """
+    basket = await services.baskets.get(basket_id)
     if basket is None or basket.user_id != telegram_id:
         # Ids come from the client; a mismatch is either stale UI or somebody guessing.
         return Spoke(STALE, toast="Ця чернетка недоступна")
     if basket.status != "draft":
         return Spoke(STALE, toast="Чернетка вже неактуальна")
+    return basket
 
-    if action == "cancel":
-        await services.baskets.set_status(basket_id_int, "discarded")
-        return Spoke(CANCELLED)
-    if action == "sync":
-        return await _preview(services, telegram_id, basket_id_int)
-    if action == "push":
-        return await _push(services, telegram_id, basket_id_int)
-    if action == "swap":
-        return await _swap(services, telegram_id, basket_id_int, position, basket.title)
-    return Spoke(STALE, toast="Невідома дія")
+
+async def on_cancel(services: Services, telegram_id: int, basket_id: int) -> Outcome:
+    gate = await _own_draft(services, telegram_id, basket_id)
+    if isinstance(gate, Spoke):
+        return gate
+    await services.baskets.set_status(basket_id, "discarded")
+    return Spoke(CANCELLED)
+
+
+async def on_preview(services: Services, telegram_id: int, basket_id: int) -> Outcome:
+    gate = await _own_draft(services, telegram_id, basket_id)
+    if isinstance(gate, Spoke):
+        return gate
+    return await _preview(services, telegram_id, basket_id)
+
+
+async def on_push(services: Services, telegram_id: int, basket_id: int) -> Outcome:
+    gate = await _own_draft(services, telegram_id, basket_id)
+    if isinstance(gate, Spoke):
+        return gate
+    return await _push(services, telegram_id, basket_id)
+
+
+async def on_open_basket(services: Services, telegram_id: int, basket_id: int) -> Outcome:
+    """Show an existing draft without changing it — what a deep link points *at*.
+
+    Every other basket route acts; this one only looks, so it recomputes nothing and
+    writes nothing back. The gate is the same: a basket id inside a launch payload is
+    as guessable as one inside a callback, and `startapp=` is chosen by whoever opens
+    the link. Ownership is re-derived here exactly as it is for a tap.
+    """
+    gate = await _own_draft(services, telegram_id, basket_id)
+    if isinstance(gate, Spoke):
+        return gate
+
+    cart = await services.baskets.load_cart(basket_id)
+    if cart is None:
+        return Spoke(STALE)
+    return await _draft_ready(services, telegram_id, basket_id, gate.title, cart)
+
+
+async def on_swap(services: Services, telegram_id: int, basket_id: int, position: int) -> Outcome:
+    gate = await _own_draft(services, telegram_id, basket_id)
+    if isinstance(gate, Spoke):
+        return gate
+    return await _swap(services, telegram_id, basket_id, position, gate.title)
+
+
+async def on_set_qty(
+    services: Services, telegram_id: int, basket_id: int, position: int, qty: float
+) -> Outcome:
+    """The stepper's target. Quantities are rounded where `clamp_quantity` rounds,
+    capped at the line's known stock, and refused below any positive amount."""
+    gate = await _own_draft(services, telegram_id, basket_id)
+    if isinstance(gate, Spoke):
+        return gate
+
+    cart = await services.baskets.load_cart(basket_id)
+    if cart is None or not 0 <= position < len(cart.lines):
+        return Spoke(STALE, toast="Ця позиція недоступна")
+    line = cart.lines[position]
+    if line.unavailable:
+        return Spoke(STALE, toast="Цієї позиції немає в наявності")
+
+    # Not finite is not positive. A stepper cannot send `NaN`, but JSON has the
+    # literal and every guard here used to pass it through — `round` keeps it, it is
+    # not `<= 0`, and `min(nan, stock)` is `nan` — so the first thing that refused it
+    # was the NOT NULL column, as an unhandled 500.
+    wanted = round(qty, 3) if math.isfinite(qty) else 0.0
+    if wanted <= 0:
+        return Spoke(STALE, toast="Кількість має бути більша за нуль")
+    if line.stock is not None:
+        wanted = min(wanted, line.stock)
+
+    if not await services.baskets.set_qty(basket_id, position, wanted):
+        return Spoke(STALE, toast="Ця позиція недоступна")
+    return await _edited_outcome(services, telegram_id, basket_id, gate.title)
+
+
+async def on_remove_line(
+    services: Services, telegram_id: int, basket_id: int, position: int
+) -> Outcome:
+    """✕ on a row. Removal here only edits the *draft* — the Silpo cart is touched,
+    as ever, behind the preview-and-push two-step."""
+    gate = await _own_draft(services, telegram_id, basket_id)
+    if isinstance(gate, Spoke):
+        return gate
+
+    if not await services.baskets.drop_item(basket_id, position):
+        return Spoke(STALE, toast="Ця позиція недоступна")
+    return await _edited_outcome(services, telegram_id, basket_id, gate.title)
+
+
+async def on_trim_optional(services: Services, telegram_id: int, basket_id: int) -> Outcome:
+    """«Прибрати необовʼязкові» — every optional line still sendable, in one
+    confirmation-sized action rather than a row of separate taps."""
+    gate = await _own_draft(services, telegram_id, basket_id)
+    if isinstance(gate, Spoke):
+        return gate
+
+    cart = await services.baskets.load_cart(basket_id)
+    if cart is None:
+        return Spoke(STALE)
+    positions = [i for i, line in enumerate(cart.lines) if line.optional and not line.unavailable]
+    if not positions:
+        # Not «нема чого надсилати»: there may be plenty to send, just nothing marked
+        # optional. Saying the wrong one reads as a failure of the basket.
+        return Spoke(NOTHING_OPTIONAL)
+    for position in reversed(positions):
+        await services.baskets.drop_item(basket_id, position)
+    return await _edited_outcome(services, telegram_id, basket_id, gate.title)
+
+
+async def _edited_outcome(
+    services: Services,
+    telegram_id: int,
+    basket_id: int,
+    title: str,
+    toast: str | None = None,
+) -> Outcome:
+    """Reload after a line-level edit and rebuild what the edit invalidated.
+
+    A swap, a quantity or a removal all change the same things: the total and the
+    per-line savings notes. Only the per-line discounts are regenerated; coupon notes
+    belong to the account, not to which cheese is in the basket.
+    """
+    cart = await services.baskets.load_cart(basket_id)
+    if cart is None:
+        return Spoke(STALE)
+
+    total = sum((ln.line_total for ln in cart.lines if not ln.unavailable), Decimal("0"))
+    cart = cart.model_copy(update={"total": total})
+    cart = apply_savings(cart.model_copy(update={"savings_notes": []}))
+    await services.baskets.update_totals(basket_id, cart)
+    return await _draft_ready(services, telegram_id, basket_id, title, cart, toast)
+
+
+async def _draft_ready(
+    services: Services,
+    telegram_id: int,
+    basket_id: int,
+    title: str,
+    cart: ResolvedCart,
+    toast: str | None = None,
+) -> DraftReady:
+    """The one place a persisted basket becomes a `DraftReady`, so the budget cap can
+    never be attached on one path and forgotten on another."""
+    user = await services.users.get(telegram_id)
+    return DraftReady(
+        title=title,
+        cart=cart,
+        budget_cap=user.budget_weekly if user else None,
+        basket_id=basket_id,
+        toast=toast,
+    )
 
 
 async def _swap(
@@ -273,6 +451,8 @@ async def _swap(
             )
     except NotAuthenticated:
         return _needs_link(NEED_AUTH)
+    except CartContextMissing:
+        return Spoke(NO_CONTEXT)
     except McpError:
         return Spoke(SILPO_DOWN)
 
@@ -280,23 +460,11 @@ async def _swap(
         return Spoke(NO_ALTERNATIVE.format(name=line.name), toast="Інших варіантів нема")
 
     await services.baskets.replace_item(basket_id, position, alternative)
-    updated = await services.baskets.load_cart(basket_id)
-    if updated is None:
-        return Spoke(STALE)
-
-    total = sum((ln.line_total for ln in updated.lines if not ln.unavailable), Decimal("0"))
-    updated = updated.model_copy(update={"total": total})
-    # Only the per-line discounts are regenerated; coupon notes belong to the
-    # account, not to which cheese is in the basket.
-    updated = apply_savings(updated.model_copy(update={"savings_notes": []}))
-    await services.baskets.update_totals(basket_id, updated)
-
-    user = await services.users.get(telegram_id)
-    return DraftReady(
-        title=title,
-        cart=updated,
-        budget_cap=user.budget_weekly if user else None,
-        basket_id=basket_id,
+    return await _edited_outcome(
+        services,
+        telegram_id,
+        basket_id,
+        title,
         toast=f"Замінено на {alternative.name}"[:200],
     )
 
@@ -314,6 +482,8 @@ async def _preview(services: Services, telegram_id: int, basket_id: int) -> Outc
             preview = await preview_sync(cart, mcp, context)
     except NotAuthenticated:
         return _needs_link(NEED_AUTH)
+    except CartContextMissing:
+        return Spoke(NO_CONTEXT)
     except McpError:
         return Spoke(SILPO_DOWN)
 
@@ -330,6 +500,8 @@ async def _push(services: Services, telegram_id: int, basket_id: int) -> Outcome
             report = await execute_sync(cart, mcp)
     except NotAuthenticated:
         return _needs_link(NEED_AUTH)
+    except CartContextMissing:
+        return Spoke(NO_CONTEXT)
     except McpError:
         return Spoke(SILPO_DOWN)
 

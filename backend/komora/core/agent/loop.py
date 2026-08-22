@@ -1,6 +1,6 @@
 """The agent loop: the model decides, the pipeline acts.
 
-Three safeguards, each earned rather than speculative:
+Four safeguards, each earned rather than speculative:
 
 * **Write tools are unreachable.** Not merely absent from the declarations — a call to
   one raises, so a model that hallucinates a tool name cannot mutate a cart.
@@ -9,9 +9,14 @@ Three safeguards, each earned rather than speculative:
 * **A malformed basket is retried with the validation error.** Observed live:
   gemma4:12b returned `description: null` on every line under tool load. The retry
   hands the model the actual error rather than discarding the turn.
+* **A mistyped read call goes back to the model too.** Models guess parameter names —
+  every name assumed from a tool name in this project turned out wrong. A `TypeError`
+  from an unknown kwarg used to escape every catch layer and leave the user in
+  silence.
 """
 
 import json
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -30,6 +35,8 @@ from komora.core.models import DraftBasket, SearchContext
 
 MAX_STEPS = 8
 MAX_BASKET_RETRIES = 2
+
+log = logging.getLogger(__name__)
 
 _FALLBACK = "Не вдалося це опрацювати. Спробуйте сформулювати інакше."
 _TOO_LONG = "Це зайняло надто багато кроків. Спробуйте, будь ласка, конкретніше."
@@ -96,7 +103,16 @@ async def run_agent(
             return AgentOutcome(reply=response.text or _TOO_LONG)
         last_call = fingerprint
 
-        result = await _dispatch(mcp, call, context)
+        try:
+            result = await _dispatch(mcp, call, context)
+        except TypeError as exc:
+            # A guessed parameter name raises before Silpo is ever reached. The error
+            # goes back the way a failed basket validation does; an unchanged repeat
+            # stops at the identical-call guard above, so this stays bounded.
+            log.warning("%s rejected its arguments: %s", call.name, exc)
+            messages.append(_assistant_turn(call))
+            messages.append(_tool_result(call, f"ПОМИЛКА в аргументах {call.name}: {exc}."))
+            continue
         messages.append(_assistant_turn(call))
         messages.append(_tool_result(call, result))
 

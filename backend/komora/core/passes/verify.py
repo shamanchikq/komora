@@ -123,18 +123,26 @@ async def find_mismatches(
     return _mismatches(call.args, len(pairs))
 
 
-def _mismatches(args: dict[str, Any], count: int) -> dict[int, str]:
-    """Read the verdicts defensively — a malformed entry must not fail the basket."""
-    out: dict[int, str] = {}
+def _mismatches(args: dict[str, Any], count: int) -> dict[int, str] | None:
+    """Read the verdicts defensively.
+
+    Returns `None` when no list of verdicts could be read at all — the check ran but
+    its answer is unreadable, which is a degraded run and must reach the caller as
+    one, never as a clean bill of health. A malformed *entry* is different: one bad
+    line of many is skipped, and the verdicts around it stand.
+    """
     results = args.get("results")
     if isinstance(results, str):
         # Some providers hand back a JSON string where an array was declared.
         try:
             results = json.loads(results)
         except json.JSONDecodeError:
-            return out
+            return None
+    if not isinstance(results, list):
+        return None
 
-    for entry in results if isinstance(results, list) else []:
+    out: dict[int, str] = {}
+    for entry in results:
         if not isinstance(entry, dict) or str(entry.get("verdict", "")).lower() != "mismatch":
             continue
         try:

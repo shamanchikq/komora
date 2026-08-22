@@ -8,6 +8,8 @@ notes is worth having, a cart the user never sees is not. Each degradation leave
 warning behind, and `bot/render.py` shows it — no failure is swallowed.
 """
 
+import logging
+import time
 from decimal import Decimal
 from typing import Any
 
@@ -26,6 +28,8 @@ TIMESLOT_EXPIRED = "timeslot:expired"
 MAX_COUPON_DETAILS = 5
 """Each one is a separate call, and a note nobody reads is not worth a round trip."""
 
+log = logging.getLogger(__name__)
+
 
 class CartContextMissing(McpError):
     """The user's Silpo cart carries no branch or delivery slot.
@@ -34,6 +38,57 @@ class CartContextMissing(McpError):
     the user can choose them — in the Silpo app. Distinct from a transport failure so
     the bot can say something more useful than "спробуйте пізніше".
     """
+
+
+class SilpoCache:
+    """Per-process cache for data that does not change during a conversation.
+
+    The category tree is 1000 entries in one call. Fetching it per basket would be
+    wasteful; fetching it per process is free after the first turn.
+
+    Shared across users, on one pinned assumption: Silpo's taxonomy is store-wide —
+    the tree maps titles to slugs, not availability — so the tree fetched for
+    whichever user came first serves every other. Product *availability* differs per
+    branch and is never cached here. If that assumption ever breaks, key this by
+    `context.branch_id`.
+
+    A failed fetch used to be remembered forever: one failure at startup and category
+    narrowing — the mitigation for the wrong-aisle failure mode — silently stayed off
+    until restart. Now it retries after `CATEGORY_RETRY_AFTER`.
+    """
+
+    def __init__(self) -> None:
+        self.categories: CategoryIndex | None = None
+        self.categories_tried: float | None = None
+        """Monotonic timestamp of the last fetch attempt, successful or not."""
+
+
+CATEGORY_RETRY_AFTER = 600.0
+
+
+async def categories_for(
+    mcp: SilpoClient, context: SearchContext, cache: SilpoCache | None
+) -> CategoryIndex | None:
+    if cache is None:
+        return None
+    if cache.categories is not None:
+        return cache.categories
+
+    # Set before the await: a second caller arriving mid-fetch waits out the window
+    # instead of issuing its own request.
+    now = time.monotonic()
+    if cache.categories_tried is not None and now - cache.categories_tried < CATEGORY_RETRY_AFTER:
+        return None
+    cache.categories_tried = now
+    try:
+        cache.categories = CategoryIndex(await fetch_categories(mcp, context))
+    except Exception:
+        log.warning(
+            "category tree unavailable; narrowing stays off, retrying in %.0f s",
+            CATEGORY_RETRY_AFTER,
+        )
+        return None
+    return cache.categories
 
 
 def _cart_body(payload: Any) -> dict[str, Any]:
@@ -155,32 +210,6 @@ async def _coupons(mcp: SilpoClient) -> list[dict[str, Any]]:
             details = None
         enriched.append({**coupon, **details} if isinstance(details, dict) else coupon)
     return enriched
-
-
-class SilpoCache:
-    """Per-process cache for data that does not change during a conversation.
-
-    The category tree is 1000 entries in one call. Fetching it per basket would be
-    wasteful; fetching it per process is free after the first turn.
-    """
-
-    def __init__(self) -> None:
-        self.categories: CategoryIndex | None = None
-        self.categories_tried = False
-
-
-async def categories_for(
-    mcp: SilpoClient, context: SearchContext, cache: SilpoCache | None
-) -> CategoryIndex | None:
-    if cache is None:
-        return None
-    if not cache.categories_tried:
-        cache.categories_tried = True
-        try:
-            cache.categories = CategoryIndex(await fetch_categories(mcp, context))
-        except Exception:
-            cache.categories = None
-    return cache.categories
 
 
 async def _verified(

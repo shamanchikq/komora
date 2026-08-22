@@ -8,9 +8,13 @@ Two facts confirmed live (spec §3.1) shape all of it:
 """
 
 from decimal import Decimal
+from typing import Any
+
+import pytest
 
 from komora.core.models import CartRemoval, ResolvedCart, ResolvedLine
-from komora.core.sync import execute_sync, preview_sync
+from komora.core.pipeline import CartContextMissing
+from komora.core.sync import cart_product_ids, execute_sync, preview_sync
 from tests.fakes import COMPANY, CONTEXT, FakeSilpo, product
 
 
@@ -434,3 +438,28 @@ class TestRemovals:
         )
         await execute_sync(self._cart(removing="Ковбаски"), mcp)
         assert mcp.write_order == ["add", "remove"]
+
+
+class NoCartId(FakeSilpo):
+    """A cart read that succeeds without naming a cart."""
+
+    async def get_my_shopping_cart(self) -> dict[str, Any]:
+        return {"success": True}
+
+
+class TestMissingCartId:
+    """An id-less cart read used to fall through as "" and read an empty
+    nothing-cart: the preview reported the user's cart as holding nothing and a push
+    miscounted what it did. Now the same refusal `load_context` makes."""
+
+    async def test_preview_refuses(self) -> None:
+        with pytest.raises(CartContextMissing):
+            await preview_sync(cart(line("Кава", "164.90")), NoCartId())
+
+    async def test_execute_refuses(self) -> None:
+        with pytest.raises(CartContextMissing):
+            await execute_sync(cart(line("Кава", "164.90")), NoCartId())
+
+    async def test_draft_time_check_refuses(self) -> None:
+        with pytest.raises(CartContextMissing):
+            await cart_product_ids(NoCartId())

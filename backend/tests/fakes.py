@@ -5,9 +5,14 @@ Product dicts mirror `tests/fixtures/mcp/find_products_batch.json` exactly — `
 works against the live server.
 """
 
+import hashlib
+import hmac
+import json
+import time
 from collections.abc import Sequence
 from decimal import Decimal
 from typing import Any
+from urllib.parse import urlencode
 
 from komora.core.models import SearchContext
 
@@ -335,3 +340,43 @@ class FakeSilpo:
 
     async def list_tools(self) -> list[dict[str, Any]]:
         return []
+
+
+INITDATA_TOKEN = "42:komora-test-token"
+
+
+def sign_init_data(fields: dict[str, str], *, token: str = INITDATA_TOKEN) -> str:
+    """Sign an arbitrary field dict with Telegram's documented Mini App scheme.
+
+    Deliberately independent of `core.initdata`: the tests build payloads by hand so
+    the verifier is checked against the construction, not against itself.
+    """
+    payload = {key: value for key, value in fields.items() if key != "hash"}
+    check_string = "\n".join(f"{key}={value}" for key, value in sorted(payload.items()))
+    secret = hmac.new(b"WebAppData", token.encode(), hashlib.sha256).digest()
+    fields = {
+        **payload,
+        "hash": hmac.new(secret, check_string.encode(), hashlib.sha256).hexdigest(),
+    }
+    return urlencode(fields)
+
+
+def signed_init_data(
+    user_id: int,
+    *,
+    token: str = INITDATA_TOKEN,
+    age_s: int = 0,
+    omit_hash: bool = False,
+) -> str:
+    """A valid-looking initData for `user_id`, `age_s` seconds old."""
+    fields = {
+        "auth_date": str(int(time.time()) - age_s),
+        "query_id": "AAF",
+        "user": json.dumps({"id": user_id, "first_name": "Тест"}),
+    }
+    signed = sign_init_data(fields, token=token)
+    return (
+        "&".join(part for part in signed.split("&") if not part.startswith("hash="))
+        if omit_hash
+        else signed
+    )

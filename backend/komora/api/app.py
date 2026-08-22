@@ -1,30 +1,34 @@
-"""HTTP surface.
+"""HTTP surface: Silpo's OAuth callback plus the authenticated Mini App API.
 
-Deliberately minimal: the bot runs on long polling, so the only endpoint that must be
-publicly reachable is Silpo's OAuth callback.
-
-There is no `/auth/silpo/start/{telegram_id}`. Linking is initiated by the bot, which
-already knows who is asking; an unauthenticated endpoint accepting a telegram_id would
-let anyone start a flow on anyone's behalf.
+The callback is deliberately the only *public* endpoint — it is reached by Silpo's
+redirect, not by a user Komora can identify. Everything else hangs off Telegram
+identity: the bot knows its sender from the update; the Mini App proves itself with
+`initData` (HMAC over the bot token, `core.initdata`), and every basket-scoped route
+re-derives ownership through the same handlers the bot uses. There is no
+`/auth/silpo/start/{telegram_id}`: linking is initiated by the bot, which already
+knows who is asking.
 
 **Single process, by design.** The callback resolves a flow held in this process's
 `AuthorizationBridge`. Run this app under more than one worker and roughly half the
 callbacks land where nothing is waiting — linking then fails silently rather than
 loudly. See the comment at the `uvicorn.Config` in `main.py`.
-
-**Anything added here authenticates on its own.** Every endpoint below is public by
-necessity: the callback is reached by Silpo's redirect, not by a user Komora can
-identify. The bot's guarantees do not extend here — in particular the ownership check
-in `bot/handlers.on_callback` (`basket.user_id != telegram_id`), which is the only
-thing stopping one user from acting on another's basket. A Mini App surface must verify
-Telegram `initData` (HMAC over the bot token) and re-apply that check per request; it
-cannot inherit either.
 """
+
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 
+from komora.api.minapp import minapp_router
+from komora.bot.handlers import Services
 from komora.core.mcp.auth import AuthorizationBridge
+
+# app.py -> api/ -> komora/ -> backend/ -> repo root; the built Mini App lives at
+# repo root under web/dist (`npm run build` in web/). Missing in a bare checkout,
+# where only the API and the callback exist.
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_WEB_DIST = _REPO_ROOT / "web" / "dist"
 
 _PAGE = """<!doctype html>
 <html lang="uk"><head><meta charset="utf-8">
@@ -44,8 +48,17 @@ _PAGE = """<!doctype html>
 """
 
 
-def create_app(bridge: AuthorizationBridge) -> FastAPI:
+def create_app(
+    bridge: AuthorizationBridge,
+    services: Services | None = None,
+    bot_token: str | None = None,
+) -> FastAPI:
     app = FastAPI(title="Komora", docs_url=None, redoc_url=None)
+
+    if services is not None and bot_token is not None:
+        # Both or neither: a Mini App API without its identity check would be worse
+        # than none. `main.py` always passes both; the callback-only tests pass neither.
+        app.include_router(minapp_router(services, bot_token))
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
@@ -83,5 +96,10 @@ def create_app(bridge: AuthorizationBridge) -> FastAPI:
         return HTMLResponse(
             _PAGE.format(title="Готово", message="Поверніться в Telegram — Комора вже працює.")
         )
+
+    # Mounted LAST: routes above keep precedence, everything else is the Mini App.
+    # Same origin, so its fetches carry no CORS at all.
+    if _WEB_DIST.is_dir():
+        app.mount("/", StaticFiles(directory=_WEB_DIST, html=True), name="web")
 
     return app

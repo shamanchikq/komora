@@ -165,6 +165,9 @@ def _line(item: DraftItem) -> ResolvedLine:
         substituted_from=item.substituted_from,
         optional=item.optional,
         unavailable=item.unavailable,
+        weighted=item.weighted,
+        step=item.step,
+        stock=item.stock,
     )
 
 
@@ -224,6 +227,9 @@ class BasketRepo:
                         substituted_from=line.substituted_from,
                         optional=line.optional,
                         unavailable=line.unavailable,
+                        weighted=line.weighted,
+                        step=line.step,
+                        stock=line.stock,
                     )
                 )
             return basket.id
@@ -306,19 +312,12 @@ class BasketRepo:
         «⇄ N» button carries — not the `position` column. The two agree only while no
         row is `removed`, and matching on the column instead would edit the wrong
         product the moment one is: `load_cart` filters those out, so every line below a
-        removed one sits at a lower index than its stored position. Nothing sets that
-        flag today, which is exactly why the mismatch would be found by a user rather
-        than by a test. Selected the same way `load_cart` selects, so they cannot drift.
+        removed one sits at a lower index than its stored position. `drop_item` sets
+        that flag now, so the two disagree in ordinary use — `_visible_item` is the one
+        selection all three share, and `load_cart` filters identically.
         """
         async with self._sessions() as session, session.begin():
-            result = await session.execute(
-                select(DraftItem)
-                .where(DraftItem.basket_id == basket_id, DraftItem.removed.is_(False))
-                .order_by(DraftItem.position)
-                .offset(position)
-                .limit(1)
-            )
-            item = result.scalar_one_or_none()
+            item = await self._visible_item(session, basket_id, position)
             if item is None:
                 return False
             item.product_id = line.product_id
@@ -331,7 +330,47 @@ class BasketRepo:
             item.old_price = line.old_price
             item.unavailable = line.unavailable
             item.substituted_from = line.substituted_from
+            item.weighted = line.weighted
+            item.step = line.step
+            item.stock = line.stock
             return True
+
+    async def set_qty(self, basket_id: int, position: int, qty: float) -> bool:
+        """Set one line's quantity.
+
+        The same index space as `load_cart` — visible lines in stored order — so a
+        surface that just rendered the basket can address it safely.
+        """
+        async with self._sessions() as session, session.begin():
+            item = await self._visible_item(session, basket_id, position)
+            if item is None:
+                return False
+            item.qty = qty
+            return True
+
+    async def drop_item(self, basket_id: int, position: int) -> bool:
+        """Mark one line removed. The row stays (history keeps what was synced) but
+        `load_cart` filters it out from here on.
+        """
+        async with self._sessions() as session, session.begin():
+            item = await self._visible_item(session, basket_id, position)
+            if item is None:
+                return False
+            item.removed = True
+            return True
+
+    @staticmethod
+    async def _visible_item(
+        session: AsyncSession, basket_id: int, position: int
+    ) -> DraftItem | None:
+        result = await session.execute(
+            select(DraftItem)
+            .where(DraftItem.basket_id == basket_id, DraftItem.removed.is_(False))
+            .order_by(DraftItem.position)
+            .offset(position)
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
 
     async def update_totals(self, basket_id: int, cart: ResolvedCart) -> None:
         """Write back everything a swap recomputes.

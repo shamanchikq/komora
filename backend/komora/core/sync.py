@@ -14,9 +14,10 @@ actually in the cart afterwards is the only answer that matters to a user, and i
 a partial failure impossible to mistake for success.
 """
 
-from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
+
+from pydantic import BaseModel, Field
 
 from komora.core.mcp.protocol import SilpoClient
 from komora.core.models import (
@@ -27,28 +28,47 @@ from komora.core.models import (
     SyncReport,
 )
 from komora.core.passes.resolve import flatten_search
+from komora.core.pipeline import CartContextMissing
 
 DRIFT_TOLERANCE = Decimal("0.02")
 """Two percent. Below that, re-confirming costs the user more than it tells them."""
 
 
-@dataclass(frozen=True)
-class SyncPreview:
+async def _cart_id(mcp: SilpoClient) -> str:
+    """The live cart's id, refusing to continue without one.
+
+    Drafting cannot have happened without a usable cart, but carts are emptied and
+    sessions lapse between turns. A silent `""` here reads an empty nothing-cart and
+    reports it as the truth: the preview would say the cart holds nothing, a push
+    would miscount what it did. The same refusal `pipeline.load_context` makes, with
+    the same remedy — pick branch and slot in the Silpo app, then try again.
+    """
+    cart_id = str((await mcp.get_my_shopping_cart()).get("shoppingCartId") or "")
+    if not cart_id:
+        raise CartContextMissing("Silpo returned no shoppingCartId")
+    return cart_id
+
+
+class SyncPreview(BaseModel):
+    """A pydantic model, like `ResolvedCart` and `SyncReport`: the confirmation sheet
+    crosses a surface boundary, and both surfaces serialise it rather than re-deriving
+    it."""
+
     existing_count: int
     existing_total: Decimal
     adding_count: int
     adding_total: Decimal
-    overlapping: list[str] = field(default_factory=list)
+    overlapping: list[str] = Field(default_factory=list)
     """Products already in the Silpo cart. Their quantity will be **replaced**."""
-    now_unavailable: list[str] = field(default_factory=list)
+    now_unavailable: list[str] = Field(default_factory=list)
     """Drafted products Silpo no longer offers. They are still sent — the cart write
     is the authority — but the user is told before confirming."""
-    removing: list[str] = field(default_factory=list)
+    removing: list[str] = Field(default_factory=list)
     """Products this confirmation takes OUT of the cart, checked against a fresh read.
 
     Anything the user has already removed themselves is dropped here rather than
     promised and then silently not done."""
-    blocking_validations: list[str] = field(default_factory=list)
+    blocking_validations: list[str] = Field(default_factory=list)
     """Errors from `cart.calculation.validations[]` — these stop checkout."""
     drift: tuple[Decimal, Decimal] | None = None
     """(confirmed total, current total) when prices moved more than the tolerance."""
@@ -146,8 +166,7 @@ async def cart_product_ids(mcp: SilpoClient) -> set[str]:
     been gone for two turns, and then quietly did nothing, because only `preview_sync`
     ever tested it against the cart.
     """
-    cart_id = str((await mcp.get_my_shopping_cart()).get("shoppingCartId", ""))
-    payload = await mcp.get_shopping_cart_by_id(cart_id)
+    payload = await mcp.get_shopping_cart_by_id(await _cart_id(mcp))
     return {str(p.get("productId")) for p in _lines_of(payload)}
 
 
@@ -227,8 +246,7 @@ async def preview_sync(
     `context` enables the live re-pricing; without it the preview still works and
     simply reports no drift, which is what every caller did before it existed.
     """
-    cart_id = (await mcp.get_my_shopping_cart()).get("shoppingCartId", "")
-    current = await mcp.get_shopping_cart_by_id(str(cart_id))
+    current = await mcp.get_shopping_cart_by_id(await _cart_id(mcp))
 
     existing = _lines_of(current)
     existing_ids = {str(p.get("productId")) for p in existing}
@@ -277,7 +295,7 @@ async def execute_sync(cart: ResolvedCart, mcp: SilpoClient) -> SyncReport:
     if not sendable and not removals:
         return SyncReport(ok=True)
 
-    cart_id = str((await mcp.get_my_shopping_cart()).get("shoppingCartId", ""))
+    cart_id = await _cart_id(mcp)
     errors: dict[str, str] = {}
 
     if sendable:

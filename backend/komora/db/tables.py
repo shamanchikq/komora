@@ -117,3 +117,7 @@ class DraftItem(Base):
     optional: Mapped[bool] = mapped_column(default=False)
     unavailable: Mapped[bool] = mapped_column(default=False)
     removed: Mapped[bool] = mapped_column(default=False)
+    weighted: Mapped[bool] = mapped_column(default=False)
+    """Priced per kilogram; a Mini App needs this to show «0,15 кг × 999,00 ₴/кг»."""
+    step: Mapped[float | None] = mapped_column(default=None)
+    stock: Mapped[float | None] = mapped_column(default=None)

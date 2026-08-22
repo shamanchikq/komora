@@ -33,6 +33,16 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
 
     # --- Optional ---
+    telegram_mini_app_url: str = ""
+    """The Mini App's own `t.me` link, exactly as BotFather gives it — e.g.
+    `https://t.me/moya_komora_bot/komora`. Deep links are built by appending
+    `?startapp=…` to it.
+
+    Empty by default and empty is a working configuration: the bot simply renders no
+    «Відкрити в Коморі» button. It cannot be derived — the short name is chosen in
+    BotFather and the API does not report it — and a guessed link would open a 404
+    inside Telegram, which reads as Komora being broken."""
+
     silpo_mcp_url: str = "https://mcp.silpo.ua/mcp"
     database_url: str = "sqlite+aiosqlite:///./komora.db"
     http_port: int = 8000
@@ -55,6 +65,18 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://localhost:11434"
 
     model_config = SettingsConfigDict(env_file=".env", env_prefix="KOMORA_")
+
+    @field_validator("telegram_mini_app_url")
+    @classmethod
+    def _require_a_telegram_link(cls, value: str) -> str:
+        """Refuse anything that is not a `t.me` link rather than render a dead button."""
+        link = value.strip().rstrip("/")
+        if link and not link.startswith("https://t.me/"):
+            raise ValueError(
+                "KOMORA_TELEGRAM_MINI_APP_URL must be the Mini App's t.me link "
+                "(https://t.me/<bot>/<app>), or empty to render no deep link."
+            )
+        return link
 
     @field_validator("public_base_url", "ollama_base_url", "silpo_mcp_url")
     @classmethod

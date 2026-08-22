@@ -13,6 +13,7 @@ import re
 from collections.abc import Collection, Sequence
 from typing import Any, Final, Protocol
 
+from komora.core.agent.recap import SYNCED_TAG
 from komora.core.llm.protocol import ToolDecl
 from komora.core.mcp.protocol import SilpoClient
 
@@ -112,7 +113,7 @@ PROPOSE_BASKET_SCHEMA: Final[dict[str, Any]] = {
             "description": (
                 "Товари, які треба ПРИБРАТИ з кошика Сільпо, звичайними словами — "
                 "«ковбаски пепероні», «молоко». Заповнюй лише тоді, коли кошик уже "
-                "надіслано (в історії є «[надіслано в кошик Сільпо]») і користувач "
+                f"надіслано (в історії є «{SYNCED_TAG}») і користувач "
                 "просить щось замінити або прибрати. Комора прибере тільки те, що "
                 "додала сама, і тільки після підтвердження користувача. "
                 "Порожній масив, якщо прибирати нічого."

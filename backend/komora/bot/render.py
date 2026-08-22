@@ -371,12 +371,28 @@ PUSH_BUTTON = "Додати в кошик"
 CANCEL_BUTTON = "Скасувати"
 RETRY_BUTTON = "Спробувати ще раз"
 CHECKOUT_BUTTON = "Оформити на сайті"
+OPEN_APP_BUTTON = "Відкрити в Коморі"
 
 MAX_SWAP_BUTTONS = 8
 """Telegram tolerates more, but a keyboard longer than this reads as noise."""
 
 
-def draft_buttons(basket_id: int, cart: ResolvedCart) -> tuple[Button, ...]:
+def deep_link(mini_app_url: str, basket_id: int) -> str:
+    """A launch link that opens the Mini App on one basket.
+
+    Telegram hands `startapp`'s value to the app as `start_param`, inside the signed
+    `initData` — so the backend can read it, but it proves only what the *link* said,
+    never who may act on that basket. `handlers._own_draft` still decides that.
+
+    The payload is `<kind>_<value>` so a second target can be added without teaching
+    the parser a new shape. Telegram allows `A-Za-z0-9_-`, up to 64 characters.
+    """
+    return f"{mini_app_url}?startapp=basket_{basket_id}"
+
+
+def draft_buttons(
+    basket_id: int, cart: ResolvedCart, mini_app_url: str | None = None
+) -> tuple[Button, ...]:
     """Send/cancel, plus one «⇄ N» per line matching the numbers in the text.
 
     `i` counts every line, including unavailable ones, because `render_cart` numbers
@@ -388,20 +404,30 @@ def draft_buttons(basket_id: int, cart: ResolvedCart) -> tuple[Button, ...]:
         for i, line in enumerate(cart.lines[:MAX_SWAP_BUTTONS], start=1)
         if not line.unavailable
     )
+    # Only when the Mini App is actually deployed and named; see `config`.
+    open_app = (
+        (Button(OPEN_APP_BUTTON, url=deep_link(mini_app_url, basket_id)),) if mini_app_url else ()
+    )
     return (
         *swaps,
+        *open_app,
         Button(SEND_BUTTON, data=f"sync:{basket_id}"),
         Button(CANCEL_BUTTON, data=f"cancel:{basket_id}"),
     )
 
 
-def to_reply(outcome: Outcome) -> Reply:
-    """Say an outcome in Telegram. The only place a decision becomes markup."""
+def to_reply(outcome: Outcome, mini_app_url: str | None = None) -> Reply:
+    """Say an outcome in Telegram. The only place a decision becomes markup.
+
+    `mini_app_url` is the deployed Mini App's `t.me` link, or `None` where there is no
+    Mini App to open — the reply is complete either way, which is why it is a
+    rendering argument and not something the handlers know about.
+    """
     match outcome:
         case DraftReady():
             buttons: tuple[Button, ...] = ()
             if outcome.basket_id is not None:
-                buttons = draft_buttons(outcome.basket_id, outcome.cart)
+                buttons = draft_buttons(outcome.basket_id, outcome.cart, mini_app_url)
             return Reply(
                 render_cart(
                     outcome.cart,
