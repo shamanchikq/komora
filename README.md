@@ -2,7 +2,7 @@
 
 **A shopping agent that can suggest anything and change nothing.**
 
-Python 3.14 · 737 tests · `mypy --strict` clean · the whole suite runs with no network, no model and no bot
+Python 3.14 · 749 tests · `mypy --strict` clean · the whole suite runs with no network, no model and no bot
 
 You send a message — «купи молоко, хліб і щось до чаю» — and Komora comes back with a real
 cart: actual products, actual prices, in stock at your store, each line saying why it's
@@ -61,7 +61,7 @@ against fakes. The bot keeps that property: each handler is a plain function tha
 user and a message and returns a reply object, so the entire conversation is tested without
 ever constructing a Telegram object.
 
-The five passes run in one order and each is testable alone. Only *verify* asks a model, and
+The four passes run in one order and each is testable alone. Only *verify* asks a model, and
 its answer is advice — it can flag a line and suggest a better search, but code decides what
 happens next. A flagged line that can't be re-resolved is reported as "not found" rather
 than quietly kept, because a wrong product presented as the right one is the worst possible
@@ -99,7 +99,7 @@ decrypt rather than quietly granting someone else's access.
 Everything from `backend/`, using [uv](https://docs.astral.sh/uv/):
 
 ```bash
-uv run pytest              # 737 tests, no network needed
+uv run pytest              # 749 tests, no network needed
 uv run ruff check .
 uv run mypy komora
 ```

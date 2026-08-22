@@ -17,19 +17,27 @@ hand off with a checkout link.
 | [Dev environment gotchas](docs/dev-environment-gotchas.md) | Windows/PowerShell, Cyrillic, SDK surfaces that differ from their docs. |
 | [Local models](docs/local-models-ollama-gemma.md) | Anything touching Ollama/Gemma. |
 
-The design spec, the numbered plans and the design prompts live in `docs/superpowers/`,
-which this repo ignores — it is its own private repo,
-[shamanchikq/komora-docs](https://github.com/shamanchikq/komora-docs), so the public one
-stays code and reference docs. Read them from disk; commits there never touch this repo.
-**Plan 2 (Mini App) is current**, and its Task 0 is a refactor to do before any frontend
-exists.
+The design spec, the numbered plans and the design prompts live in `docs/superpowers/`
+(`specs/`, `plans/`, `design/`) — **a nested private repo**,
+[shamanchikq/komora-docs](https://github.com/shamanchikq/komora-docs), which this one
+gitignores so the public repo stays code and reference docs. Read them from disk. Two
+things follow from the nesting, and both bite silently:
+
+- **Editing one means committing inside that directory.** `git add -A` from the project
+  root cannot see those files — the parent ignores the whole path — so a plan updated
+  and "committed" from the root is not committed anywhere.
+- **Absent after a fresh clone.** It is a separate repo and does not come along with
+  this one: `git clone https://github.com/shamanchikq/komora-docs.git docs/superpowers`.
+
+**Plan 2 (Mini App) is current.** Its Task 0 — handlers returning domain objects — is
+done; the frontend work starts at Task 1.
 
 ## Commands
 
 All from `backend/`.
 
 ```bash
-uv run pytest              # 748 tests
+uv run pytest              # 749 tests
 uv run ruff check .        # lint
 uv run ruff format .       # format
 uv run mypy komora         # strict
