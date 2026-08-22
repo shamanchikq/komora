@@ -77,6 +77,25 @@ different Python. Prefer absolute `cd` at the start of each command.
 
 ---
 
+## Frontend toolchain (web/ exists now)
+
+**A standalone node tarball needs `node` on `PATH` before npm works.** There is no
+system node here; downloading the official tarball into `/tmp` and extracting it gives a
+working `node`, but calling its `npm` directly dies with `env: 'node': No such file or
+directory` — npm is a script whose shebang resolves through `env`. Export
+`PATH=<tarball-dir>/bin:$PATH` for every shell that runs npm.
+
+## FastAPI matches routes in registration order
+
+**A `Mount("/")` added before the routes shadows every one of them.** Mounting
+`StaticFiles(directory=dist)` at `/` at the top of `create_app` — so the Mini App could
+be served same-origin — returned 404 for `/healthz`, `/auth/silpo/callback` and `/api/*`
+alike: Starlette walks the route list top down, and the mount matches everything.
+Register mounts **after** all routes; then the API keeps precedence and the catch-all
+serves only what nothing else claimed.
+
+---
+
 ## Library surfaces that differ from their documentation
 
 Verified by introspecting installed packages, not by reading docs.

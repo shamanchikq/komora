@@ -29,21 +29,34 @@ things follow from the nesting, and both bite silently:
 - **Absent after a fresh clone.** It is a separate repo and does not come along with
   this one: `git clone https://github.com/shamanchikq/komora-docs.git docs/superpowers`.
 
-**Plan 2 (Mini App) is current.** Its Task 0 — handlers returning domain objects — is
-done; the frontend work starts at Task 1.
+**Plan 2 (Mini App) is code-complete.** Handlers return domain objects
+(`bot/outcomes.py`), the Mini App API authenticates `initData` and serves those
+outcomes as JSON (`core/initdata.py`, `api/minapp.py`), the draft-cart screen + sync
+sheet are built in `web/` (Vite+React, served same-origin from `web/dist`; build with
+`npm run build`), and deep links open the app on one basket —
+`?startapp=basket_<id>` → `GET /api/baskets/{id}`, behind the same ownership gate.
+**None of it has been verified on a device**; the checklist is in
+[backend/README.md](backend/README.md).
 
 ## Commands
 
 All from `backend/`.
 
 ```bash
-uv run pytest              # 749 tests
+uv run pytest              # 807 tests
 uv run ruff check .        # lint
 uv run ruff format .       # format
 uv run mypy komora         # strict
 uv run alembic upgrade head
-uv run python -m komora.main   # the bot + the OAuth callback, one process
+uv run python -m komora.main   # the bot + the OAuth callback + the Mini App API, one process
 ```
+
+The Mini App frontend builds separately, from `web/`: `npm ci && npm run build`
+(Node ≥ 22) produces `web/dist`, which the app serves at `/` when present. `npm test`
+runs Vitest over the pure modules — the money, quantity and warning-code formatting
+that both surfaces are supposed to agree on, plus what a failed call may claim and
+what a launch payload is allowed to mean. The page fetches nothing from an external
+origin: Telegram's SDK and both typefaces are served from Komora.
 
 Against the live server — the whole loop minus Telegram, read-only, no API key
 (`--push` writes to a real cart and then restores it):
@@ -81,9 +94,11 @@ komora/
 │   ├── pipeline.py  composes the passes; load_context reads branch + timeslot
 │   └── sync.py    preview + append to the real Silpo cart
 ├── db/            SQLAlchemy 2 + repos
-├── api/           FastAPI — only the OAuth callback
+├── api/           FastAPI — OAuth callback + the Mini App API (initData -> JSON outcomes)
+│                    + serves web/dist at / when built
 ├── bot/           handlers.py (Outcome objects) + render.py (to_reply)
 │                  + bot.py (the only aiogram file)
+├── web/           the Mini App frontend: Vite+React, talks to api/ with initData
 └── main.py        uvicorn + polling under one asyncio.gather
 ```
 
@@ -135,8 +150,10 @@ minute and per day, not tokens — so a longer prompt is free and a second round
 not. The verification pass covers a whole basket in one call; category hints ride along
 in the existing `propose_basket` call rather than costing their own.
 
-**A callback id is not proof of ownership.** Telegram callback data comes from the
-client, so every basket action checks `basket.user_id` against the sender.
+**A basket id is not proof of ownership.** It arrives from the client on both surfaces —
+a Telegram callback and an HTTP path are equally guessable — so every basket action goes
+through `handlers._own_draft`, which re-derives `basket.user_id` against the sender and
+refuses anything that is not an open draft.
 
 ## Conventions
 
@@ -171,10 +188,23 @@ reached users untranslated, a coupon note inlined three lines of bullets, a sync
 checkout link gave no reason, savings printed as `15.000 ₴`, and the model's stray
 `</div>` reached a basket title.
 
-Still unticked: the re-auth path. The free-form question path passes on Gemini.
+**Plan 2 (Mini App) is code-complete** — initData auth (`core/initdata.py`), the JSON
+API (`api/minapp.py`, every basket route behind `handlers._own_draft`), the draft-cart
+screen + sync sheet in `web/`, built to the approved design and its three correctness
+passes (in `docs/superpowers/design/`), and deep links onto a named basket. The Mini App
+has **not yet been verified on a live device** — the unchecked checklist lives in
+[backend/README.md](backend/README.md), and it needs BotFather setup that no test can
+stand in for.
+
+A review of the finished surface found four defects in the frontend, all in the part of
+it that restates a backend rule in TypeScript and none of which anything failed on:
+money truncated where `core/money.py` rounds half-up, ten kilos of a weighted good drawn
+as one, every `degraded:*` warning recursing into a blank screen, and a failed push
+reported as «нічого не сталося» when what landed was unknown. `web/` now has a Vitest
+suite over exactly those modules.
 
 Only the "stated basket" intent exists — meal plan, budget-week, deals and event
-handlers are Plan 4. The Mini App is Plan 2; habits are Plan 3.
+handlers are Plan 4; habits are Plan 3.
 
 Known gaps, all deliberate — the current list lives in
 [backend/README.md](backend/README.md#known-issues).

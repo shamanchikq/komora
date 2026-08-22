@@ -16,8 +16,12 @@ Plan 1 complete, manual checklist included. The full loop — message → draft 
 pipeline → preview → **append** — has been run against the live Silpo server, including
 the write: items landed in a real cart, the three items already there were untouched,
 and the cart was restored exactly. What it found along the way is in
-[Known issues](#known-issues). What remains is the Telegram surface itself, which needs
-a bot token (see [Manual checklist](#manual-checklist)).
+[Known issues](#known-issues).
+
+Plan 2 (the Mini App) is built through its third task: initData authentication, the JSON
+API over the same handlers, and the draft-cart screen + sync sheet in `web/` — served
+same-origin from `web/dist`. The Mini App has **not yet been verified on a live device**;
+that checklist lives at the bottom of [its section](#mini-app-api).
 
 **Before touching Silpo calls, read [docs/silpo-mcp-reference.md](../docs/silpo-mcp-reference.md)** —
 field names, call order and domain rules, all verified against the live server. Every
@@ -29,6 +33,7 @@ parameter name assumed from a tool name in this project turned out to be wrong.
 ## Requirements
 
 - Python 3.14 (pinned in `.python-version`; [uv](https://docs.astral.sh/uv/) installs it)
+- Node ≥ 22 — only to build the Mini App frontend (`web/`); the bot runs without it
 - A Telegram bot token from [@BotFather](https://t.me/BotFather)
 - A Gemini API key from [Google AI Studio](https://aistudio.google.com/)
 - A Silpo account (OAuth is per-user, at runtime)
@@ -78,6 +83,104 @@ In Telegram: `/start` links the Silpo account (the login URL arrives as a messag
 then plain text builds a basket — «купи молоко, хліб і щось до чаю». `/budget 1500`
 sets a weekly cap. Nothing reaches the Silpo cart until «Надіслати в Сільпо» and then
 «Додати в кошик» — two explicit taps, with a preview of the existing cart in between.
+
+## Mini App API
+
+Same process, same handlers, second face. Every route requires
+`Authorization: tma <initData>` — verified against the bot token (`core/initdata.py`,
+±24 h freshness on `auth_date`) — and every basket route goes through the ownership
+and confirmation gates the chat uses. Outcomes serialise as JSON with a `kind`
+discriminator (`draft` / `preview` / `synced` / `spoke`); money crosses as strings.
+
+| Route | Handler | Meaning |
+|---|---|---|
+| `POST /api/draft` `{text}` | `on_text` | a free-text turn → draft or prose |
+| `GET /api/baskets/{id}` | `on_open_basket` | where a deep link lands: show, change nothing |
+| `POST /api/baskets/{id}/preview` | `on_preview` | first tap: live cart read into a sheet |
+| `POST /api/baskets/{id}/push` | `on_push` | second tap: write to the real Silpo cart |
+| `POST /api/baskets/{id}/swap` `{position}` | `on_swap` | next alternative for a line |
+| `POST /api/baskets/{id}/lines/{p}/qty` `{qty}` | `on_set_qty` | stepper; stock-capped server-side |
+| `POST /api/baskets/{id}/lines/{p}/remove` | `on_remove_line` | ✕ — edits the draft, never the Silpo cart directly |
+| `POST /api/baskets/{id}/trim` | `on_trim_optional` | drop every optional line in one action |
+| `POST /api/baskets/{id}/cancel` | `on_cancel` | discard the draft |
+
+### Deep links
+
+`https://t.me/<bot>/<app>?startapp=basket_<id>` opens the Mini App on one basket.
+Telegram delivers the payload as `start_param` **inside the signed `initData`**, so the
+backend can read it — but it proves what the *link* said, never who may act on that
+basket, and `GET /api/baskets/{id}` goes through `handlers._own_draft` exactly as a tap
+in the chat does. The payload is `<kind>_<value>` so a nudge that wants to open a deal
+or a habit (Plan 3/4) adds a kind rather than a second parser.
+
+Set `KOMORA_TELEGRAM_MINI_APP_URL` to the link BotFather reports and every draft grows
+an «Відкрити в Коморі» button. Leave it empty and nothing renders — the bot is complete
+without the Mini App, and a guessed short name opens a 404 inside Telegram, which reads
+as Komora being broken.
+
+### Building the frontend
+
+The Mini App lives in `web/` (Vite + React + TS). Node ≥ 22:
+
+```bash
+cd web && npm ci && npm run build   # → web/dist
+cd web && npm test                  # Vitest over the pure modules
+```
+
+The suite is deliberately narrow: `format.ts`, `copy.ts`, `qtyLabel` and
+`describeError` are where the frontend restates a backend rule in TypeScript, so they
+are where the two surfaces can disagree without anything failing. Each case there was a
+real divergence — money truncated where `core/money.py` rounds half-up, ten kilos drawn
+as one, every `degraded:*` code recursing into a blank screen, and a failed *push*
+reported as if nothing had been sent when the request may well have landed.
+
+`create_app` serves `web/dist` at `/` when it exists — same origin as `/api`, so no
+CORS. Without it the process is API-plus-callback only. For live UI work,
+`npm run dev` in `web/` proxies `/api` to `localhost:8000`.
+
+### Manual checklist for the Mini App
+
+**Not yet run.** Everything below needs a physical device and a published Mini App;
+nothing in it can be verified from a test suite, which is exactly why it is written
+down rather than assumed.
+
+Prerequisites, all in BotFather:
+
+- [ ] `/newapp` on the bot → a **short name** and the Web App URL
+      (`KOMORA_PUBLIC_BASE_URL`, which serves `web/dist` at `/`).
+- [ ] `/setmenubutton` → the same URL, so the chat has a door.
+- [ ] `KOMORA_TELEGRAM_MINI_APP_URL` set to the `t.me/<bot>/<app>` link BotFather
+      reports, and the process restarted.
+
+The app itself:
+
+- [ ] Menu button opens the Mini App; initData accepted (no 401).
+- [ ] Compose → loading skeleton → draft with reasons on every line.
+- [ ] Stepper on a weighted good moves by its step and stops at stock.
+- [ ] ✕ removes a row from the draft; push then sends one line fewer.
+- [ ] ⇄ swaps and re-renders with the toast.
+- [ ] Preview sheet names removals in the inverted panel; confirm label says
+      «Прибрати N позицій» when nothing is added.
+- [ ] Push lands in the real Silpo cart; both checkout buttons work.
+- [ ] Onest and IBM Plex Mono render (they are served from `/assets`, not Google) and
+      the palette follows the client's light/dark setting.
+
+Deep links (Task 3):
+
+- [ ] The draft message in chat carries «Відкрити в Коморі»; tapping it opens the Mini
+      App **on that basket**, not on compose.
+- [ ] The same link after the basket was sent, or cancelled, says
+      «Чернетка вже неактуальна» rather than opening it.
+- [ ] A link edited to another id — `?startapp=basket_<someone else's>` — says
+      «Ця чернетка недоступна». This one is worth doing by hand: it is the only check
+      that the launch payload buys no authority, and the whole surface rests on it.
+- [ ] Launching from the menu button (no payload) still opens on compose.
+
+The error paths, which are the ones a happy-path run never touches:
+
+- [ ] Aeroplane mode on the sync sheet → the sheet stays, and the message says what
+      landed is unknown rather than claiming nothing was sent.
+- [ ] Re-confirming after that lands the cart exactly once.
 
 ## End-to-end against the live server
 
@@ -233,8 +336,10 @@ komora/
 │   ├── agent/ the agent loop; read-only tool access
 │   └── passes/ deterministic pipeline: resolve, promos, budget
 ├── db/        SQLAlchemy models and repositories
-├── api/       FastAPI — OAuth callback and health
-└── bot/       aiogram adapter — conversation and push
+├── api/       FastAPI — OAuth callback + Mini App API (initData → JSON outcomes)
+│                + serves ../web/dist at / when built
+├── bot/       aiogram adapter — conversation and push
+web/           the Mini App frontend (Vite + React; builds to web/dist)
 ```
 
 `core/` imports no web framework and receives its dependencies as protocols, so the whole
