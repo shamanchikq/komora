@@ -180,10 +180,28 @@ Then, in BotFather:
       reports, and the process restarted. **Empty today** — until it is set the bot
       renders no «Відкрити в Коморі» button and the deep-link section below cannot run.
 
-Worth doing first, because it needs no phone: open `KOMORA_PUBLIC_BASE_URL` in a
-desktop browser. Everything except identity works there — the fallback bar stands in
-for the native MainButton, and a call answers 401 with «Відкрийте Комору через
-Telegram», which is the app proving it reached the API.
+**Worth doing first, because it needs no phone, no tunnel and no BotFather.** Run the
+app, then mint a signed launch URL and open it in a desktop browser:
+
+```bash
+uv run python -m komora.main
+uv run python scripts/dev_miniapp_url.py --user <your telegram_id>
+```
+
+Telegram delivers `initData` in the URL **fragment**, so a payload signed with the bot
+token is indistinguishable from a real launch to everything downstream: the same HMAC
+check, the same ownership gate, real baskets in the real database against live Silpo.
+The script deliberately omits `tgWebAppPlatform`, which keeps `telegramHost()` false so
+the in-page fallback bar renders instead of a native MainButton no browser can draw.
+`--basket <id>` produces what a «Відкрити в Коморі» deep link would.
+
+Verified end to end this way on 2026-08-26: compose → a three-line draft off live Silpo
+with a reason on every line → ⇄ swapped a line and left the basket on screen. It does
+not replace the device checklist — the native MainButton, BackButton, the Telegram
+palette signal and `viewportStableHeight` are exactly what it cannot exercise — but
+everything below those is reachable without leaving the desk.
+
+The URL is a **credential**: it grants that user's access for 24 hours. Development only.
 
 The app itself:
 
