@@ -27,6 +27,16 @@ describe("describeError", () => {
     expect(describeError(new ApiError(0), "draft")).toContain("чернетки немає");
   });
 
+  it("does not blame Silpo for a request that never involved it", () => {
+    // A stepper tap, a ✕, a trim and a cancel all change Komora's own draft. Saying
+    // «Сільпо не відповідає» there names the wrong party — the same claim-more-than-
+    // the-data-supports the rest of this mapping exists to avoid, pointed outward.
+    expect(describeError(new ApiError(0), "edit")).toContain("Комора не відповідає");
+    expect(describeError(new ApiError(0), "edit")).toContain("Чернетка на місці");
+    // ⇄ really does search Silpo again, so that one keeps blaming Silpo.
+    expect(describeError(new ApiError(0), "read")).toContain("Сільпо не відповідає");
+  });
+
   it("distinguishes a server answer from no answer", () => {
     expect(describeError(new ApiError(500), "read")).toContain("на сервері");
     expect(describeError(new Error("network"), "read")).toContain("Щось пішло не так");

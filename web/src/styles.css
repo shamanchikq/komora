@@ -80,7 +80,9 @@ button {
   max-width: 520px;
   margin: 0 auto;
   min-height: var(--vsh);
-  padding: 14px 14px calc(96px + env(safe-area-inset-bottom));
+  /* Clears the fixed summary bar, plus «Скасувати», which flows in above it. 96px
+     left the button half under the bar on a short screen. */
+  padding: 14px 14px calc(140px + env(safe-area-inset-bottom));
 }
 
 .mono {
@@ -746,6 +748,27 @@ h1 {
 }
 
 .fallback-action:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Discarding a draft — never the primary action, so never the native MainButton, and
+   deliberately quieter than anything it sits under. */
+.discard {
+  display: block;
+  width: 100%;
+  margin-top: 14px;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--hint);
+  font: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.discard:disabled {
   opacity: 0.5;
   cursor: default;
 }

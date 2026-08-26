@@ -19,8 +19,14 @@ export class ApiError extends Error {
 
 /** What the failed call was trying to do. The honest sentence depends on it: a read
  * that fails changed nothing, and a **write** that fails changed we-do-not-know-what
- * — the request may have reached Silpo and died on the way back. */
-export type Attempt = "draft" | "open" | "read" | "write";
+ * — the request may have reached Silpo and died on the way back.
+ *
+ * `edit` is the one that never involves Silpo at all: a stepper tap, a ✕, a trim and a
+ * cancel are changes to Komora's own draft. Reporting «Сільпо не відповідає» for a
+ * request that was never going to reach Silpo names the wrong party — the same class
+ * of claim-more-than-the-data-supports the rest of this file exists to avoid. `read`
+ * stays for ⇄, which really does search Silpo again. */
+export type Attempt = "draft" | "open" | "read" | "edit" | "write";
 
 const NEEDS_TELEGRAM =
   "Відкрийте Комору через Telegram — інакше вона не може довести, що це ви.";
@@ -30,6 +36,7 @@ const WRITE_UNKNOWN =
 const NO_DRAFT =
   "Сільпо не відповідає — чернетки немає. Це не через ваш запит; спробуйте за хвилину.";
 const NO_ANSWER = "Сільпо не відповідає. Чернетка на місці — спробуйте за хвилину.";
+const NO_REACH = "Комора не відповідає. Чернетка на місці — спробуйте за хвилину.";
 const NO_OPEN = "Не вдалося відкрити цю чернетку. Спробуйте, будь ласка, ще раз.";
 const SERVER = "Сталася помилка на сервері. Спробуйте, будь ласка, за кілька хвилин.";
 const UNKNOWN = "Щось пішло не так. Спробуйте, будь ласка, ще раз.";
@@ -45,7 +52,13 @@ export function describeError(error: unknown, attempt: Attempt): string {
   // Silpo for the failure the way the other two can.
   if (attempt === "open") return NO_OPEN;
   if (!(error instanceof ApiError)) return UNKNOWN;
-  if (error.status === 0) return attempt === "draft" ? NO_DRAFT : NO_ANSWER;
+  if (error.status === 0) {
+    if (attempt === "draft") return NO_DRAFT;
+    // Nothing left the phone, so nothing changed either way — but say whose silence
+    // it was. A draft edit is Komora's alone.
+    if (attempt === "edit") return NO_REACH;
+    return NO_ANSWER;
+  }
   return SERVER;
 }
 

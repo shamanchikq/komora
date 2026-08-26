@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import type { Cart, Line } from "../types";
 import { items, pl, quantityText, uiInt, uah } from "../format";
-import { isNotice, noticeFirm, noticeText, warningText } from "../copy";
+import { CANCEL_BUTTON, isNotice, noticeFirm, noticeText, warningText } from "../copy";
 
 /** The draft review — the approved design's row anatomy: tile chip, struck original
  * above a substitution, meta line that guards the empty `unit` (a search hit carries
@@ -125,6 +125,7 @@ export function DraftScreen({
   onSetQty,
   onRemove,
   onTrim,
+  onCancel,
 }: {
   title: string;
   cart: Cart;
@@ -134,6 +135,8 @@ export function DraftScreen({
   onSetQty: (position: number, qty: number) => void;
   onRemove: (position: number) => void;
   onTrim: () => void;
+  /** `null` for a draft that was never persisted — there is nothing to discard. */
+  onCancel: (() => void) | null;
 }) {
   const sendable = cart.lines.filter((line) => !line.unavailable);
   const excludedCount = cart.lines.length - sendable.length;
@@ -258,6 +261,12 @@ export function DraftScreen({
         Чернетка живе в Коморі, поки ви не підтвердите — у кошику Сільпо нічого не
         зміниться.
       </footer>
+
+      {onCancel !== null && (
+        <button className="discard" disabled={busy} onClick={onCancel}>
+          {CANCEL_BUTTON}
+        </button>
+      )}
 
       <div className="summary">
         <div>

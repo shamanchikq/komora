@@ -6,6 +6,8 @@ import { uah } from "./format";
 
 export const SEND_BUTTON = "Надіслати в Сільпо";
 export const PUSH_BUTTON = "Додати в кошик";
+export const CANCEL_BUTTON = "Скасувати";
+export const NOTHING_LEFT = "Надсилати вже нема чого";
 export const CHECKOUT_BUTTON = "Оформити на сайті";
 export const APP_BUTTON = "Оформити в застосунку";
 export const NO_LINK = "Оформити замовлення — у застосунку або на сайті Сільпо.";

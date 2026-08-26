@@ -1,17 +1,33 @@
 import type { Preview } from "../types";
 import { items, itemsAcc, uah } from "../format";
-import { MIXED_TOTALS, REMOVAL_NOTE, validationText } from "../copy";
+import {
+  CANCEL_BUTTON,
+  MIXED_TOTALS,
+  NOTHING_LEFT,
+  REMOVAL_NOTE,
+  validationText,
+} from "../copy";
 
 /** The confirmation sheet, per the approved design: a title that names every kind of
  * change («додати · оновити · прибрати»), two labelled figures that are never summed,
  * the green reassurance only when it is true, and — when something is being removed —
  * an inverted panel that is deliberately the heaviest thing on screen. */
 
+/** Whether this sheet still asks for anything. Both figures are read back from the
+ * live cart, so a draft can arrive here with nothing left to do — the user emptied
+ * their Silpo cart, or removed by hand the very product this basket was going to
+ * remove. `handlers._preview` refuses that case before it reaches a screen; this
+ * guard keeps a title from ever counting to zero if one slips through. */
+export function hasChanges(preview: Preview): boolean {
+  return preview.adding_count > 0 || preview.removing.length > 0;
+}
+
 function sheetTitle(preview: Preview): string {
   const addN = preview.adding_count - preview.overlapping.length;
   const ovN = preview.overlapping.length;
   const rN = preview.removing.length;
 
+  if (!hasChanges(preview)) return NOTHING_LEFT;
   if (ovN === 0 && rN === 0) return `Додати ${itemsAcc(addN)} у кошик Сільпо?`;
   if (addN === 0 && ovN === 0 && rN > 0) return `Прибрати ${itemsAcc(rN)} з кошика Сільпо?`;
 
@@ -38,7 +54,15 @@ export function confirmLabel(preview: Preview): string {
   return parts.join(" · ");
 }
 
-export function PreviewSheet({ preview }: { preview: Preview }) {
+export function PreviewSheet({
+  preview,
+  busy,
+  onCancel,
+}: {
+  preview: Preview;
+  busy: boolean;
+  onCancel: () => void;
+}) {
   const addN = preview.adding_count - preview.overlapping.length;
   const rN = preview.removing.length;
   const validations = [...new Set(preview.blocking_validations)];
@@ -148,6 +172,13 @@ export function PreviewSheet({ preview }: { preview: Preview }) {
       {addN + preview.overlapping.length === 0 && rN > 0 && (
         <footer className="trust">Додавати нічого — це кошик, який лише прибирає.</footer>
       )}
+
+      {/* The second half of the two-tap shape. Until this screen the draft is still
+          Komora's alone, so backing out of it costs nothing and must be offered —
+          the chat puts «Скасувати» beside «Додати в кошик» for the same reason. */}
+      <button className="discard" disabled={busy} onClick={onCancel}>
+        {CANCEL_BUTTON}
+      </button>
     </section>
   );
 }

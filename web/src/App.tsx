@@ -16,10 +16,15 @@ import type {
 } from "./types";
 import { ComposeScreen } from "./screens/ComposeScreen";
 import { DraftScreen } from "./screens/DraftScreen";
-import { PreviewSheet, confirmLabel } from "./screens/PreviewSheet";
+import { PreviewSheet, confirmLabel, hasChanges } from "./screens/PreviewSheet";
 import { SyncedScreen } from "./screens/SyncedScreen";
 import { SpokeView } from "./screens/SpokeView";
 import { SEND_BUTTON } from "./copy";
+
+interface Banner {
+  text: string;
+  firm: boolean;
+}
 
 type View =
   | { name: "compose" }
@@ -48,7 +53,9 @@ export default function App() {
   );
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // One banner, two tones. A failure is firm; a spoken ANSWER to an edit («інших
+  // варіантів нема») is quiet — it is news, not an alarm.
+  const [banner, setBanner] = useState<Banner | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [lastDraft, setLastDraft] = useState<DraftOutcome | null>(null);
 
@@ -74,6 +81,11 @@ export default function App() {
           setView({ name: "synced", outcome });
           break;
         case "spoke":
+          // The toast carries the *specific* refusal — «Ця чернетка недоступна» vs
+          // «Чернетка вже неактуальна» — while `text` is the one sentence both share.
+          // Dropping it made a foreign basket and a spent one read identically, which
+          // is the one thing the deep-link checklist asks to be able to tell apart.
+          flash(outcome.toast);
           setView({ name: "spoke", text: outcome.text, needsLink: outcome.needs_link });
           break;
       }
@@ -85,14 +97,14 @@ export default function App() {
     async (action: () => Promise<Outcome>, attempt: Attempt) => {
       if (busy) return;
       setBusy(true);
-      setError(null);
+      setBanner(null);
       // Composing is the one action that replaces the screen with a loading shell;
       // every other one is launched from a screen that is still true while it runs.
       if (FROM_NOTHING.includes(attempt)) setView({ name: "loading" });
       try {
         route(await action());
       } catch (exc) {
-        setError(describeError(exc, attempt));
+        setBanner({ text: describeError(exc, attempt), firm: true });
         // …which is why only the shell falls back to compose. A failed preview leaves
         // the draft exactly as it was; a failed push leaves the sync sheet describing
         // the same write. Dropping to compose threw away the basket the user was
@@ -108,23 +120,35 @@ export default function App() {
 
   // Line-level edits keep the draft on screen: the response IS the updated draft.
   const edit = useCallback(
-    async (action: () => Promise<Outcome>) => {
+    async (action: () => Promise<Outcome>, attempt: Attempt = "edit") => {
       if (busy) return;
       setBusy(true);
-      setError(null);
+      setBanner(null);
       try {
         const outcome = await action();
         if (outcome.kind === "draft") {
           setView({ name: "draft", outcome });
           setLastDraft(outcome.basket_id === null ? lastDraft : outcome);
           flash(outcome.toast);
+        } else if (outcome.kind === "spoke" && !outcome.needs_link) {
+          // Prose here is an ANSWER to the edit, not a destination. «Інших варіантів
+          // для X Сільпо не пропонує» is the ordinary reply to ⇄ on a line Silpo has
+          // one candidate for, and navigating to a full-screen sentence threw the
+          // basket off the screen — with none of the scrollback that makes the same
+          // outcome harmless in the chat. The backend says so itself by attaching a
+          // toast: it expected the draft to still be there underneath.
+          flash(outcome.toast);
+          setBanner({ text: outcome.text, firm: false });
         } else {
+          // `needs_link` is the exception: the Silpo session lapsed, so the draft the
+          // user is looking at cannot be acted on until they re-link in the chat.
+          // That is a destination.
           route(outcome);
         }
       } catch (exc) {
         // A line edit never leaves its screen, failed or not — the same rule `run`
         // now follows for everything but composing.
-        setError(describeError(exc, "read"));
+        setBanner({ text: describeError(exc, attempt), firm: true });
       } finally {
         setBusy(false);
       }
@@ -132,16 +156,25 @@ export default function App() {
     [busy, flash, lastDraft, route],
   );
 
+  /** Discard the draft. The bot puts «Скасувати» beside «Надіслати» on both the draft
+   * and the confirmation keyboard; `api.cancel` existed here from the start and
+   * nothing called it, so the Mini App could reach a draft and never be rid of one.
+   * Routed through `run`, not `edit`: a discarded basket really is a destination. */
+  const cancel = useCallback(
+    (basketId: number) => void run(() => api.cancel(basketId), "edit"),
+    [run],
+  );
+
   const goCompose = useCallback(() => {
     setText("");
-    setError(null);
+    setBanner(null);
     setView({ name: "compose" });
   }, []);
 
   const goBack = useCallback(() => {
     // Leaving the screen leaves its failure behind: an error that outlives the thing
     // it was about is just an alarming decoration.
-    setError(null);
+    setBanner(null);
     if (view.name === "preview" && lastDraft !== null) {
       setView({ name: "draft", outcome: lastDraft });
     } else if (view.name !== "compose" && view.name !== "loading") {
@@ -164,6 +197,11 @@ export default function App() {
         return () =>
           void run(() => api.preview(view.outcome.basket_id as number), "read");
       case "preview":
+        // Everything the draft named can vanish between the two taps — the user
+        // empties the cart in the Silpo app, or removes the very product this basket
+        // was going to remove. `_preview` refuses that case now, so this is the belt
+        // to its braces: never offer a button whose own label counts to zero.
+        if (!hasChanges(view.outcome.preview)) return null;
         return () => void run(() => api.push(view.outcome.basket_id), "write");
       case "synced":
         if (view.outcome.report.ok) return null;
@@ -181,7 +219,7 @@ export default function App() {
       case "draft":
         return view.outcome.basket_id === null ? null : SEND_BUTTON;
       case "preview":
-        return confirmLabel(view.outcome.preview);
+        return hasChanges(view.outcome.preview) ? confirmLabel(view.outcome.preview) : null;
       case "synced":
         return view.outcome.report.ok ? null : RETRY_BUTTON;
     }
@@ -199,10 +237,10 @@ export default function App() {
 
   // The banner sits at the top of the screen and the control that failed is usually
   // at the bottom of a long one. An error nobody scrolls to is the silence it replaced.
-  const errorRef = useRef<HTMLDivElement>(null);
+  const bannerRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (error !== null) errorRef.current?.scrollIntoView({ block: "nearest" });
-  }, [error]);
+    if (banner !== null) bannerRef.current?.scrollIntoView({ block: "nearest" });
+  }, [banner]);
 
   const actionRef = useRef<(() => void) | null>(null);
   actionRef.current = primaryAction();
@@ -239,8 +277,6 @@ export default function App() {
     mb.setText(label);
     mb.enable();
     mb.show();
-    // The native button overlays the page bottom; leave it room.
-    document.documentElement.style.setProperty("--reserve", "64px");
   });
 
   useEffect(() => {
@@ -274,9 +310,13 @@ export default function App() {
           {notice}
         </div>
       )}
-      {error !== null && (
-        <div className="notice firm" role="alert" ref={errorRef}>
-          {error}
+      {banner !== null && (
+        <div
+          className={banner.firm ? "notice firm" : "notice quiet"}
+          role={banner.firm ? "alert" : "status"}
+          ref={bannerRef}
+        >
+          {banner.text}
         </div>
       )}
 
@@ -317,7 +357,7 @@ export default function App() {
           busy={busy}
           onSwap={(position) =>
             view.outcome.basket_id !== null &&
-            void edit(() => api.swap(view.outcome.basket_id as number, position))
+            void edit(() => api.swap(view.outcome.basket_id as number, position), "read")
           }
           onSetQty={(position, qty) =>
             view.outcome.basket_id !== null &&
@@ -331,10 +371,21 @@ export default function App() {
             view.outcome.basket_id !== null &&
             void edit(() => api.trimOptional(view.outcome.basket_id as number))
           }
+          onCancel={
+            view.outcome.basket_id === null
+              ? null
+              : () => cancel(view.outcome.basket_id as number)
+          }
         />
       )}
 
-      {view.name === "preview" && <PreviewSheet preview={view.outcome.preview} />}
+      {view.name === "preview" && (
+        <PreviewSheet
+          preview={view.outcome.preview}
+          busy={busy}
+          onCancel={() => cancel(view.outcome.basket_id)}
+        />
+      )}
       {view.name === "synced" && <SyncedScreen report={view.outcome.report} />}
 
       {view.name === "spoke" && (
