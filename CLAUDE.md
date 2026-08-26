@@ -43,7 +43,7 @@ sheet are built in `web/` (Vite+React, served same-origin from `web/dist`; build
 All from `backend/`.
 
 ```bash
-uv run pytest              # 807 tests
+uv run pytest              # 824 tests
 uv run ruff check .        # lint
 uv run ruff format .       # format
 uv run mypy komora         # strict
@@ -66,7 +66,9 @@ uv run python scripts/smoke_e2e.py
 ```
 
 CI runs all of the above plus `alembic check`, which fails if `tables.py` changed
-without a migration.
+without a migration — and, in a second job, `npm ci && npm run build && npm test` in
+`web/`. The frontend was outside CI entirely until 2026-08-26, so a broken Mini App
+merged green while the backend job stayed green beside it.
 
 Re-capture Silpo fixtures (read-only; `--probe-cart` also verifies cart append):
 
@@ -202,6 +204,20 @@ money truncated where `core/money.py` rounds half-up, ten kilos of a weighted go
 as one, every `degraded:*` warning recursing into a blank screen, and a failed push
 reported as «нічого не сталося» when what landed was unknown. `web/` now has a Vitest
 suite over exactly those modules.
+
+A second review, 2026-08-26, found twelve more — nothing failing, everything green.
+Four mattered: an ordinary ⇄ on a line with no alternatives replaced the whole draft
+screen with a sentence (the chat has scrollback, a Mini App does not); `Spoke.toast` was
+serialised and then dropped, so a foreign basket and a spent one read identically
+despite the backend distinguishing them; `POST …/lines/-1/remove` deleted the *first*
+line and answered 200, because `remove` was the one position route without a bounds
+check and SQLite reads a negative OFFSET as zero; and the `over_budget` warning was
+stored rather than derived, so it outlived «Прибрати необовʼязкові» — the control that
+exists to end it. The rest: no «Скасувати» anywhere in the Mini App (`api.cancel` was
+dead code), `on_set_qty` snapping to no grid despite a docstring saying it did, an
+unbounded `/api/draft` body, a confirmation sheet able to ask for «Додати 0 позицій»,
+`on_trim_optional` with no positive test, a `--reserve` variable nothing read, and a
+failed draft edit blaming Silpo for a request that never reached it.
 
 Only the "stated basket" intent exists — meal plan, budget-week, deals and event
 handlers are Plan 4; habits are Plan 3.

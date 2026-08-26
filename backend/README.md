@@ -99,7 +99,7 @@ discriminator (`draft` / `preview` / `synced` / `spoke`); money crosses as strin
 | `POST /api/baskets/{id}/preview` | `on_preview` | first tap: live cart read into a sheet |
 | `POST /api/baskets/{id}/push` | `on_push` | second tap: write to the real Silpo cart |
 | `POST /api/baskets/{id}/swap` `{position}` | `on_swap` | next alternative for a line |
-| `POST /api/baskets/{id}/lines/{p}/qty` `{qty}` | `on_set_qty` | stepper; stock-capped server-side |
+| `POST /api/baskets/{id}/lines/{p}/qty` `{qty}` | `on_set_qty` | stepper; snapped to the product's step and capped at stock, server-side |
 | `POST /api/baskets/{id}/lines/{p}/remove` | `on_remove_line` | ✕ — edits the draft, never the Silpo cart directly |
 | `POST /api/baskets/{id}/trim` | `on_trim_optional` | drop every optional line in one action |
 | `POST /api/baskets/{id}/cancel` | `on_cancel` | discard the draft |
@@ -127,12 +127,17 @@ cd web && npm ci && npm run build   # → web/dist
 cd web && npm test                  # Vitest over the pure modules
 ```
 
-The suite is deliberately narrow: `format.ts`, `copy.ts`, `qtyLabel` and
+The suite is deliberately narrow: `format.ts`, `copy.ts`, `qtyLabel`, `hasChanges` and
 `describeError` are where the frontend restates a backend rule in TypeScript, so they
 are where the two surfaces can disagree without anything failing. Each case there was a
 real divergence — money truncated where `core/money.py` rounds half-up, ten kilos drawn
-as one, every `degraded:*` code recursing into a blank screen, and a failed *push*
-reported as if nothing had been sent when the request may well have landed.
+as one, every `degraded:*` code recursing into a blank screen, a failed *push* reported
+as if nothing had been sent when the request may well have landed, a confirmation label
+counting to zero, and a failed *draft edit* blaming Silpo for a request that never went
+near it.
+
+CI builds and tests `web/` in its own job. Until 2026-08-26 it did neither, and the
+backend job going green said nothing at all about the half of Plan 2 that users see.
 
 `create_app` serves `web/dist` at `/` when it exists — same origin as `/api`, so no
 CORS. Without it the process is API-plus-callback only. For live UI work,
@@ -159,18 +164,31 @@ The app itself:
 - [ ] Stepper on a weighted good moves by its step and stops at stock.
 - [ ] ✕ removes a row from the draft; push then sends one line fewer.
 - [ ] ⇄ swaps and re-renders with the toast.
+- [ ] ⇄ on a line Silpo has no alternative for keeps the basket on screen and says so
+      in a quiet banner — it used to navigate away from the draft entirely.
+- [ ] «Скасувати» on the draft and on the sync sheet discards it; the Silpo cart is
+      untouched.
 - [ ] Preview sheet names removals in the inverted panel; confirm label says
       «Прибрати N позицій» when nothing is added.
 - [ ] Push lands in the real Silpo cart; both checkout buttons work.
 - [ ] Onest and IBM Plex Mono render (they are served from `/assets`, not Google) and
       the palette follows the client's light/dark setting.
+- [ ] **Nothing hides under the native MainButton.** The sticky summary bar is
+      `position: fixed` against the *viewport*, while the page sizes itself against
+      `viewportStableHeight` — whether Telegram shrinks the webview for the button or
+      draws over it decides whether the two agree, and no test can answer that. A
+      `--reserve` variable was written for this and read by nothing; it was removed
+      rather than left looking like a solution. If the summary is obscured, the fix is
+      to offset `.summary` by the button's height, not to pad `.app`.
 
 Deep links (Task 3):
 
 - [ ] The draft message in chat carries «Відкрити в Коморі»; tapping it opens the Mini
       App **on that basket**, not on compose.
 - [ ] The same link after the basket was sent, or cancelled, says
-      «Чернетка вже неактуальна» rather than opening it.
+      «Чернетка вже неактуальна» rather than opening it. The two refusals share one
+      sentence and differ only in the toast, which the app dropped until 2026-08-26 —
+      so check the toast, not just the page.
 - [ ] A link edited to another id — `?startapp=basket_<someone else's>` — says
       «Ця чернетка недоступна». This one is worth doing by hand: it is the only check
       that the launch payload buys no authority, and the whole surface rests on it.
