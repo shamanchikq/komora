@@ -7,7 +7,7 @@ import type { ReactNode } from "react";
 import { api, describeError } from "./api";
 import type { Attempt } from "./api";
 import { launchTarget } from "./deeplink";
-import { webApp } from "./telegram";
+import { telegramHost } from "./telegram";
 import type {
   DraftOutcome,
   Outcome,
@@ -246,10 +246,10 @@ export default function App() {
   actionRef.current = primaryAction();
 
   const inTelegramRef = useRef<boolean>(false);
-  inTelegramRef.current = webApp() !== undefined;
+  inTelegramRef.current = telegramHost() !== undefined;
 
   useEffect(() => {
-    const wa = webApp();
+    const wa = telegramHost();
     if (!wa) return;
 
     const handleMain = () => actionRef.current?.();
@@ -265,7 +265,7 @@ export default function App() {
   }, [goBack]);
 
   useEffect(() => {
-    const wa = webApp();
+    const wa = telegramHost();
     if (!wa) return;
     const label = primaryLabel();
     const mb = wa.MainButton;
@@ -280,7 +280,7 @@ export default function App() {
   });
 
   useEffect(() => {
-    const wa = webApp();
+    const wa = telegramHost();
     if (!wa) return;
     if (view.name === "compose" || view.name === "loading") {
       wa.BackButton.hide();

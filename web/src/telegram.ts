@@ -32,6 +32,9 @@ interface TgBackButton {
 }
 
 export interface WebApp {
+  /** "ios" | "android" | "tdesktop" | "weba" | … in a real client, "unknown" in the
+   * stub the SDK installs anywhere else. The one honest test for a Telegram host. */
+  platform?: string;
   initData: string;
   /** The launch payload, already parsed by the SDK. `start_param` is read only to
    * decide which screen to open: it is the same value the backend sees inside the
@@ -62,6 +65,28 @@ export function webApp(): WebApp | undefined {
   return window.Telegram?.WebApp;
 }
 
+/** Whether `platform` names a real Telegram client. Pure, so it is testable. */
+export function isTelegramHost(platform: string | undefined): boolean {
+  return platform !== undefined && platform !== "" && platform !== "unknown";
+}
+
+/** The WebApp **only when genuinely running inside Telegram**.
+ *
+ * The vendored SDK defines `window.Telegram.WebApp` wherever it is loaded, a plain
+ * browser tab included, so the object's presence proves nothing — and every UI
+ * decision that read it concluded "inside Telegram" everywhere. The fallback bar was
+ * then never rendered, the native MainButton was a silent stub, and `ComposeScreen`
+ * deliberately has no button of its own: the app outside Telegram had no control at
+ * all. You could type a basket and never send it.
+ *
+ * Use this for anything that draws or drives UI. `webApp()` stays for reading data —
+ * `initData` and `start_param` are empty off-platform, which is the correct answer.
+ */
+export function telegramHost(): WebApp | undefined {
+  const wa = webApp();
+  return wa !== undefined && isTelegramHost(wa.platform) ? wa : undefined;
+}
+
 /** Palette ground colours, pushed outward per spec so the chrome matches the page. */
 const GROUND: Record<ThemeSignal, string> = {
   light: "#FCFAF6",
@@ -72,7 +97,7 @@ let currentTheme: ThemeSignal = "light";
 const themeListeners = new Set<() => void>();
 
 export function initTelegram(): void {
-  const wa = webApp();
+  const wa = telegramHost();
   if (!wa) {
     // Browser development: follow the OS preference so both palettes stay reachable.
     apply("light");
@@ -87,7 +112,7 @@ export function initTelegram(): void {
   wa.expand();
   wa.disableVerticalSwipes?.();
   apply(wa.colorScheme);
-  wa.onEvent("themeChanged", () => apply(webApp()?.colorScheme ?? "light"));
+  wa.onEvent("themeChanged", () => apply(telegramHost()?.colorScheme ?? "light"));
   syncViewport();
   wa.onEvent("viewportChanged", syncViewport);
 }
@@ -96,7 +121,7 @@ function apply(theme: ThemeSignal): void {
   currentTheme = theme;
   document.documentElement.dataset.theme = theme;
   const ground = GROUND[theme];
-  const wa = webApp();
+  const wa = telegramHost();
   try {
     wa?.setHeaderColor?.(ground);
     wa?.setBackgroundColor?.(ground);
@@ -109,8 +134,9 @@ function apply(theme: ThemeSignal): void {
 
 function syncViewport(): void {
   // Never 100vh: inside Telegram the stable height is what does not jump when the
-  // collapsible toolbar hides.
-  const height = webApp()?.viewportStableHeight ?? window.innerHeight;
+  // collapsible toolbar hides. Off-platform the stub reports 0, which collapsed
+  // `min-height: var(--vsh)` to nothing — so the real window is the answer there.
+  const height = telegramHost()?.viewportStableHeight || window.innerHeight;
   document.documentElement.style.setProperty("--vsh", `${height}px`);
 }
 
@@ -128,7 +154,7 @@ export function onThemeChange(listener: () => void): () => void {
 /** Checkout links leave the webview. http(s) goes through `openLink` (real browser);
  * Silpo's `silpo://` deep link can only be handed to the OS directly. */
 export function openExternal(url: string): void {
-  const wa = webApp();
+  const wa = telegramHost();
   if (url.startsWith("http")) {
     if (wa?.openLink) {
       wa.openLink(url);
