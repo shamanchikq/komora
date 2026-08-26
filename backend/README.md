@@ -149,13 +149,41 @@ CORS. Without it the process is API-plus-callback only. For live UI work,
 nothing in it can be verified from a test suite, which is exactly why it is written
 down rather than assumed.
 
-Prerequisites, all in BotFather:
+**Environment first.** Three things will waste the session if they are not done before
+BotFather, all found by audit on 2026-08-26 rather than by reasoning:
+
+- [ ] **A fresh timeslot in the Silpo cart.** The account's cart held a slot from eight
+      days earlier, and Silpo answers a search made against a passed slot with **zero
+      results for everything** — measured: «молоко» returned 0 on the stale slot and 30
+      on a current one, same branch, same account, same minute. The pipeline is right
+      about it (`timeslot:expired` is raised and shown) but no basket can be built at
+      all, so the first real step of the checklist fails for a reason that looks like
+      Komora being broken. Open the Silpo app, pick a branch and a slot, then start.
+- [ ] **An HTTPS `KOMORA_PUBLIC_BASE_URL`.** Telegram will not accept an `http://` or
+      loopback Web App URL, so the device test needs `cloudflared` even though local
+      OAuth does not — see the note under the Plan 1 checklist.
+- [ ] **Clear the stored DCR registration after changing that URL.** The registration is
+      app-wide and holds the `redirect_uris` it was created with — currently
+      `http://localhost:8000/auth/silpo/callback`. `DBTokenStorage.get_client_info`
+      returns it unconditionally, with no check against the current base URL, so a new
+      authorization from the tunnel would present a redirect_uri Silpo never registered.
+      Already-linked accounts are unaffected (refresh uses the client id, which does not
+      change) — this bites the re-auth checklist item and any new user.
+      `OAuthClientRepo.clear()` exists for exactly this; run it once after the switch.
+
+Then, in BotFather:
 
 - [ ] `/newapp` on the bot → a **short name** and the Web App URL
       (`KOMORA_PUBLIC_BASE_URL`, which serves `web/dist` at `/`).
 - [ ] `/setmenubutton` → the same URL, so the chat has a door.
 - [ ] `KOMORA_TELEGRAM_MINI_APP_URL` set to the `t.me/<bot>/<app>` link BotFather
-      reports, and the process restarted.
+      reports, and the process restarted. **Empty today** — until it is set the bot
+      renders no «Відкрити в Коморі» button and the deep-link section below cannot run.
+
+Worth doing first, because it needs no phone: open `KOMORA_PUBLIC_BASE_URL` in a
+desktop browser. Everything except identity works there — the fallback bar stands in
+for the native MainButton, and a call answers 401 with «Відкрийте Комору через
+Telegram», which is the app proving it reached the API.
 
 The app itself:
 
