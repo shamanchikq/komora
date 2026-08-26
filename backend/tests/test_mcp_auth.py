@@ -30,12 +30,17 @@ USER, OTHER_USER = 4242, 9999
 SERVER = "https://mcp.silpo.ua/mcp"
 
 
-def storage_for(sessions: async_sessionmaker, telegram_id: int = USER) -> DBTokenStorage:
+def storage_for(
+    sessions: async_sessionmaker,
+    telegram_id: int = USER,
+    redirect_uri: str | None = None,
+) -> DBTokenStorage:
     return DBTokenStorage(
         telegram_id=telegram_id,
         users=UserRepo(sessions),
         clients=OAuthClientRepo(sessions),
         cipher=TokenCipher(KEY),
+        redirect_uri=redirect_uri,
     )
 
 
@@ -119,6 +124,64 @@ class TestClientRegistrationIsShared:
 
     async def test_absent_before_registration(self, sessions: async_sessionmaker) -> None:
         assert await storage_for(sessions).get_client_info() is None
+
+
+LOCAL = "http://localhost:8000/auth/silpo/callback"
+TUNNEL = "https://komora.trycloudflare.com/auth/silpo/callback"
+
+
+def registered(*uris: str) -> OAuthClientInformationFull:
+    return OAuthClientInformationFull(client_id="c", redirect_uris=list(uris))  # type: ignore[arg-type]
+
+
+class TestARegistrationBelongsToItsCallback:
+    """The registration is made once and reused forever, and it carries the
+    `redirect_uris` it was made with.
+
+    Moving `KOMORA_PUBLIC_BASE_URL` — which the Mini App device test *requires*, since
+    Telegram will not take a loopback web-app URL — left the stored client pointing at
+    a callback this process no longer serves. Nothing noticed: the SDK would present a
+    redirect_uri Silpo never registered, and the flow died with an OAuth error rather
+    than anything Komora could explain.
+    """
+
+    async def test_a_registration_for_this_callback_is_reused(
+        self, sessions: async_sessionmaker
+    ) -> None:
+        await storage_for(sessions).set_client_info(registered(LOCAL))
+        seen = await storage_for(sessions, redirect_uri=LOCAL).get_client_info()
+        assert seen is not None and seen.client_id == "c"
+
+    async def test_a_trailing_slash_is_not_a_different_callback(
+        self, sessions: async_sessionmaker
+    ) -> None:
+        await storage_for(sessions).set_client_info(registered(LOCAL + "/"))
+        assert await storage_for(sessions, redirect_uri=LOCAL).get_client_info() is not None
+
+    async def test_a_registration_for_another_callback_is_dropped(
+        self, sessions: async_sessionmaker
+    ) -> None:
+        await storage_for(sessions).set_client_info(registered(LOCAL))
+        assert await storage_for(sessions, redirect_uri=TUNNEL).get_client_info() is None
+
+    async def test_dropping_it_clears_the_row_so_the_sdk_registers_afresh(
+        self, sessions: async_sessionmaker
+    ) -> None:
+        """Returning None is not enough — the stale row would be read again next time."""
+        await storage_for(sessions).set_client_info(registered(LOCAL))
+        await storage_for(sessions, redirect_uri=TUNNEL).get_client_info()
+        assert await OAuthClientRepo(sessions).get() is None
+
+    async def test_one_of_several_callbacks_is_enough(self, sessions: async_sessionmaker) -> None:
+        await storage_for(sessions).set_client_info(registered(LOCAL, TUNNEL))
+        assert await storage_for(sessions, redirect_uri=TUNNEL).get_client_info() is not None
+
+    async def test_no_declared_callback_disables_the_check(
+        self, sessions: async_sessionmaker
+    ) -> None:
+        """The old behaviour, kept as the default: never guess a caller's callback."""
+        await storage_for(sessions).set_client_info(registered(LOCAL))
+        assert await storage_for(sessions).get_client_info() is not None
 
 
 class TestExpiredTokenHandling:

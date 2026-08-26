@@ -42,6 +42,12 @@ class SilpoGateway:
     ) -> None:
         self._server_url = server_url
         self._metadata = build_client_metadata(public_base_url)
+        # The one callback this process serves. Handed to storage so a registration
+        # made against a different base URL is discarded rather than presented.
+        # `None` if there is somehow none to compare against, which disables the check
+        # rather than guessing — the old behaviour, and the safe direction.
+        uris = self._metadata.redirect_uris or []
+        self._redirect_uri = str(uris[0]) if uris else None
         self._users = users
         self._clients = clients
         self._cipher = cipher
@@ -64,6 +70,7 @@ class SilpoGateway:
                 users=self._users,
                 clients=self._clients,
                 cipher=self._cipher,
+                redirect_uri=self._redirect_uri,
             ),
             redirect_handler=redirect_handler,
             callback_handler=callback_handler,
