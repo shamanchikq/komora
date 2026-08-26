@@ -31,6 +31,12 @@ class Settings(BaseSettings):
 
     # Required only when a tier uses a gemini/* model — an all-Ollama config needs no key.
     gemini_api_key: str = ""
+    openrouter_api_key: str = ""
+    """Required only when a tier uses an openrouter/* model.
+
+    Worth having as a second hosted option because the constraint Komora actually hits
+    is Gemini's free-tier **requests** per day, keyed on (project, model). Pointing one
+    tier at OpenRouter draws that tier from an allowance Google does not count."""
 
     # --- Optional ---
     telegram_mini_app_url: str = ""
@@ -106,14 +112,18 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def _validate_model_refs(self) -> Self:
         """Fail at startup rather than on the first LLM call."""
+        needs_key: dict[str, tuple[str, str]] = {
+            "gemini": (self.gemini_api_key, "KOMORA_GEMINI_API_KEY"),
+            "openrouter": (self.openrouter_api_key, "KOMORA_OPENROUTER_API_KEY"),
+        }
         for role, field in _ROLE_FIELDS.items():
             ref: str = getattr(self, field)
             provider, _ = parse_model_ref(ref)  # rejects unknown providers
-            if provider == "gemini" and not self.gemini_api_key.strip():
+            if provider in needs_key and not needs_key[provider][0].strip():
                 raise ValueError(
-                    f"{field}={ref!r} uses the gemini provider, so gemini_api_key must be set"
-                    f" (KOMORA_GEMINI_API_KEY). Point the {role!r} model at an ollama/* ref"
-                    f" to run without an API key."
+                    f"{field}={ref!r} uses the {provider} provider, so its API key must be"
+                    f" set ({needs_key[provider][1]}). Point the {role!r} model at an"
+                    f" ollama/* ref to run without an API key."
                 )
         return self
 

@@ -162,14 +162,14 @@ BotFather, all found by audit on 2026-08-26 rather than by reasoning:
 - [ ] **An HTTPS `KOMORA_PUBLIC_BASE_URL`.** Telegram will not accept an `http://` or
       loopback Web App URL, so the device test needs `cloudflared` even though local
       OAuth does not — see the note under the Plan 1 checklist.
-- [ ] **Clear the stored DCR registration after changing that URL.** The registration is
-      app-wide and holds the `redirect_uris` it was created with — currently
-      `http://localhost:8000/auth/silpo/callback`. `DBTokenStorage.get_client_info`
-      returns it unconditionally, with no check against the current base URL, so a new
-      authorization from the tunnel would present a redirect_uri Silpo never registered.
-      Already-linked accounts are unaffected (refresh uses the client id, which does not
-      change) — this bites the re-auth checklist item and any new user.
-      `OAuthClientRepo.clear()` exists for exactly this; run it once after the switch.
+- [x] ~~Clear the stored DCR registration after changing that URL.~~ **Now automatic.**
+      The registration is app-wide and holds the `redirect_uris` it was created with, so
+      moving the base URL left it pointing at a callback the process no longer serves —
+      and a new authorization would present a redirect_uri Silpo never registered.
+      `DBTokenStorage.get_client_info` now drops a registration that does not list the
+      current callback and lets the SDK register afresh. Already-linked accounts are
+      unaffected either way: refresh uses the client id, which only changes when a new
+      registration is actually made.
 
 Then, in BotFather:
 
@@ -357,6 +357,45 @@ Found by the live runs on 2026-08-11/12, and left open deliberately.
   `get_my_coupons` fail outright. Komora degrades as designed — the cart is built, the
   coupon is listed without its enriched value — but the enrichment is best-effort.
 - **Telegram is untested against the real API.** Everything below it is not.
+
+## Model providers
+
+Each tier is a `provider/model` ref, so switching model — or provider — is one env var.
+
+| Ref | Key | Notes |
+|---|---|---|
+| `gemini/<model>` | `KOMORA_GEMINI_API_KEY` | the default for both tiers |
+| `openrouter/<vendor>/<model>` | `KOMORA_OPENROUTER_API_KEY` | one key, many vendors |
+| `ollama/<tag>` | none | local, development only |
+
+**Why a third provider.** The limit Komora actually hits is Gemini's free tier, which
+counts *requests* per day per (project, model) — not tokens. A basket spends one on the
+proposal and one on the verification, which is why the two tiers already point at two
+Gemini models. OpenRouter's allowance is not Google's, so moving **one** tier there
+doubles the baskets per day without a paid key.
+
+```bash
+KOMORA_OPENROUTER_API_KEY=sk-or-v1-...
+KOMORA_LLM_VERIFIER=openrouter/stealth/ox-alpha
+```
+
+Note the two slashes: `parse_model_ref` splits on the **first** one, so
+`openrouter/stealth/ox-alpha` is the model `stealth/ox-alpha`. Every OpenRouter id
+carries a vendor prefix, and Ollama tags already needed that rule.
+
+`stealth/ox-alpha` is free, takes 1M tokens of context and does tool calling, which is
+the only capability the agent loop needs. Two things to know before pointing a real
+household's shopping at it: a **stealth** model comes from an undisclosed provider and
+may change or disappear without notice, and OpenRouter's terms say that provider
+**retains prompts and completions** (not for training). That is a reasonable trade for
+evaluation and a deliberate decision for anything else — measure it with
+`scripts/compare_models.py` before promoting it to the agent tier.
+
+The wire format differs from the other two providers in three ways that a test pins,
+because each is silent when wrong: tool arguments arrive as a JSON **string**, a tool
+result is paired to its call by **`tool_call_id`** rather than by name and order, and an
+upstream failure comes back as **HTTP 200 with an `error` body** — which reads as a
+model that chose to say nothing if you only check the status.
 
 ## Running against a local model
 

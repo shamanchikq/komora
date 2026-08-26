@@ -6,7 +6,7 @@ is a config change rather than a code change. See the design spec §4.1.
 
 from typing import Final, Literal, get_args
 
-Provider = Literal["gemini", "ollama"]
+Provider = Literal["gemini", "ollama", "openrouter"]
 
 Role = Literal["agent", "verifier"]
 """Which job a model does — not how strong it is.
@@ -25,7 +25,8 @@ def parse_model_ref(ref: str) -> tuple[Provider, str]:
     """Split a `provider/model` reference into its parts.
 
     Splits on the *first* slash only. Ollama tags embed colons (`ollama/gemma4:12b`)
-    and model names may themselves contain slashes (`ollama/hf.co/user/model:q4`),
+    and model names may themselves contain slashes — `ollama/hf.co/user/model:q4`, and
+    every OpenRouter id (`openrouter/stealth/ox-alpha`, `openrouter/qwen/qwen3-max`) —
     so anything after the first separator is the model name verbatim.
 
     Raises:

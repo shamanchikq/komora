@@ -43,7 +43,7 @@ sheet are built in `web/` (Vite+React, served same-origin from `web/dist`; build
 All from `backend/`.
 
 ```bash
-uv run pytest              # 824 tests
+uv run pytest              # 843 tests
 uv run ruff check .        # lint
 uv run ruff format .       # format
 uv run mypy komora         # strict
@@ -86,7 +86,7 @@ midnight. Assert structure against fixtures, never a count that the clock decide
 komora/
 ├── core/          pure domain — imports NO web framework
 │   ├── mcp/       protocol + silpo.py (the real client) + gateway.py (per-user OAuth)
-│   ├── llm/       LLMClient protocol; gemini/ and ollama/ implementations
+│   ├── llm/       LLMClient protocol; gemini/, openrouter/ and ollama/ clients
 │   ├── agent/     the loop: read tools only, propose_basket, guardrails
 │   │              + recap.py (what the model is told it did last turn)
 │   ├── passes/    resolve -> verify -> savings -> budget
