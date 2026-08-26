@@ -130,22 +130,44 @@ def clamp_quantity(wanted: float, product: dict[str, Any]) -> float:
     The narrow miss is a user who really did want exactly 1 kg; they get 100 g and a
     swap button, which is the better failure of the two.
     """
-    step = product.get("step") or 1
     weighted = bool(product.get("weighted"))
     if weighted and wanted == DEFAULT_QUANTITY:
-        wanted = float(step)
-    stock = product.get("stock")
+        wanted = float(product.get("step") or 1)
+    return snap_quantity(
+        wanted,
+        step=_maybe_float(product.get("step")),
+        weighted=weighted,
+        stock=_maybe_float(product.get("stock")),
+    )
+
+
+def snap_quantity(
+    wanted: float, *, step: float | None, weighted: bool, stock: float | None
+) -> float:
+    """The grid and the ceiling, without the "unqualified means one step" rule.
+
+    Split out of `clamp_quantity` because a **stepper tap is not an unqualified
+    request**: a user who deliberately sets 1 kg of potatoes means one kilo, while a
+    model that emitted `quantity: 1` for a weighted good meant nothing in particular.
+    Only the caller knows which it is holding, so only the caller applies that rule.
+
+    Everything else is identical, and identical is the point — `handlers.on_set_qty`
+    said in its docstring that it rounded the way this function rounds and then did
+    not, so 2,5 packs of milk persisted happily and a later swap silently floored the
+    same line to 2.
+    """
+    step_size = step or 1
     capped = min(wanted, float(stock)) if stock is not None else float(wanted)
-    if step and step > 0:
+    if step_size > 0:
         # A COUNTABLE product never rounds up. Live: «додай велику колу зеро» reached
         # here as 1.5 — the model encoding "1.5 litres" into a field that counts bottles
         # — and nearest-step rounding turned it into two. On a weighted good 0.17 kg ->
         # 0.2 kg is a rounding; on a countable one 1.5 -> 2 is a second bottle the user
         # pays for. Where the request cannot be honoured exactly, err downwards: one
         # bottle short is a message, one bottle over is money.
-        exact = capped / step
+        exact = capped / step_size
         steps = max(1, round(exact) if weighted else math.floor(exact + 1e-9))
-        capped = steps * step
+        capped = steps * step_size
         if stock is not None:
             capped = min(capped, float(stock))
     return round(capped, 3)

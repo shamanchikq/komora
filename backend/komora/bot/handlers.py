@@ -33,8 +33,10 @@ from komora.core.llm.protocol import LLMClient, LLMUnavailable, Message
 from komora.core.mcp.errors import McpError, NotAuthenticated
 from komora.core.mcp.protocol import SilpoClient
 from komora.core.models import ResolvedCart
+from komora.core.passes.budget import OVER_BUDGET, apply_budget
 from komora.core.passes.promos import apply_savings
 from komora.core.passes.removals import match_removals
+from komora.core.passes.resolve import snap_quantity
 from komora.core.pipeline import (
     CartContextMissing,
     SilpoCache,
@@ -47,6 +49,16 @@ from komora.db.repo import BasketRepo, ConversationRepo, UserRepo
 from komora.db.tables import DraftBasketRow
 
 HISTORY_TURNS = 20
+
+MAX_TEXT = 4096
+"""Telegram's own message limit, restated because the Mini App is not Telegram.
+
+The bot inherits this ceiling for free — Telegram will not deliver a longer message.
+`POST /api/draft` inherits nothing, so an unbounded body went straight into the
+conversation table and into the model prompt. It is enforced here rather than on the
+pydantic model so both surfaces get the same answer, in Ukrainian, instead of one
+getting a 422 whose body is not an Outcome.
+"""
 
 WELCOME = (
     "Комора збирає кошик у «Сільпо» зі звичайного повідомлення: «купи молоко, хліб і "
@@ -80,6 +92,13 @@ BUDGET_HELP = (
     "«/budget 1500» — встановити, «/budget 0» — прибрати."
 )
 NO_ALTERNATIVE = "Інших варіантів для «{name}» Сільпо не пропонує."
+TOO_LONG = (
+    "Це задовге повідомлення. Напишіть коротше — одним-двома реченнями про те, що потрібно купити."
+)
+NOTHING_LEFT = (
+    "У кошику Сільпо вже нема чого міняти — те, що ця чернетка мала прибрати, "
+    "звідти вже зникло. Нічого надсилати не будемо."
+)
 
 
 async def _unlinked(telegram_id: int) -> None:
@@ -158,6 +177,10 @@ async def on_budget(services: Services, telegram_id: int, argument: str) -> Outc
 async def on_text(services: Services, telegram_id: int, text: str) -> Outcome:
     """One user turn: history -> agent -> pipeline -> a draft to review."""
     await services.users.ensure(telegram_id)
+    if len(text) > MAX_TEXT:
+        # Before the history read and before anything is persisted: a body this size is
+        # not a shopping request, and storing it would poison every later turn's prompt.
+        return Spoke(TOO_LONG)
     history = [
         Message(role="assistant" if row.role == "assistant" else "user", content=row.content)
         for row in await services.conversations.last_n(telegram_id, HISTORY_TURNS)
@@ -303,8 +326,10 @@ async def on_push(services: Services, telegram_id: int, basket_id: int) -> Outco
 async def on_open_basket(services: Services, telegram_id: int, basket_id: int) -> Outcome:
     """Show an existing draft without changing it — what a deep link points *at*.
 
-    Every other basket route acts; this one only looks, so it recomputes nothing and
-    writes nothing back. The gate is the same: a basket id inside a launch payload is
+    Every other basket route acts; this one only looks, so it re-resolves nothing and
+    writes nothing back. (`_draft_ready` still re-derives the over-budget warning from
+    the stored total and the current cap — that is reading two saved facts, not
+    revisiting Silpo.) The gate is the same: a basket id inside a launch payload is
     as guessable as one inside a callback, and `startapp=` is chosen by whoever opens
     the link. Ownership is re-derived here exactly as it is for a tap.
     """
@@ -348,8 +373,17 @@ async def on_set_qty(
     wanted = round(qty, 3) if math.isfinite(qty) else 0.0
     if wanted <= 0:
         return Spoke(STALE, toast="Кількість має бути більша за нуль")
-    if line.stock is not None:
-        wanted = min(wanted, line.stock)
+
+    # The same grid `resolve` puts a quantity on, not merely the same ceiling. Capping
+    # at stock was all this did, so 2,5 упаковки молока persisted — Silpo counts packs
+    # — and 0,37 кг of a good sold in 0,25 steps was an amount Silpo does not sell.
+    # A stepper tap is a deliberate amount, so `clamp_quantity`'s "unqualified means
+    # one step" rule is deliberately NOT applied; see `snap_quantity`.
+    wanted = snap_quantity(wanted, step=line.step, weighted=line.weighted, stock=line.stock)
+    if wanted <= 0:
+        # Only reachable on a line whose stock read back as zero without being marked
+        # unavailable. Nothing to set, and a zero quantity is not a removal.
+        return Spoke(STALE, toast="Цієї позиції немає в наявності")
 
     if not await services.baskets.set_qty(basket_id, position, wanted):
         return Spoke(STALE, toast="Ця позиція недоступна")
@@ -423,12 +457,23 @@ async def _draft_ready(
     toast: str | None = None,
 ) -> DraftReady:
     """The one place a persisted basket becomes a `DraftReady`, so the budget cap can
-    never be attached on one path and forgotten on another."""
+    never be attached on one path and forgotten on another.
+
+    The over-budget warning is re-derived here for the same reason. It is a fact about
+    `total` against `cap`, and every edit route changes the total — so the one the
+    pipeline stored went stale the moment «прибрати необовʼязкові» did its job, and the
+    screen then carried «Понад бюджет на 84,30 ₴» directly above a bar reading
+    «лишається 1,50 ₴». Recomputed rather than persisted: it is derived from two
+    things already stored, and a derived value written down is one that can disagree.
+    """
     user = await services.users.get(telegram_id)
+    cap = user.budget_weekly if user else None
+    kept = [w for w in cart.warnings if not w.startswith(f"{OVER_BUDGET}:")]
+    cart = apply_budget(cart.model_copy(update={"warnings": kept}), cap)
     return DraftReady(
         title=title,
         cart=cart,
-        budget_cap=user.budget_weekly if user else None,
+        budget_cap=cap,
         basket_id=basket_id,
         toast=toast,
     )
@@ -486,6 +531,14 @@ async def _preview(services: Services, telegram_id: int, basket_id: int) -> Outc
         return Spoke(NO_CONTEXT)
     except McpError:
         return Spoke(SILPO_DOWN)
+
+    # The check above was made against the draft; this one is made against the cart as
+    # Silpo holds it right now. A removals-only basket whose target the user has since
+    # taken out by hand arrives here with nothing to add and nothing to remove, and a
+    # confirmation sheet that asks to «Додати 0 позицій» is not a question anyone can
+    # answer. Both surfaces are spared it by refusing here rather than by drawing it.
+    if preview.adding_count == 0 and not preview.removing:
+        return Spoke(NOTHING_LEFT)
 
     return PreviewReady(basket_id=basket_id, preview=preview)
 

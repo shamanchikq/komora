@@ -11,7 +11,9 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from komora.api.app import create_app
-from komora.core.llm.protocol import LLMResponse
+from komora.bot.handlers import MAX_TEXT
+from komora.core.agent.tools import PROPOSE_BASKET
+from komora.core.llm.protocol import LLMResponse, ToolCall
 from komora.core.mcp.auth import AuthorizationBridge
 from tests.fakes import INITDATA_TOKEN, FakeSilpo, product, signed_init_data
 from tests.test_handlers import CATALOGUE, USER, ScriptedLLM, services_for
@@ -349,6 +351,294 @@ class TestSwapRoute:
         body = response.json()
         assert body["kind"] == "spoke"
         assert body["toast"] == "Ця чернетка недоступна"
+
+
+class TestPositionsComeFromTheClient:
+    """A position is an index the caller chose, so it is checked like one.
+
+    The routes disagreed: `qty` and `swap` bounds-checked, `remove` handed the number
+    straight to SQL. SQLite reads a negative OFFSET as zero and returns the FIRST row,
+    so `lines/-1/remove` deleted a line the request never named and answered 200.
+    Postgres raises on the same query, so the two stores did not even agree on how to
+    be wrong.
+    """
+
+    @pytest.mark.parametrize("position", [-1, -5])
+    async def test_a_negative_position_removes_nothing(self, api, position: int) -> None:
+        client, _ = api
+        body = await _draft(client)
+        basket_id = body["basket_id"]
+        before = [line["name"] for line in body["cart"]["lines"]]
+
+        response = await client.post(
+            f"/api/baskets/{basket_id}/lines/{position}/remove", headers=header(USER)
+        )
+        assert response.json()["toast"] == "Ця позиція недоступна"
+
+        after = await client.get(f"/api/baskets/{basket_id}", headers=header(USER))
+        assert [line["name"] for line in after.json()["cart"]["lines"]] == before
+
+    @pytest.mark.parametrize(
+        "path,body", [("/lines/-1/qty", {"qty": 2}), ("/swap", {"position": -1})]
+    )
+    async def test_the_other_routes_refuse_it_too(self, api, path: str, body: dict) -> None:
+        client, _ = api
+        basket_id = (await _draft(client))["basket_id"]
+        response = await client.post(
+            f"/api/baskets/{basket_id}{path}", json=body, headers=header(USER)
+        )
+        assert response.json()["toast"] == "Ця позиція недоступна"
+
+
+class TestTheStepperRoundsWhereResolveRounds:
+    """`on_set_qty` said it rounded like `clamp_quantity` and only capped at stock."""
+
+    async def test_a_countable_line_never_holds_a_fraction(self, api) -> None:
+        client, _ = api
+        basket_id = (await _draft(client))["basket_id"]
+        response = await client.post(
+            f"/api/baskets/{basket_id}/lines/0/qty", json={"qty": 2.5}, headers=header(USER)
+        )
+        # Silpo counts packs of milk, and 2,5 of them is not an order anyone can fill.
+        # Erring downwards is the rule `resolve` already follows: one short is a
+        # message, one over is money.
+        assert response.json()["cart"]["lines"][0]["qty"] == 2
+
+    async def test_a_weighted_line_lands_on_its_own_step(self, sessions) -> None:
+        cheese = product("Пармезан 36 міс.", 999.00, step=0.1)
+        cheese["weighted"] = True
+        call = ToolCall(
+            PROPOSE_BASKET,
+            {
+                "title": "Паста",
+                "lines": [{"description": "пармезан", "quantity": 1, "reason_text": "просили"}],
+            },
+        )
+        services, _, _ = services_for(
+            sessions,
+            llm=ScriptedLLM(LLMResponse(tool_calls=(call,))),
+            mcp=FakeSilpo({"пармезан": [cheese]}),
+        )
+        async with AsyncClient(transport=_app(services), base_url="http://test") as client:
+            basket_id = (await _draft(client, "треба пармезан"))["basket_id"]
+            response = await client.post(
+                f"/api/baskets/{basket_id}/lines/0/qty",
+                json={"qty": 0.37},
+                headers=header(USER),
+            )
+
+        line = response.json()["cart"]["lines"][0]
+        assert line["weighted"] is True
+        # 0,37 кг is not a weight Silpo sells; 0,4 is. Off the grid it would have been
+        # refused at push, after the confirmation sheet had already promised it.
+        assert line["qty"] == pytest.approx(0.4)
+
+
+TRIMMABLE = ToolCall(
+    PROPOSE_BASKET,
+    {
+        "title": "Кошик на тиждень",
+        "lines": [
+            {"description": "молоко", "quantity": 1, "reason_text": "просили"},
+            {"description": "печиво", "quantity": 1, "reason_text": "до чаю", "optional": True},
+            {"description": "хліб", "quantity": 1, "reason_text": "просили"},
+            {"description": "цукерки", "quantity": 1, "reason_text": "до чаю", "optional": True},
+        ],
+    },
+)
+
+
+class TestTrimmingTheOptionalLines:
+    """The one new route with no positive test, and the only one that removes several
+    lines per call — where an off-by-one takes out the wrong ones."""
+
+    @pytest.fixture
+    async def stocked(self, sessions):  # type: ignore[no-untyped-def]
+        catalogue = {
+            **CATALOGUE,
+            "печиво": [product("Печиво Марія", 31.00)],
+            "цукерки": [product("Цукерки Рошен", 88.00)],
+        }
+        services, silpo, _ = services_for(
+            sessions,
+            llm=ScriptedLLM(LLMResponse(tool_calls=(TRIMMABLE,))),
+            mcp=FakeSilpo(catalogue),
+        )
+        async with AsyncClient(transport=_app(services), base_url="http://test") as client:
+            yield client, silpo
+
+    async def test_it_drops_every_optional_line_and_keeps_the_rest(self, stocked) -> None:
+        client, _ = stocked
+        body = await _draft(client, "збери кошик")
+        assert [line["optional"] for line in body["cart"]["lines"]] == [
+            False,
+            True,
+            False,
+            True,
+        ], "interleaved on purpose, or reverse-order removal proves nothing"
+
+        response = await client.post(f"/api/baskets/{body['basket_id']}/trim", headers=header(USER))
+        cart = response.json()["cart"]
+        # Removing 1 then 3 in ascending order would take out «печиво» and then
+        # whatever slid up into index 3 — which is nothing at all.
+        assert [line["name"] for line in cart["lines"]] == [
+            "Молоко Яготинське 2,6%",
+            "Хліб Київський",
+        ]
+
+    async def test_the_total_follows_the_lines_out(self, stocked) -> None:
+        client, _ = stocked
+        body = await _draft(client, "збери кошик")
+        response = await client.post(f"/api/baskets/{body['basket_id']}/trim", headers=header(USER))
+        assert Decimal(response.json()["cart"]["total"]) == Decimal("42.90") + Decimal("28.50")
+
+    async def test_what_is_left_is_what_gets_pushed(self, stocked) -> None:
+        """The draft is the contract: a trim has to reach Silpo, not just the screen."""
+        client, _ = stocked
+        basket_id = (await _draft(client, "збери кошик"))["basket_id"]
+        await client.post(f"/api/baskets/{basket_id}/trim", headers=header(USER))
+        await client.post(f"/api/baskets/{basket_id}/preview", headers=header(USER))
+        report = await client.post(f"/api/baskets/{basket_id}/push", headers=header(USER))
+        assert report.json()["report"]["added"] == [
+            "Молоко Яготинське 2,6%",
+            "Хліб Київський",
+        ]
+
+    async def test_a_basket_with_nothing_optional_says_so_and_changes_nothing(self, api) -> None:
+        client, _ = api
+        body = await _draft(client)
+        response = await client.post(f"/api/baskets/{body['basket_id']}/trim", headers=header(USER))
+        assert response.json()["kind"] == "spoke"
+
+        after = await client.get(f"/api/baskets/{body['basket_id']}", headers=header(USER))
+        assert len(after.json()["cart"]["lines"]) == len(body["cart"]["lines"])
+
+
+class TestTheBudgetWarningFollowsTheCart:
+    """It is a fact about total-against-cap, and every edit route moves the total.
+
+    Stored once by the pipeline and never recomputed, it outlived the edit that fixed
+    it: «Понад тижневий бюджет на 84,30 ₴» sat directly above a bar reading
+    «лишається 1,50 ₴» — same screen, same cart. «Прибрати необовʼязкові» exists to
+    cause exactly that transition, so it was the ordinary case, not an edge one.
+    """
+
+    @staticmethod
+    async def _capped(sessions, cap: int):  # type: ignore[no-untyped-def]
+        services, _, _ = services_for(sessions)
+        await services.users.ensure(USER)
+        await services.users.set_budget(USER, cap)
+        return services
+
+    async def test_an_edit_under_the_cap_clears_the_warning(self, sessions) -> None:
+        services = await self._capped(sessions, 60)
+        async with AsyncClient(transport=_app(services), base_url="http://test") as client:
+            body = await _draft(client)
+            assert [w for w in body["cart"]["warnings"] if w.startswith("over_budget:")]
+
+            response = await client.post(
+                f"/api/baskets/{body['basket_id']}/lines/0/remove", headers=header(USER)
+            )
+
+        cart = response.json()["cart"]
+        assert Decimal(cart["total"]) <= 60
+        assert [w for w in cart["warnings"] if w.startswith("over_budget:")] == []
+
+    async def test_a_warning_that_still_holds_is_restated_at_the_new_figure(self, sessions) -> None:
+        services = await self._capped(sessions, 10)
+        async with AsyncClient(transport=_app(services), base_url="http://test") as client:
+            body = await _draft(client)
+            response = await client.post(
+                f"/api/baskets/{body['basket_id']}/lines/0/remove", headers=header(USER)
+            )
+
+        cart = response.json()["cart"]
+        overage = next(w for w in cart["warnings"] if w.startswith("over_budget:"))
+        assert Decimal(overage.split(":", 1)[1]) == Decimal(cart["total"]) - 10
+
+    async def test_reopening_a_basket_measures_it_afresh(self, sessions) -> None:
+        """A deep link recomputes nothing — but a warning is derived, not stored."""
+        services = await self._capped(sessions, 60)
+        async with AsyncClient(transport=_app(services), base_url="http://test") as client:
+            basket_id = (await _draft(client))["basket_id"]
+            await client.post(f"/api/baskets/{basket_id}/lines/0/remove", headers=header(USER))
+            reopened = await client.get(f"/api/baskets/{basket_id}", headers=header(USER))
+
+        body = reopened.json()
+        assert body["budget_cap"] == 60
+        assert [w for w in body["cart"]["warnings"] if w.startswith("over_budget:")] == []
+
+
+REMOVAL_ONLY = ToolCall(
+    PROPOSE_BASKET,
+    {"title": "Прибрати хліб", "lines": [], "removals": ["хліб"]},
+)
+
+
+class TestAConfirmationMustAskForSomething:
+    async def test_a_removal_the_user_already_made_is_not_a_sheet(self, sessions) -> None:
+        """Between the two taps the user can do the job themselves.
+
+        «Прибери хліб» is a whole basket — nothing to add, one thing to take out. Take
+        that thing out by hand in the Silpo app before confirming and the sheet has
+        nothing left to ask: it counted to zero and offered «Додати 0 позицій», over a
+        button whose label said the same.
+        """
+        silpo = FakeSilpo(CATALOGUE)
+        services, _, _ = services_for(sessions, mcp=silpo)
+
+        async with AsyncClient(transport=_app(services), base_url="http://test") as client:
+            # A basket Komora synced, so «хліб» is a removal candidate at all.
+            first = await _draft(client)
+            await client.post(f"/api/baskets/{first['basket_id']}/preview", headers=header(USER))
+            await client.post(f"/api/baskets/{first['basket_id']}/push", headers=header(USER))
+
+            services.llm._responses.append(LLMResponse(tool_calls=(REMOVAL_ONLY,)))
+            second = await _draft(client, "прибери хліб")
+            assert [r["name"] for r in second["cart"]["removals"]] == ["Хліб Київський"]
+
+            # …and now the user does it themselves, in the Silpo app.
+            await silpo.remove_cart_products("cart", [{"productId": "id-Хліб Київський"}])
+            silpo.remove_calls.clear()
+
+            response = await client.post(
+                f"/api/baskets/{second['basket_id']}/preview", headers=header(USER)
+            )
+
+        body = response.json()
+        assert body["kind"] == "spoke", "no sheet at all, rather than one asking for nothing"
+        assert "нема чого міняти" in body["text"]
+        assert silpo.remove_calls == []
+
+
+class TestTheTextATurnMayCarry:
+    """The bot gets this ceiling from Telegram, which will not deliver a longer
+    message. HTTP inherits nothing, so an unbounded body went into the conversation
+    table and into the model prompt."""
+
+    async def test_a_body_longer_than_a_telegram_message_is_refused(self, api) -> None:
+        client, _ = api
+        response = await client.post(
+            "/api/draft", json={"text": "молоко " * MAX_TEXT}, headers=header(USER)
+        )
+        body = response.json()
+        assert body["kind"] == "spoke"
+        assert "коротше" in body["text"]
+
+    async def test_it_is_refused_before_anything_is_written(self, sessions) -> None:
+        services, _, _ = services_for(sessions)
+        async with AsyncClient(transport=_app(services), base_url="http://test") as client:
+            await client.post(
+                "/api/draft", json={"text": "молоко " * MAX_TEXT}, headers=header(USER)
+            )
+        assert await services.conversations.last_n(USER) == []
+
+    async def test_a_message_at_the_limit_still_builds_a_basket(self, api) -> None:
+        client, _ = api
+        response = await client.post(
+            "/api/draft", json={"text": "молоко".ljust(MAX_TEXT)}, headers=header(USER)
+        )
+        assert response.json()["kind"] == "draft"
 
 
 def test_the_built_app_is_served_same_origin() -> None:

@@ -363,6 +363,17 @@ class BasketRepo:
     async def _visible_item(
         session: AsyncSession, basket_id: int, position: int
     ) -> DraftItem | None:
+        """The one selection `replace_item`, `set_qty` and `drop_item` share.
+
+        A negative position is nobody's line. SQLite reads `OFFSET -1` as `OFFSET 0`
+        and hands back the FIRST row — so `POST …/lines/-1/remove`, the one caller
+        that had no bounds check of its own, deleted a line the request never named
+        and answered 200. Postgres raises on the same query instead, which would have
+        made it a 500 rather than a wrong answer. Refused here, where all three see
+        it, rather than three times over at the call sites.
+        """
+        if position < 0:
+            return None
         result = await session.execute(
             select(DraftItem)
             .where(DraftItem.basket_id == basket_id, DraftItem.removed.is_(False))
