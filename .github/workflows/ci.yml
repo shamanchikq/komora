@@ -52,3 +52,34 @@ jobs:
         run: |
           uv run alembic upgrade head
           uv run alembic check
+
+  # The Mini App is half of Plan 2 and none of it was covered: the Vitest suite, the
+  # typecheck and the `npm run build` that produces the very directory FastAPI serves
+  # all ran outside CI, so a broken frontend merged green.
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # `build` is `tsc -b && vite build`, so this is the typecheck as well as the
+      # artifact. Both matter: `web/dist` is what `create_app` mounts at `/`.
+      - name: Build
+        run: npm run build
+
+      # The pure modules — the places the frontend restates a backend rule in
+      # TypeScript, which is where the two surfaces can disagree silently.
+      - name: Test
+        run: npm test
