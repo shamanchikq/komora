@@ -1,7 +1,14 @@
 import type { ReactNode } from "react";
 import type { Cart, Line } from "../types";
 import { items, pl, quantityText, uiInt, uah } from "../format";
-import { CANCEL_BUTTON, isNotice, noticeFirm, noticeText, warningText } from "../copy";
+import {
+  CANCEL_BUTTON,
+  budgetShown,
+  isNotice,
+  noticeFirm,
+  noticeText,
+  warningText,
+} from "../copy";
 
 /** The draft review — the approved design's row anatomy: tile chip, struck original
  * above a substitution, meta line that guards the empty `unit` (a search hit carries
@@ -140,8 +147,13 @@ export function DraftScreen({
 }) {
   const sendable = cart.lines.filter((line) => !line.unavailable);
   const excludedCount = cart.lines.length - sendable.length;
-  const notices = cart.warnings.filter(isNotice);
-  const failures = cart.warnings.filter((code) => !isNotice(code));
+  // `over_budget:84.30` says exactly what the budget caption below says, and the
+  // caption is drawn from `budgetCap` and `cart.total` whenever a cap exists — which
+  // is the only condition under which the warning is emitted. Both were rendered, one
+  // above the other. Mirrors `render.budget_shown` on the bot side.
+  const shown = budgetShown(cart.warnings, budgetCap);
+  const notices = shown.filter(isNotice);
+  const failures = shown.filter((code) => !isNotice(code));
   const notes = [...cart.savings_notes, ...cart.coupon_notes].slice(0, 8);
 
   const optionalLines = sendable.filter((line) => line.optional);

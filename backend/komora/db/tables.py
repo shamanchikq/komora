@@ -96,10 +96,10 @@ class DraftItem(Base):
     """Preserves the order the passes produced; the user reads it top to bottom."""
 
     description: Mapped[str] = mapped_column(Text, default="")
-    category: Mapped[str | None] = mapped_column(Text, default=None)
-    """The Silpo category the line resolved from, so a swap stays on the same shelf."""
     """What the model asked for. Kept so a line can be re-resolved after the fact —
     «інший варіант» re-runs this query rather than storing every candidate."""
+    category: Mapped[str | None] = mapped_column(Text, default=None)
+    """The Silpo category the line resolved from, so a swap stays on the same shelf."""
 
     product_id: Mapped[str] = mapped_column(String(64))
     company_id: Mapped[str] = mapped_column(String(64))

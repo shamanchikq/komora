@@ -176,6 +176,24 @@ class TestBudget:
         assert "200,00 ₴" in text, "what trimming the optional lines would save"
         assert "Це ваш вибір" in text
 
+    def test_the_overage_is_stated_once(self) -> None:
+        """The budget line and `over_budget:` are the same sentence twice.
+
+        The cap line is derived from `budget_cap` and `total`; the warning is emitted
+        only when a cap exists. So both were always printed, one under the other —
+        «Бюджет 500 ₴ — перевищено на 300,00 ₴» followed by «Понад тижневий бюджет на
+        300,00 ₴», about the same cart on the same screen.
+        """
+        over = cart(line("Кава", "800"), warnings=["over_budget:300.00"])
+        text = render_cart(over, "К", budget_cap=500)
+        assert "перевищено на 300,00 ₴" in text
+        assert "Понад тижневий бюджет" not in text
+
+    def test_without_a_cap_the_warning_is_all_there_is(self) -> None:
+        """No budget line is drawn, so the code is the only way to hear the fact."""
+        over = cart(line("Кава", "800"), warnings=["over_budget:300.00"])
+        assert "Понад тижневий бюджет на 300,00 ₴" in render_cart(over, "К")
+
 
 class TestSyncPreview:
     def test_promises_the_existing_cart_is_untouched(self) -> None:

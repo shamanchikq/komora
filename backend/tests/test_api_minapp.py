@@ -390,6 +390,45 @@ class TestPositionsComeFromTheClient:
         assert response.json()["toast"] == "Ця позиція недоступна"
 
 
+class TestBasketIdsComeFromTheClientToo:
+    """The same lesson as the position bounds, one level up.
+
+    FastAPI's `int` path type has no ceiling, so an id past what a row can hold reached
+    the driver instead of the ownership gate: SQLite raised `OverflowError` and
+    Postgres a bigint `DataError`, which is an unhandled 500 rather than a refusal.
+    """
+
+    HUGE = 10**26
+
+    @pytest.mark.parametrize("path", ["/preview", "/push", "/trim", "/cancel"])
+    async def test_an_unholdable_id_is_refused_not_crashed(self, api, path: str) -> None:
+        client, _ = api
+        response = await client.post(f"/api/baskets/{self.HUGE}{path}", headers=header(USER))
+        assert response.status_code == 200
+        assert response.json()["toast"] == "Ця чернетка недоступна"
+
+    async def test_opening_one_is_refused_too(self, api) -> None:
+        """`GET` is where a deep link lands, so it is the reachable one."""
+        client, _ = api
+        response = await client.get(f"/api/baskets/{self.HUGE}", headers=header(USER))
+        assert response.status_code == 200
+        assert response.json()["toast"] == "Ця чернетка недоступна"
+
+    async def test_the_line_routes_refuse_it_before_the_position(self, api) -> None:
+        client, _ = api
+        response = await client.post(
+            f"/api/baskets/{self.HUGE}/lines/0/qty", json={"qty": 2}, headers=header(USER)
+        )
+        assert response.json()["toast"] == "Ця чернетка недоступна"
+
+    async def test_a_real_basket_still_opens(self, api) -> None:
+        """The guard must not have eaten the ordinary case."""
+        client, _ = api
+        basket_id = (await _draft(client))["basket_id"]
+        response = await client.get(f"/api/baskets/{basket_id}", headers=header(USER))
+        assert response.json()["kind"] == "draft"
+
+
 class TestTheStepperRoundsWhereResolveRounds:
     """`on_set_qty` said it rounded like `clamp_quantity` and only capped at stock."""
 

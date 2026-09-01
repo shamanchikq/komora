@@ -11,7 +11,13 @@ import pytest
 from komora.core.models import DraftBasket, DraftLine, ResolvedCart, ResolvedLine
 from komora.core.passes.budget import apply_budget, optional_lines_total
 from komora.core.passes.promos import apply_savings, describe_coupons
-from komora.core.passes.resolve import clamp_quantity, fallback_terms, resolve_basket
+from komora.core.passes.resolve import (
+    MAX_QUANTITY,
+    clamp_quantity,
+    fallback_terms,
+    resolve_basket,
+    snap_quantity,
+)
 from tests.fakes import CONTEXT, FakeSilpo, product
 
 
@@ -370,6 +376,33 @@ class TestResolveWithFallback:
         cart = await resolve_basket(draft(line("Ікра (чорна)")), FakeSilpo({}), CONTEXT)
         assert cart.lines == []
         assert cart.warnings == ["not_found:Ікра (чорна)"]
+
+
+class TestTheQuantityCeiling:
+    """`stock: None` means Silpo did not say, not that there is no limit.
+
+    Nothing in either UI can reach these numbers — the stepper moves one step at a
+    time — but `POST …/lines/{p}/qty` takes a float, and an unbounded one multiplied
+    into a `total` that a `Numeric(10, 2)` column cannot hold: stored silently by
+    SQLite, rejected by Postgres, which `db/tables.py` is written for.
+    """
+
+    def test_unknown_stock_is_not_unlimited(self) -> None:
+        assert snap_quantity(1e12, step=1, weighted=False, stock=None) == MAX_QUANTITY
+
+    def test_a_weighted_good_is_capped_too(self) -> None:
+        assert snap_quantity(1e9, step=0.1, weighted=True, stock=None) == MAX_QUANTITY
+
+    def test_known_stock_still_wins_when_it_is_lower(self) -> None:
+        assert snap_quantity(1e12, step=1, weighted=False, stock=4) == 4
+
+    def test_an_ordinary_amount_is_untouched(self) -> None:
+        assert snap_quantity(3, step=1, weighted=False, stock=None) == 3
+
+    def test_the_model_cannot_draft_past_it_either(self) -> None:
+        """`clamp_quantity` shares the ceiling — a hallucinated 10 000 is not a cart."""
+        milk = product("Молоко", 42.90, stock=None)
+        assert clamp_quantity(10_000, milk) == MAX_QUANTITY
 
 
 class TestWeightedQuantities:

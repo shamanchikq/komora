@@ -112,6 +112,20 @@ def fallback_terms(description: str) -> list[str]:
 DEFAULT_QUANTITY = 1.0
 """What the schema tells the model to send when the user named no amount."""
 
+MAX_QUANTITY = 999.0
+"""The ceiling when Silpo reported no stock — units for a countable, kg for a weighted.
+
+`stock: None` means Silpo did not say, and `ResolvedLine.stock` says so in as many
+words; the arithmetic here read it as no limit at all. Nothing in the UI can reach a
+number like this — the stepper moves one step at a time — but `POST …/lines/{p}/qty`
+takes a float, and 1e12 was accepted, persisted, and multiplied into a `total` of
+42_900_000_000_000.00 for a `Numeric(10, 2)` column: stored silently by SQLite,
+rejected by Postgres, which `db/tables.py` is deliberately written for.
+
+A sanity bound, not a business rule. No household orders 999 of anything, so the
+narrow miss is nobody; the wide miss was an unbounded write.
+"""
+
 
 def clamp_quantity(wanted: float, product: dict[str, Any]) -> float:
     """Never exceed stock, and land on a multiple of the product's step.
@@ -155,9 +169,13 @@ def snap_quantity(
     said in its docstring that it rounded the way this function rounds and then did
     not, so 2,5 packs of milk persisted happily and a later swap silently floored the
     same line to 2.
+
+    `stock=None` means Silpo did not say, which is not the same as no limit —
+    `MAX_QUANTITY` is the ceiling that applies either way.
     """
     step_size = step or 1
     capped = min(wanted, float(stock)) if stock is not None else float(wanted)
+    capped = min(capped, MAX_QUANTITY)
     if step_size > 0:
         # A COUNTABLE product never rounds up. Live: «додай велику колу зеро» reached
         # here as 1.5 — the model encoding "1.5 litres" into a field that counts bottles
@@ -340,12 +358,22 @@ async def resolve_basket(
         # The named category narrows the search rather than replacing it — Silpo's own
         # answer to "which of these near-identical names did you mean", applied to
         # results it has already ranked.
+        #
+        # The fallback runs against the SEARCH, before the shelf is applied — the order
+        # `core.alternatives` already used. Narrowing first made the shelf answer for a
+        # description the search had missed: `narrow([], shelf)` returns the shelf, so
+        # `candidates` was non-empty and the retry loop broke on entry, leaving the
+        # fallback query fetched and never read. «Ковбаса (наприклад, салямі або
+        # варена)» finds nothing and «Ковбаса» finds thirty, so a line needing one
+        # retry got the head of the aisle in Silpo's order and the search got no say —
+        # the state categories were narrowed to get away from.
         shelf = [p for p in browsed.get(draft.description, []) if usable(p)]
-        candidates = narrow(_usable_in(grouped, draft.description), shelf)
+        found = _usable_in(grouped, draft.description)
         for term in retries.get(draft.description, []):
-            if candidates:
+            if found:
                 break
-            candidates = narrow(_usable_in(grouped, term), shelf)
+            found = _usable_in(grouped, term)
+        candidates = narrow(found, shelf)
 
         if not candidates:
             warnings.append(f"{NOT_FOUND}:{draft.description}")

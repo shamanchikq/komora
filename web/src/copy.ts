@@ -60,6 +60,18 @@ export function noticeFirm(code: string): boolean {
   return notice(code)?.firm ?? false;
 }
 
+/** The warnings still worth drawing once the budget caption exists.
+ *
+ * `over_budget:84.30` renders as «Понад тижневий бюджет на 84,30 ₴», which is the
+ * budget caption's own sentence — and the caption is derived from `budgetCap` and
+ * `cart.total`, while the warning is emitted only when a cap is set. So wherever one
+ * is drawn the other is redundant, and both were. Ported from `render.budget_shown`.
+ */
+export function budgetShown(warnings: string[], budgetCap: number | null): string[] {
+  if (budgetCap === null) return warnings;
+  return warnings.filter((code) => !code.startsWith("over_budget:"));
+}
+
 /** Warnings that are notices rather than «не знайшлося» entries. */
 export function isNotice(code: string): boolean {
   const [kind] = split(code);

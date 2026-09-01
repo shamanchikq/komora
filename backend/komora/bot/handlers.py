@@ -50,6 +50,13 @@ from komora.db.tables import DraftBasketRow
 
 HISTORY_TURNS = 20
 
+MAX_ROW_ID = 2**63 - 1
+"""The largest integer a row id can hold, on either store this project targets.
+
+Not a guess at how many baskets there will be: it is the point past which the
+*database driver* fails rather than answering. See `_own_draft`.
+"""
+
 MAX_TEXT = 4096
 """Telegram's own message limit, restated because the Mini App is not Telegram.
 
@@ -292,6 +299,16 @@ async def _own_draft(
     Returns the row, or the `Spoke` refusal to show instead. The Mini App routes call
     this too; there is no second copy of these rules to fall out of sync.
     """
+    if not 0 < basket_id <= MAX_ROW_ID:
+        # Before the query, because the query is what breaks. An id no row can hold
+        # reaches the driver rather than the gate: SQLite raises OverflowError and
+        # Postgres a bigint DataError, so `GET /api/baskets/<26 nines>` was an
+        # unhandled 500 instead of this refusal. FastAPI's `int` path type has no
+        # ceiling, and neither did `on_callback`'s `int(...)`. The same shape as
+        # `POST …/lines/-1/remove`: a client-supplied id that kills the query before
+        # ownership is ever asked about.
+        return Spoke(STALE, toast="Ця чернетка недоступна")
+
     basket = await services.baskets.get(basket_id)
     if basket is None or basket.user_id != telegram_id:
         # Ids come from the client; a mismatch is either stale UI or somebody guessing.

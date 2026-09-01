@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { isNotice, noticeFirm, noticeText, validationText, warningText } from "./copy";
+import {
+  budgetShown,
+  isNotice,
+  noticeFirm,
+  noticeText,
+  validationText,
+  warningText,
+} from "./copy";
 
 /** Every warning code the backend can put in a cart. Keep this list beside the
  * constants that produce them: `promos.DEGRADED_COUPONS`, `resolve.DEGRADED_REPLACEMENTS`,
@@ -72,5 +79,26 @@ describe("validations", () => {
 
   it("quotes an unknown code rather than hiding the obstacle", () => {
     expect(validationText("some.new.code")).toContain("some.new.code");
+  });
+});
+
+describe("budgetShown", () => {
+  /** `over_budget:` and the budget caption are the same sentence, and the caption is
+   * drawn whenever a cap exists — which is the only time the warning is emitted. Both
+   * were rendered, one above the other, about the same cart. Mirrors the backend's
+   * `render.budget_shown`; the two must agree or the surfaces diverge again. */
+  it("drops the overage warning wherever the caption states it", () => {
+    expect(budgetShown(["over_budget:84.30", "degraded:coupons"], 1500)).toEqual([
+      "degraded:coupons",
+    ]);
+  });
+
+  it("keeps it when no cap is drawn, because then nothing else says it", () => {
+    expect(budgetShown(["over_budget:84.30"], null)).toEqual(["over_budget:84.30"]);
+  });
+
+  it("leaves every other code alone", () => {
+    const other = ["not_found:хліб", "timeslot:expired", "degraded:verification"];
+    expect(budgetShown(other, 1500)).toEqual(other);
   });
 });

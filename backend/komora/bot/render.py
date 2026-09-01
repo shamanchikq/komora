@@ -21,7 +21,7 @@ from html import escape
 from komora.bot.outcomes import DraftReady, Outcome, PreviewReady, Spoke, Synced
 from komora.core.models import ResolvedCart, ResolvedLine, SyncReport
 from komora.core.money import CURRENCY, uah
-from komora.core.passes.budget import optional_lines_total
+from komora.core.passes.budget import OVER_BUDGET, optional_lines_total
 from komora.core.sync import SyncPreview
 
 money = uah
@@ -141,6 +141,23 @@ def validation_text(code: str) -> str:
     return known if known else f"Сільпо повідомляє про перешкоду: {esc(code)}"
 
 
+def budget_shown(warnings: list[str], budget_cap: int | None) -> list[str]:
+    """The warnings still worth printing once the budget line has been drawn.
+
+    `over_budget:84.30` and «Бюджет 1500 ₴ — перевищено на 84,30 ₴» are the same
+    sentence twice, and both surfaces printed both: the cap line is derived from
+    `budget_cap` and `total`, and the warning is emitted only when a cap exists, so
+    wherever one appears the other is redundant by construction.
+
+    Dropped here rather than in `apply_budget`, which is right to state the fact — a
+    surface that draws no budget bar still needs to hear it, and `warning_text` still
+    knows the code.
+    """
+    if budget_cap is None:
+        return list(warnings)
+    return [w for w in warnings if not w.startswith(f"{OVER_BUDGET}:")]
+
+
 SWAP_HINT = "⇄ 1…N — показати інший варіант для цієї позиції"
 
 NO_CHECKOUT_LINK = "Оформити замовлення — у застосунку або на сайті Сільпо."
@@ -207,8 +224,9 @@ def render_cart(
 
     if swappable and len(cart.lines) > 1:
         blocks.append(SWAP_HINT)
-    if cart.warnings:
-        blocks += ["", *(warning_text(w) for w in cart.warnings)]
+    shown = budget_shown(cart.warnings, budget_cap)
+    if shown:
+        blocks += ["", *(warning_text(w) for w in shown)]
     notes = [*cart.savings_notes, *cart.coupon_notes]
     if notes:
         blocks += ["", "<b>Знижки та купони</b>", *(f"• {esc(n)}" for n in notes[:8])]
