@@ -14,13 +14,13 @@ Two implementation choices carry the reasoning:
   need it.
 """
 
-import json
 from collections.abc import Sequence
 from typing import Any
 
 import httpx
 
 from komora.core.llm.protocol import LLMResponse, LLMUnavailable, Message, ToolCall, ToolDecl
+from komora.core.llm.toolargs import as_args
 
 DEFAULT_NUM_CTX = 32768
 """Ollama defaults to 4096 on machines with under 23 GiB of VRAM, and silently drops
@@ -124,20 +124,6 @@ class OllamaClient:
         for raw in message.get("tool_calls") or []:
             function = raw.get("function") or {}
             calls.append(
-                ToolCall(name=function.get("name", ""), args=_as_args(function.get("arguments")))
+                ToolCall(name=function.get("name", ""), args=as_args(function.get("arguments")))
             )
         return LLMResponse(text=message.get("content") or None, tool_calls=tuple(calls))
-
-
-def _as_args(arguments: Any) -> dict[str, Any]:
-    """Arguments arrive as a real object from /api/chat but stringified from the
-    OpenAI-compatible endpoint. Malformed output is a retry for the caller, not a crash."""
-    if isinstance(arguments, dict):
-        return arguments
-    if isinstance(arguments, str):
-        try:
-            parsed = json.loads(arguments)
-        except json.JSONDecodeError:
-            return {}
-        return parsed if isinstance(parsed, dict) else {}
-    return {}

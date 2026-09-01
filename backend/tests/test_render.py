@@ -12,6 +12,9 @@ from komora.bot.bot import MAX_MESSAGE, chunks
 from komora.bot.render import (
     MIXED_TOTALS,
     NO_CHECKOUT_LINK,
+    OPEN_APP_BUTTON,
+    deep_link,
+    draft_buttons,
     esc,
     items,
     money,
@@ -172,6 +175,24 @@ class TestBudget:
         assert "перевищено на 300,00 ₴" in text
         assert "200,00 ₴" in text, "what trimming the optional lines would save"
         assert "Це ваш вибір" in text
+
+    def test_the_overage_is_stated_once(self) -> None:
+        """The budget line and `over_budget:` are the same sentence twice.
+
+        The cap line is derived from `budget_cap` and `total`; the warning is emitted
+        only when a cap exists. So both were always printed, one under the other —
+        «Бюджет 500 ₴ — перевищено на 300,00 ₴» followed by «Понад тижневий бюджет на
+        300,00 ₴», about the same cart on the same screen.
+        """
+        over = cart(line("Кава", "800"), warnings=["over_budget:300.00"])
+        text = render_cart(over, "К", budget_cap=500)
+        assert "перевищено на 300,00 ₴" in text
+        assert "Понад тижневий бюджет" not in text
+
+    def test_without_a_cap_the_warning_is_all_there_is(self) -> None:
+        """No budget line is drawn, so the code is the only way to hear the fact."""
+        over = cart(line("Кава", "800"), warnings=["over_budget:300.00"])
+        assert "Понад тижневий бюджет на 300,00 ₴" in render_cart(over, "К")
 
 
 class TestSyncPreview:
@@ -385,3 +406,35 @@ class TestASyncWithNoCheckoutLink:
 
     def test_an_empty_sync_is_not_told_to_check_out(self) -> None:
         assert NO_CHECKOUT_LINK not in render_sync_report(SyncReport(ok=True))
+
+
+class TestTheDeepLink:
+    """A link into the Mini App, on a basket the user is already reading about.
+
+    The bot stays the place the conversation happens; this is only a door into the
+    other surface, and a deployment without a Mini App must not grow a dead button.
+    """
+
+    def test_the_payload_names_the_basket(self) -> None:
+        assert (
+            deep_link("https://t.me/moya_komora_bot/komora", 42)
+            == "https://t.me/moya_komora_bot/komora?startapp=basket_42"
+        )
+
+    def test_the_button_is_offered_when_the_app_is_deployed(self) -> None:
+        buttons = draft_buttons(7, cart(line()), "https://t.me/b/komora")
+        opens = [b for b in buttons if b.label == OPEN_APP_BUTTON]
+        assert [b.url for b in opens] == ["https://t.me/b/komora?startapp=basket_7"]
+        assert all(b.data is None for b in opens), "a link, never a callback"
+
+    def test_no_button_without_a_deployed_app(self) -> None:
+        """The default configuration. A guessed short name opens a 404 inside
+        Telegram, which reads as Komora being broken."""
+        for buttons in (draft_buttons(7, cart(line())), draft_buttons(7, cart(line()), "")):
+            assert not [b for b in buttons if b.label == OPEN_APP_BUTTON]
+
+    def test_the_actions_are_still_there(self) -> None:
+        """The door is an addition, not a replacement: sending still happens in chat."""
+        labels = [b.label for b in draft_buttons(7, cart(line()), "https://t.me/b/komora")]
+        assert "Надіслати в Сільпо" in labels
+        assert "Скасувати" in labels

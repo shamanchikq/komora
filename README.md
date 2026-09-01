@@ -2,7 +2,7 @@
 
 **A shopping agent that can suggest anything and change nothing.**
 
-Python 3.14 · 749 tests · `mypy --strict` clean · the whole suite runs with no network, no model and no bot
+Python 3.14 · 793 tests · `mypy --strict` clean · the whole suite runs with no network, no model and no bot
 
 You send a message — «купи молоко, хліб і щось до чаю» — and Komora comes back with a real
 cart: actual products, actual prices, in stock at your store, each line saying why it's
@@ -51,8 +51,9 @@ komora/
 │   ├── passes/    resolve → verify → savings → budget
 │   └── sync.py    preview, then write to the real cart
 ├── db/            SQLAlchemy 2
-├── api/           FastAPI — just the OAuth callback
+├── api/           FastAPI — OAuth callback + the Mini App API (initData → JSON)
 ├── bot/           the conversation, with Telegram in exactly one file
+├── web/           the Mini App: Vite + React, served same-origin from web/dist
 └── main.py        web server and bot polling in one process
 ```
 
@@ -99,7 +100,7 @@ decrypt rather than quietly granting someone else's access.
 Everything from `backend/`, using [uv](https://docs.astral.sh/uv/):
 
 ```bash
-uv run pytest              # 749 tests, no network needed
+uv run pytest              # 793 tests, no network needed
 uv run ruff check .
 uv run mypy komora
 ```
@@ -122,8 +123,12 @@ The full loop works against live Silpo: link your account, send a sentence, revi
 draft, confirm, and the products land in your real cart with a checkout link. Editing in
 plain language works too, including removing something after it's already been sent.
 
-Not built yet: the Mini App, the habits engine, and the meal-plan, budget-week and deals
-flows. Open problems are listed honestly in
+The Mini App exists: initData authentication, the draft-cart screen, the sync sheet and
+deep links onto a named basket — built in `web/` to an approved design and served
+same-origin from `web/dist`. Tapping ⇄ on a line offers five other products to choose
+between, which is the thing a screen can do that a chat keyboard cannot. It has **not**
+yet been verified on a live device. Not built yet: the habits engine, and the meal-plan,
+budget-week and deals flows. Open problems are listed honestly in
 [`backend/README.md`](backend/README.md#known-issues), including the ones still unsolved.
 
 ## Documentation

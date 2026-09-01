@@ -21,7 +21,7 @@ from html import escape
 from komora.bot.outcomes import DraftReady, Outcome, PreviewReady, Spoke, Synced
 from komora.core.models import ResolvedCart, ResolvedLine, SyncReport
 from komora.core.money import CURRENCY, uah
-from komora.core.passes.budget import optional_lines_total
+from komora.core.passes.budget import OVER_BUDGET, optional_lines_total
 from komora.core.sync import SyncPreview
 
 money = uah
@@ -71,6 +71,8 @@ def line_text(index: int, line: ResolvedLine) -> str:
 
     if line.substituted_from:
         parts.append(f"   ⇄ заміна (було: {esc(line.substituted_from)})")
+    if line.synced:
+        parts.append("   ✓ вже в кошику Сільпо")
     if line.optional:
         parts.append("   ○ необовʼязково")
     parts.append(f"   — {esc(line.reason_text)}")
@@ -141,7 +143,37 @@ def validation_text(code: str) -> str:
     return known if known else f"Сільпо повідомляє про перешкоду: {esc(code)}"
 
 
+def budget_shown(warnings: list[str], budget_cap: int | None) -> list[str]:
+    """The warnings still worth printing once the budget line has been drawn.
+
+    `over_budget:84.30` and «Бюджет 1500 ₴ — перевищено на 84,30 ₴» are the same
+    sentence twice, and both surfaces printed both: the cap line is derived from
+    `budget_cap` and `total`, and the warning is emitted only when a cap exists, so
+    wherever one appears the other is redundant by construction.
+
+    Dropped here rather than in `apply_budget`, which is right to state the fact — a
+    surface that draws no budget bar still needs to hear it, and `warning_text` still
+    knows the code.
+    """
+    if budget_cap is None:
+        return list(warnings)
+    return [w for w in warnings if not w.startswith(f"{OVER_BUDGET}:")]
+
+
 SWAP_HINT = "⇄ 1…N — показати інший варіант для цієї позиції"
+
+ALREADY_SENT = (
+    "✓ {items} з цієї чернетки вже в кошику Сільпо — повторне надсилання оновить "
+    "кількість, а не додасть ще раз."
+)
+"""Said whenever a draft holds a line a push already landed.
+
+A push that lands partly leaves the basket open on purpose, so it can be retried — and
+an open basket is drawn as an ordinary draft on both surfaces, under the promise that
+nothing has reached Silpo yet. For these lines that promise is false, and the user is
+the one who would discover it in their cart. `DraftItem.synced` is set from what the
+cart read back, so this counts landings rather than attempts.
+"""
 
 NO_CHECKOUT_LINK = "Оформити замовлення — у застосунку або на сайті Сільпо."
 """Said whenever a sync lands with no checkout link and no error to blame it on.
@@ -205,10 +237,15 @@ def render_cart(
                 "Це ваш вибір: надіслати можна попри це."
             )
 
+    already = [ln for ln in cart.lines if ln.synced]
+    if already:
+        blocks.append(ALREADY_SENT.format(items=items(len(already))))
+
     if swappable and len(cart.lines) > 1:
         blocks.append(SWAP_HINT)
-    if cart.warnings:
-        blocks += ["", *(warning_text(w) for w in cart.warnings)]
+    shown = budget_shown(cart.warnings, budget_cap)
+    if shown:
+        blocks += ["", *(warning_text(w) for w in shown)]
     notes = [*cart.savings_notes, *cart.coupon_notes]
     if notes:
         blocks += ["", "<b>Знижки та купони</b>", *(f"• {esc(n)}" for n in notes[:8])]
@@ -371,12 +408,28 @@ PUSH_BUTTON = "Додати в кошик"
 CANCEL_BUTTON = "Скасувати"
 RETRY_BUTTON = "Спробувати ще раз"
 CHECKOUT_BUTTON = "Оформити на сайті"
+OPEN_APP_BUTTON = "Відкрити в Коморі"
 
 MAX_SWAP_BUTTONS = 8
 """Telegram tolerates more, but a keyboard longer than this reads as noise."""
 
 
-def draft_buttons(basket_id: int, cart: ResolvedCart) -> tuple[Button, ...]:
+def deep_link(mini_app_url: str, basket_id: int) -> str:
+    """A launch link that opens the Mini App on one basket.
+
+    Telegram hands `startapp`'s value to the app as `start_param`, inside the signed
+    `initData` — so the backend can read it, but it proves only what the *link* said,
+    never who may act on that basket. `handlers._own_draft` still decides that.
+
+    The payload is `<kind>_<value>` so a second target can be added without teaching
+    the parser a new shape. Telegram allows `A-Za-z0-9_-`, up to 64 characters.
+    """
+    return f"{mini_app_url}?startapp=basket_{basket_id}"
+
+
+def draft_buttons(
+    basket_id: int, cart: ResolvedCart, mini_app_url: str | None = None
+) -> tuple[Button, ...]:
     """Send/cancel, plus one «⇄ N» per line matching the numbers in the text.
 
     `i` counts every line, including unavailable ones, because `render_cart` numbers
@@ -388,20 +441,30 @@ def draft_buttons(basket_id: int, cart: ResolvedCart) -> tuple[Button, ...]:
         for i, line in enumerate(cart.lines[:MAX_SWAP_BUTTONS], start=1)
         if not line.unavailable
     )
+    # Only when the Mini App is actually deployed and named; see `config`.
+    open_app = (
+        (Button(OPEN_APP_BUTTON, url=deep_link(mini_app_url, basket_id)),) if mini_app_url else ()
+    )
     return (
         *swaps,
+        *open_app,
         Button(SEND_BUTTON, data=f"sync:{basket_id}"),
         Button(CANCEL_BUTTON, data=f"cancel:{basket_id}"),
     )
 
 
-def to_reply(outcome: Outcome) -> Reply:
-    """Say an outcome in Telegram. The only place a decision becomes markup."""
+def to_reply(outcome: Outcome, mini_app_url: str | None = None) -> Reply:
+    """Say an outcome in Telegram. The only place a decision becomes markup.
+
+    `mini_app_url` is the deployed Mini App's `t.me` link, or `None` where there is no
+    Mini App to open — the reply is complete either way, which is why it is a
+    rendering argument and not something the handlers know about.
+    """
     match outcome:
         case DraftReady():
             buttons: tuple[Button, ...] = ()
             if outcome.basket_id is not None:
-                buttons = draft_buttons(outcome.basket_id, outcome.cart)
+                buttons = draft_buttons(outcome.basket_id, outcome.cart, mini_app_url)
             return Reply(
                 render_cart(
                     outcome.cart,

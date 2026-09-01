@@ -10,7 +10,7 @@ import re
 from decimal import Decimal
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, StringConstraints, field_validator
+from pydantic import BaseModel, Field, StringConstraints, computed_field, field_validator
 
 ReasonKind = Literal["stated", "habit", "deal", "meal", "sub"]
 """Why a line is in the basket. Surfaced to the user, so it is never optional."""
@@ -153,10 +153,29 @@ class ResolvedLine(BaseModel):
     optional: bool = False
     unavailable: bool = False
     """Kept visible so the user sees what is missing, but excluded from totals and sync."""
+    weighted: bool = False
+    """Priced and ordered per kilogram: `unit_price` is then ₴/kg and `qty` is kg.
+    A search hit carries no size field at all, so this is also the only signal a
+    surface has for showing «0,15 кг × 999,00 ₴/кг» instead of a piece count."""
+    step: float | None = None
+    """The smallest orderable weight of a weighted good (0,1 cheese, 0,25 bacon).
+    An unqualified request resolves to exactly one of these — never one kilo."""
+    stock: float | None = None
+    """Silpo's remaining stock when the search returned it. The ceiling a quantity
+    control must respect; `None` means unknown, not unlimited."""
+    synced: bool = False
+    """This line is already in the real Silpo cart, because a push put it there.
 
+    A push can land partly, and a basket that landed partly stays a draft so it can be
+    retried — so «нічого не змінилося у кошику Сільпо», which every draft surface says,
+    is false for exactly these lines. Set from `SyncReport.added`, never guessed.
+    """
+
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def line_total(self) -> Decimal:
-        """Price for this line.
+        """Price for this line, and part of every serialisation (`model_dump`) so a
+        second surface never multiplies money itself.
 
         `qty` is a measurement (1.2 kg) and `unit_price` is money, so multiplying them
         directly is a TypeError. Converting through `str` keeps the float's binary
@@ -196,9 +215,20 @@ class SyncReport(BaseModel):
     ok: bool
     """False if *any* line failed. A partial sync is never reported as success."""
     added: list[str] = Field(default_factory=list)
+    added_ids: list[str] = Field(default_factory=list)
+    """Product ids for `added`, so a caller can record what landed.
+
+    Names are for reading and ids are for matching: two lines can carry the same name,
+    and `execute_sync` judges a write by reading the cart back — what it reads back are
+    ids. `handlers._push` marks exactly these as `DraftItem.synced`.
+    """
     failed: list[tuple[str, str]] = Field(default_factory=list)
     """(product name, error) for each line Silpo rejected."""
     removed: list[str] = Field(default_factory=list)
+    removed_ids: list[str] = Field(default_factory=list)
+    """Product ids for `removed` — what to stop calling synced. Same reason as
+    `added_ids`: a removal is confirmed by reading the cart back, and ids are what
+    that read returns."""
     remove_failed: list[tuple[str, str]] = Field(default_factory=list)
     """A removal that did not happen counts against `ok` exactly like a failed add:
     the user asked for the cart to end up a certain way and it did not."""

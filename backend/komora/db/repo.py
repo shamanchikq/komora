@@ -165,6 +165,10 @@ def _line(item: DraftItem) -> ResolvedLine:
         substituted_from=item.substituted_from,
         optional=item.optional,
         unavailable=item.unavailable,
+        weighted=item.weighted,
+        step=item.step,
+        stock=item.stock,
+        synced=item.synced,
     )
 
 
@@ -224,6 +228,9 @@ class BasketRepo:
                         substituted_from=line.substituted_from,
                         optional=line.optional,
                         unavailable=line.unavailable,
+                        weighted=line.weighted,
+                        step=line.step,
+                        stock=line.stock,
                     )
                 )
             return basket.id
@@ -272,16 +279,23 @@ class BasketRepo:
         remove a product it did not add, because it cannot tell one the user chose in
         the Silpo app from one of its own, and guessing wrong deletes real food.
 
-        Unavailable lines are excluded: they were never sent, so they are not there.
+        Selected by `DraftItem.synced`, which is set from what a push actually landed.
+        The basket's own status used to stand in for that, and it is not the same
+        claim: a push that lands partly leaves a `draft`, so the lines that really did
+        reach the cart were invisible here and «прибери молоко» could not name a
+        product Komora had put there minutes earlier. Unavailable lines never carry
+        the flag, because they are never sent.
         """
         async with self._sessions() as session:
             recent = (
-                select(DraftBasketRow.id)
+                select(DraftItem.basket_id)
+                .join(DraftBasketRow, DraftBasketRow.id == DraftItem.basket_id)
                 .where(
                     DraftBasketRow.user_id == telegram_id,
-                    DraftBasketRow.status == "synced",
+                    DraftItem.synced.is_(True),
                 )
-                .order_by(DraftBasketRow.id.desc())
+                .group_by(DraftItem.basket_id)
+                .order_by(DraftItem.basket_id.desc())
                 .limit(baskets)
                 .scalar_subquery()
             )
@@ -290,7 +304,7 @@ class BasketRepo:
                 .where(
                     DraftItem.basket_id.in_(recent),
                     DraftItem.removed.is_(False),
-                    DraftItem.unavailable.is_(False),
+                    DraftItem.synced.is_(True),
                 )
                 .order_by(DraftItem.basket_id.desc(), DraftItem.position)
             )
@@ -306,19 +320,12 @@ class BasketRepo:
         «⇄ N» button carries — not the `position` column. The two agree only while no
         row is `removed`, and matching on the column instead would edit the wrong
         product the moment one is: `load_cart` filters those out, so every line below a
-        removed one sits at a lower index than its stored position. Nothing sets that
-        flag today, which is exactly why the mismatch would be found by a user rather
-        than by a test. Selected the same way `load_cart` selects, so they cannot drift.
+        removed one sits at a lower index than its stored position. `drop_item` sets
+        that flag now, so the two disagree in ordinary use — `_visible_item` is the one
+        selection all three share, and `load_cart` filters identically.
         """
         async with self._sessions() as session, session.begin():
-            result = await session.execute(
-                select(DraftItem)
-                .where(DraftItem.basket_id == basket_id, DraftItem.removed.is_(False))
-                .order_by(DraftItem.position)
-                .offset(position)
-                .limit(1)
-            )
-            item = result.scalar_one_or_none()
+            item = await self._visible_item(session, basket_id, position)
             if item is None:
                 return False
             item.product_id = line.product_id
@@ -331,7 +338,104 @@ class BasketRepo:
             item.old_price = line.old_price
             item.unavailable = line.unavailable
             item.substituted_from = line.substituted_from
+            item.weighted = line.weighted
+            item.step = line.step
+            item.stock = line.stock
             return True
+
+    async def set_qty(self, basket_id: int, position: int, qty: float) -> bool:
+        """Set one line's quantity.
+
+        The same index space as `load_cart` — visible lines in stored order — so a
+        surface that just rendered the basket can address it safely.
+        """
+        async with self._sessions() as session, session.begin():
+            item = await self._visible_item(session, basket_id, position)
+            if item is None:
+                return False
+            item.qty = qty
+            return True
+
+    async def drop_item(self, basket_id: int, position: int) -> bool:
+        """Mark one line removed. The row stays (history keeps what was synced) but
+        `load_cart` filters it out from here on.
+        """
+        async with self._sessions() as session, session.begin():
+            item = await self._visible_item(session, basket_id, position)
+            if item is None:
+                return False
+            item.removed = True
+            return True
+
+    @staticmethod
+    async def _visible_item(
+        session: AsyncSession, basket_id: int, position: int
+    ) -> DraftItem | None:
+        """The one selection `replace_item`, `set_qty` and `drop_item` share.
+
+        A negative position is nobody's line. SQLite reads `OFFSET -1` as `OFFSET 0`
+        and hands back the FIRST row — so `POST …/lines/-1/remove`, the one caller
+        that had no bounds check of its own, deleted a line the request never named
+        and answered 200. Postgres raises on the same query instead, which would have
+        made it a 500 rather than a wrong answer. Refused here, where all three see
+        it, rather than three times over at the call sites.
+        """
+        if position < 0:
+            return None
+        result = await session.execute(
+            select(DraftItem)
+            .where(DraftItem.basket_id == basket_id, DraftItem.removed.is_(False))
+            .order_by(DraftItem.position)
+            .offset(position)
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    async def mark_synced(self, basket_id: int, product_ids: set[str]) -> None:
+        """Record which of this basket's lines actually reached the Silpo cart.
+
+        Keyed on `product_id` rather than position because that is what
+        `execute_sync` can vouch for: it judges a write by reading the cart back, and
+        what it reads back are product ids. Positions would have to survive an edit
+        between the two taps; ids are what Silpo itself holds.
+        """
+        if not product_ids:
+            return
+        async with self._sessions() as session, session.begin():
+            await session.execute(
+                update(DraftItem)
+                .where(
+                    DraftItem.basket_id == basket_id,
+                    DraftItem.product_id.in_(product_ids),
+                )
+                .values(synced=True)
+            )
+
+    async def unmark_synced(self, telegram_id: int, product_ids: set[str]) -> None:
+        """A product Komora took back out of the cart is no longer in it.
+
+        Scoped to the user, not to a basket: a removal targets whatever earlier basket
+        put the product there, and `_push` knows the sender rather than that basket.
+        Nothing user-visible rests on this — `match_removals` gates every candidate
+        against a live cart read — but a flag that says "this is in your Silpo cart"
+        must not go on saying it after Komora itself removed it.
+        """
+        if not product_ids:
+            return
+        async with self._sessions() as session, session.begin():
+            baskets = (
+                select(DraftBasketRow.id)
+                .where(DraftBasketRow.user_id == telegram_id)
+                .scalar_subquery()
+            )
+            await session.execute(
+                update(DraftItem)
+                .where(
+                    DraftItem.basket_id.in_(baskets),
+                    DraftItem.product_id.in_(product_ids),
+                )
+                .values(synced=False)
+            )
 
     async def update_totals(self, basket_id: int, cart: ResolvedCart) -> None:
         """Write back everything a swap recomputes.

@@ -19,11 +19,14 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from komora.bot.handlers import (
     NEED_AUTH,
+    NO_ACTIVE_DRAFT,
     NO_CONTEXT,
     SILPO_DOWN,
     Services,
     on_budget,
     on_callback,
+    on_open_active,
+    on_open_basket,
     on_start,
     on_text,
 )
@@ -726,3 +729,93 @@ class TestTheSeamASecondSurfaceWillUse:
         outcome = await on_start(services, USER)
         assert isinstance(outcome, Spoke)
         assert outcome.needs_link is True, "an unlinked user is offered the login"
+
+
+class TestAPartialSyncIsVisibleAfterwards:
+    """A push that lands partly leaves the basket open **on purpose** — it has to be
+    retriable, and re-adding sets quantities rather than incrementing them.
+
+    But an open basket is drawn as an ordinary draft on both surfaces, under the
+    promise that Silpo is untouched, and for the lines that already landed that is
+    false. Nothing recorded which those were: «synced» lived on the basket, and a
+    partly-landed basket is not one.
+    """
+
+    async def _partial(self, sessions: async_sessionmaker):  # type: ignore[no-untyped-def]
+        """Milk lands, bread is swallowed — accepted, then silently not in the cart."""
+        mcp = FakeSilpo(CATALOGUE, swallow={"id-Хліб Київський"})
+        services, _, _ = services_for(sessions, mcp=mcp)
+        draft = await on_text(services, USER, "купи молоко і хліб")
+        assert isinstance(draft, DraftReady) and draft.basket_id is not None
+        synced = await on_callback(services, USER, f"push:{draft.basket_id}")
+        assert isinstance(synced, Synced)
+        return services, draft.basket_id, synced
+
+    async def test_the_basket_stays_open_for_a_retry(self, sessions: async_sessionmaker) -> None:
+        services, basket_id, synced = await self._partial(sessions)
+        assert synced.report.ok is False
+        assert synced.report.added == ["Молоко Яготинське 2,6%"]
+        assert await services.baskets.get_status(basket_id) == "draft"
+
+    async def test_the_line_that_landed_is_marked(self, sessions: async_sessionmaker) -> None:
+        services, basket_id, _ = await self._partial(sessions)
+        reopened = await on_open_basket(services, USER, basket_id)
+        assert isinstance(reopened, DraftReady)
+        marked = {line.name: line.synced for line in reopened.cart.lines}
+        assert marked == {"Молоко Яготинське 2,6%": True, "Хліб Київський": False}
+
+    async def test_the_draft_says_so_rather_than_promising_otherwise(
+        self, sessions: async_sessionmaker
+    ) -> None:
+        services, basket_id, _ = await self._partial(sessions)
+        reopened = await on_open_basket(services, USER, basket_id)
+        text = to_reply(reopened).text
+        assert "вже в кошику Сільпо" in text
+
+    async def test_a_landed_line_can_be_removed_by_name(self, sessions: async_sessionmaker) -> None:
+        """`synced_lines` read the basket's status, so a product Komora had genuinely
+        put in the cart minutes earlier was not a removal candidate at all."""
+        services, _, _ = await self._partial(sessions)
+        candidates = await services.baskets.synced_lines(USER)
+        assert [line.name for line in candidates] == ["Молоко Яготинське 2,6%"]
+
+    async def test_a_clean_sync_marks_every_line(self, sessions: async_sessionmaker) -> None:
+        """The guard must not have narrowed the ordinary case."""
+        services, _, _ = services_for(sessions)
+        draft = await on_text(services, USER, "купи молоко і хліб")
+        assert isinstance(draft, DraftReady) and draft.basket_id is not None
+        await on_callback(services, USER, f"push:{draft.basket_id}")
+        candidates = await services.baskets.synced_lines(USER)
+        assert {line.name for line in candidates} == {
+            "Молоко Яготинське 2,6%",
+            "Хліб Київський",
+        }
+
+
+class TestTheActiveDraftIsReachable:
+    """«/basket» — a draft card scrolls away, and building another discards it."""
+
+    async def test_it_returns_the_open_draft(self, sessions: async_sessionmaker) -> None:
+        services, _, _ = services_for(sessions)
+        draft = await on_text(services, USER, "купи молоко і хліб")
+        assert isinstance(draft, DraftReady)
+        again = await on_open_active(services, USER)
+        assert isinstance(again, DraftReady)
+        assert again.basket_id == draft.basket_id
+        assert [ln.name for ln in again.cart.lines] == [ln.name for ln in draft.cart.lines]
+
+    async def test_no_draft_is_said_plainly(self, sessions: async_sessionmaker) -> None:
+        services, _, _ = services_for(sessions)
+        assert await on_open_active(services, USER) == Spoke(NO_ACTIVE_DRAFT)
+
+    async def test_it_is_scoped_to_the_sender(self, sessions: async_sessionmaker) -> None:
+        services, _, _ = services_for(sessions)
+        await on_text(services, USER, "купи молоко і хліб")
+        assert await on_open_active(services, 999) == Spoke(NO_ACTIVE_DRAFT)
+
+    async def test_a_sent_basket_is_no_longer_active(self, sessions: async_sessionmaker) -> None:
+        services, _, _ = services_for(sessions)
+        draft = await on_text(services, USER, "купи молоко і хліб")
+        assert isinstance(draft, DraftReady)
+        await on_callback(services, USER, f"push:{draft.basket_id}")
+        assert await on_open_active(services, USER) == Spoke(NO_ACTIVE_DRAFT)

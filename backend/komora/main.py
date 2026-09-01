@@ -107,7 +107,7 @@ async def run() -> None:
         start_linking=link,
     )
 
-    dispatcher = build_dispatcher(services)
+    dispatcher = build_dispatcher(services, settings.telegram_mini_app_url or None)
     # ONE process, deliberately — not merely the default.
     #
     # `AuthorizationBridge` keeps pending OAuth flows in a dict in this process, and the
@@ -122,7 +122,7 @@ async def run() -> None:
     # storage before scaling out, not by adding workers and hoping.
     server = uvicorn.Server(
         uvicorn.Config(
-            create_app(bridge),
+            create_app(bridge, services, settings.telegram_bot_token),
             host="0.0.0.0",
             port=settings.http_port,
             log_level="info",

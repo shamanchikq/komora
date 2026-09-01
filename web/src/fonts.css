@@ -1,0 +1,80 @@
+/* Onest and IBM Plex Mono, served from Komora itself.
+ *
+ * The SDK next door is vendored so the Mini App does not depend on a CDN; the fonts
+ * were still coming from fonts.googleapis.com — a second origin to resolve, connect
+ * to and be blocked by before the design's own typeface appears. These are the files
+ * Google serves, subset to the two ranges a Ukrainian UI needs: `cyrillic` carries
+ * і, ї, є and ґ, `latin` the numerals and the product names that are written in it.
+ * Nothing else in the page reaches an external origin now.
+ *
+ * Onest is a variable font: one file per subset covers 400–700, which is why it is
+ * declared as a range rather than as four faces pointing at four identical copies.
+ * IBM Plex Mono is not — its two weights are two files.
+ *
+ * Both are SIL Open Font License 1.1; the licences sit in fonts/ beside the files.
+ * `swap` is deliberate: the fallback stack in styles.css paints immediately and the
+ * real face replaces it, which is the right trade on a phone.
+ *
+ * To regenerate: re-run the CSS2 query for these families with a browser user agent
+ * and keep the cyrillic and latin blocks.
+ */
+
+/* Onest, cyrillic */
+@font-face {
+  font-family: "Onest";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("./fonts/onest-cyrillic.woff2") format("woff2");
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+
+/* Onest, latin */
+@font-face {
+  font-family: "Onest";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("./fonts/onest-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* IBM Plex Mono, cyrillic */
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("./fonts/ibm-plex-mono-400-cyrillic.woff2") format("woff2");
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+
+/* IBM Plex Mono, latin */
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("./fonts/ibm-plex-mono-400-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* IBM Plex Mono, cyrillic */
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("./fonts/ibm-plex-mono-500-cyrillic.woff2") format("woff2");
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+
+/* IBM Plex Mono, latin */
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("./fonts/ibm-plex-mono-500-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}

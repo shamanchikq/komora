@@ -19,6 +19,7 @@ Verified against mcp 2.0.0. See docs/superpowers/specs/2026-08-10-verified-exter
 
 import asyncio
 import json
+import logging
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -30,6 +31,8 @@ from mcp.shared.auth import OAuthClientInformationFull, OAuthClientMetadata, OAu
 
 from komora.core.crypto import TokenCipher
 from komora.db.repo import OAuthClientRepo, UserRepo
+
+log = logging.getLogger(__name__)
 
 CALLBACK_PATH = "/auth/silpo/callback"
 DEFAULT_AUTH_TIMEOUT_SECONDS = 600.0
@@ -61,6 +64,11 @@ def build_client_metadata(public_base_url: str) -> OAuthClientMetadata:
     )
 
 
+def _serves(info: OAuthClientInformationFull, redirect_uri: str) -> bool:
+    """Whether a stored registration lists the callback this process would send."""
+    return any(str(uri).rstrip("/") == redirect_uri.rstrip("/") for uri in info.redirect_uris or [])
+
+
 class DBTokenStorage(TokenStorage):
     """Per-user tokens (encrypted) plus the one shared client registration."""
 
@@ -70,8 +78,13 @@ class DBTokenStorage(TokenStorage):
         users: UserRepo,
         clients: OAuthClientRepo,
         cipher: TokenCipher,
+        redirect_uri: str | None = None,
     ) -> None:
         self._telegram_id = telegram_id
+        self._redirect_uri = redirect_uri
+        """The callback this process would send. A stored registration that does not
+        list it is unusable — see `get_client_info`. `None` disables the check, which
+        is what a caller that does not know its own callback should get."""
         self._users = users
         self._clients = clients
         self._cipher = cipher
@@ -113,9 +126,35 @@ class DBTokenStorage(TokenStorage):
         await self._users.set_token_blob(self._telegram_id, blob, expires_at)
 
     async def get_client_info(self) -> OAuthClientInformationFull | None:
-        """App-wide, deliberately not scoped to `self._telegram_id`."""
+        """App-wide, deliberately not scoped to `self._telegram_id`.
+
+        **Discarded when it was registered against a different callback.** The
+        registration is created once and reused forever, and it carries the
+        `redirect_uris` it was created with — so moving `KOMORA_PUBLIC_BASE_URL`
+        (localhost to a tunnel, a tunnel to a deployment) left the stored client
+        pointing at a URL this process no longer serves. Nothing detected it: the SDK
+        would present a redirect_uri the authorization server never registered, and
+        Silpo would refuse the flow with an OAuth error rather than anything Komora
+        could explain. Returning `None` makes the SDK register afresh, which is the
+        recovery `OAuthClientRepo.clear()` existed to perform by hand.
+
+        Existing users are untouched by this: their tokens refresh against a client id
+        that only changes when a new registration is actually made.
+        """
         payload = await self._clients.get()
-        return OAuthClientInformationFull.model_validate(payload) if payload else None
+        if not payload:
+            return None
+        info = OAuthClientInformationFull.model_validate(payload)
+        if self._redirect_uri is not None and not _serves(info, self._redirect_uri):
+            log.info(
+                "discarding the stored OAuth registration: it lists %s, this process "
+                "serves %s — re-registering",
+                [str(uri) for uri in info.redirect_uris or []],
+                self._redirect_uri,
+            )
+            await self._clients.clear()
+            return None
+        return info
 
     async def set_client_info(self, client_info: OAuthClientInformationFull) -> None:
         await self._clients.set(json.loads(client_info.model_dump_json()))

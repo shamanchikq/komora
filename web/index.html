@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="uk">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Комора</title>
+    <!-- Telegram's SDK must exist before the app boots: it carries initData and the
+         native buttons. Vendored so the Mini App does not depend on a CDN. -->
+    <script src="/telegram-web-app.js"></script>
+    <!-- Onest and IBM Plex Mono are served from Komora too, not from Google: see
+         src/fonts.css. The page reaches no external origin at all. -->
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

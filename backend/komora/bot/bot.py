@@ -11,10 +11,24 @@ from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.filters import Command, CommandObject, CommandStart
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import (
+    CallbackQuery,
+    ErrorEvent,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
 
-from komora.bot.handlers import Services, on_budget, on_callback, on_start, on_text
-from komora.bot.outcomes import Outcome
+from komora.bot.handlers import (
+    UNEXPECTED,
+    Services,
+    on_budget,
+    on_callback,
+    on_open_active,
+    on_start,
+    on_text,
+)
+from komora.bot.outcomes import Outcome, Spoke
 from komora.bot.render import Reply, to_reply
 
 log = logging.getLogger(__name__)
@@ -77,32 +91,46 @@ async def send_to(bot: Bot, chat_id: int, reply: Reply) -> None:
     await bot.send_message(chat_id, parts[-1], reply_markup=_keyboard(reply))
 
 
-async def send(message: Message, outcome: Outcome) -> None:
+async def send(message: Message, outcome: Outcome, mini_app_url: str | None = None) -> None:
     """Say an outcome. Rendering happens here, at the edge, and nowhere earlier."""
     if message.bot is None:  # only on a detached model — never inside a handler
         raise RuntimeError("message is not bound to a bot")
-    await send_to(message.bot, message.chat.id, to_reply(outcome))
+    await send_to(message.bot, message.chat.id, to_reply(outcome, mini_app_url))
 
 
-def build_router(services: Services) -> Router:
+def build_router(services: Services, mini_app_url: str | None = None) -> Router:
+    """`mini_app_url` is the deployed Mini App's `t.me` link; `None` renders no deep
+    link, which is what a deployment without a Mini App wants."""
     router = Router()
 
     @router.message(CommandStart())
     async def start(message: Message) -> None:
-        await send(message, await on_start(services, _sender(message)))
+        await send(message, await on_start(services, _sender(message)), mini_app_url)
 
     @router.message(Command("budget"))
     async def budget(message: Message, command: CommandObject) -> None:
-        await send(message, await on_budget(services, _sender(message), command.args or ""))
+        outcome = await on_budget(services, _sender(message), command.args or "")
+        await send(message, outcome, mini_app_url)
+
+    @router.message(Command("basket"))
+    async def basket(message: Message) -> None:
+        """«/basket» — the draft you have open, again.
+
+        A draft card scrolls away, and until now the only way back to one was to
+        build another — which discards it. Same reason the Mini App's menu button
+        needed `GET /api/baskets/active`.
+        """
+        await send(message, await on_open_active(services, _sender(message)), mini_app_url)
 
     @router.message(F.text)
     async def text(message: Message) -> None:
-        await send(message, await on_text(services, _sender(message), message.text or ""))
+        outcome = await on_text(services, _sender(message), message.text or "")
+        await send(message, outcome, mini_app_url)
 
     @router.callback_query(F.data)
     async def callback(query: CallbackQuery) -> None:
         data = query.data or ""
-        reply = to_reply(await on_callback(services, _sender(query), data))
+        reply = to_reply(await on_callback(services, _sender(query), data), mini_app_url)
         await query.answer(reply.toast or "")
 
         if data.partition(":")[0] in TERMINAL_ACTIONS and isinstance(query.message, Message):
@@ -125,7 +153,44 @@ def _sender(event: Message | CallbackQuery) -> int:
     return event.from_user.id
 
 
-def build_dispatcher(services: Services) -> Dispatcher:
+def build_dispatcher(services: Services, mini_app_url: str | None = None) -> Dispatcher:
     dispatcher = Dispatcher()
-    dispatcher.include_router(build_router(services))
+    dispatcher.include_router(build_router(services, mini_app_url))
+
+    @dispatcher.errors()
+    async def unhandled(event: ErrorEvent) -> bool:
+        """The last line of defence, because silence is the worst answer available.
+
+        Handlers translate every failure they can name; anything that gets past them
+        — a malformed model payload, a bug — used to die here with nothing sent.
+        """
+        log.error("update failed outside every handler", exc_info=event.exception)
+        message = event.update.message
+        query = event.update.callback_query
+        chat_id = (
+            message.chat.id
+            if message is not None
+            else query.message.chat.id
+            if query is not None and query.message is not None
+            else None
+        )
+        if chat_id is not None and (bot := event.update.bot) is not None:
+            # `deliver_unexpected` swallows its own failures — the net must not become
+            # a second failure of its own — so there is nothing to catch here.
+            await deliver_unexpected(bot, chat_id, query)
+        return True
+
     return dispatcher
+
+
+async def deliver_unexpected(bot: Bot, chat_id: int, query: CallbackQuery | None = None) -> None:
+    """The unhandled-error notice: one honest sentence, wherever the user was.
+
+    Never raises — the safety net must not become a second failure of its own.
+    """
+    try:
+        if query is not None:
+            await query.answer()
+        await send_to(bot, chat_id, to_reply(Spoke(UNEXPECTED)))
+    except Exception:
+        log.debug("could not deliver the error notice", exc_info=True)

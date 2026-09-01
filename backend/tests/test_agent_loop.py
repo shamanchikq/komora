@@ -252,6 +252,26 @@ class TestLoopSafety:
         assert outcome.basket is None
         assert outcome.reply
 
+    async def test_a_guessed_parameter_name_is_retried_not_fatal(self) -> None:
+        """Models guess parameter names — every name assumed from a tool name in this
+        project turned out wrong. A stray kwarg raised TypeError past every catch
+        layer and left the user in silence."""
+        llm = FakeLLM(
+            LLMResponse(tool_calls=(ToolCall("silpo_get_my_coupons", {"limit": 5}),)),
+            LLMResponse(text="Ось купони"),
+        )
+        outcome = await run(llm, FakeSilpo({}))
+        assert outcome.reply == "Ось купони"
+        tool_messages = [m.content for m in llm.calls[1]["messages"] if m.role == "tool"]
+        assert any("limit" in content for content in tool_messages)
+
+    async def test_the_same_wrong_arguments_repeated_stop_the_loop(self) -> None:
+        call = ToolCall("silpo_get_my_coupons", {"limit": 5})
+        llm = FakeLLM(*[LLMResponse(tool_calls=(call,)) for _ in range(4)])
+        outcome = await run(llm, FakeSilpo({}))
+        assert outcome.reply is not None
+        assert len(llm.calls) == 2, "the identical-call guard ends it after one retry"
+
 
 class TestPrompt:
     async def test_history_precedes_the_new_message(self) -> None:

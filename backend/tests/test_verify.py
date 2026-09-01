@@ -88,6 +88,25 @@ class TestFindMismatches:
     async def test_a_reply_without_the_tool_call_is_not_a_pass(self) -> None:
         assert await find_mismatches(OneShotLLM(LLMResponse(text="ок")), [("a", "b")]) is None
 
+    async def test_missing_verdicts_degrade_rather_than_pass(self) -> None:
+        """A malformed payload must not read as a clean bill of health — the exact
+        conflation this function's contract warns against."""
+        llm = OneShotLLM(LLMResponse(tool_calls=(ToolCall(REPORT_TOOL, {}),)))
+        assert await find_mismatches(llm, [("a", "b")]) is None
+
+    async def test_an_unparseable_verdict_string_degrades(self) -> None:
+        llm = OneShotLLM(LLMResponse(tool_calls=(ToolCall(REPORT_TOOL, {"results": "{oops"}),)))
+        assert await find_mismatches(llm, [("a", "b")]) is None
+
+    async def test_a_json_string_that_parses_to_a_non_list_degrades(self) -> None:
+        llm = OneShotLLM(LLMResponse(tool_calls=(ToolCall(REPORT_TOOL, {"results": '"ок"'}),)))
+        assert await find_mismatches(llm, [("a", "b")]) is None
+
+    async def test_an_explicit_empty_verdict_list_is_still_a_pass(self) -> None:
+        """`[]` answers «що не так?» with «нічого»; a missing field answers nothing."""
+        llm = OneShotLLM(verdicts())
+        assert await find_mismatches(llm, [("a", "b")]) == {}
+
     async def test_malformed_entries_are_skipped_not_fatal(self) -> None:
         llm = OneShotLLM(
             verdicts(

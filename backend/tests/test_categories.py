@@ -205,6 +205,43 @@ class TestTheShelfNarrowsTheSearch:
         cart = await resolve_basket(self._basket(self.HARD_CHEESE), mcp, CONTEXT, INDEX)
         assert cart.lines[0].name == self.PARMESAN["name"]
 
+    async def test_a_named_category_does_not_disable_the_fallback_search(self) -> None:
+        """A shelf must be narrowed by the fallback search, not instead of it.
+
+        Measured live: «Ковбаса (наприклад, салямі або варена)» returns 0 products and
+        «Ковбаса» returns 30, which is the whole reason `fallback_terms` exists. But
+        narrowing ran *before* the retry, and `narrow([], shelf)` hands back the shelf
+        — so `candidates` was already non-empty, the retry loop broke on entry, and
+        the fallback results were fetched and never read.
+
+        The line then took the head of the aisle in Silpo's order, exactly as it did
+        before categories were narrowed at all. This is `test_the_search_decides_
+        which_product_on_the_named_shelf` for a description whose own wording missed:
+        the shelf says which aisle, the search says which product on it, and a line
+        that needed one retry got no say at all.
+        """
+        snack = product("Ковбаски до пива снек", 250.00)
+        salami = product("Ковбаса Глобино Салямі", 120.00)
+        # Both on the shelf, snack first — Silpo's own order, which knows nothing about
+        # what was asked. The search ranks salami first, and that ranking is what the
+        # shelf is supposed to be narrowed *by*.
+        mcp = FakeSilpo({"Ковбаса": [salami]}, category_products=[snack, salami])
+        basket = DraftBasket(
+            title="Інгредієнти для піци пепероні",
+            intent="stated",
+            lines=[
+                DraftLine(
+                    description="Ковбаса (наприклад, салямі або варена)",
+                    category="Ковбаси",
+                    reason_text="на піцу",
+                )
+            ],
+        )
+        cart = await resolve_basket(basket, mcp, CONTEXT, INDEX)
+        assert cart.lines[0].name == salami["name"], (
+            "the fallback search answers; the shelf only narrows it"
+        )
+
     async def test_the_whole_shelf_is_requested(self) -> None:
         """A shelf cut short cannot be told from a shelf the product is not on."""
         mcp = FakeSilpo({"пармезан": [self.PARMESAN]}, category_products=[self.MUZHON])
