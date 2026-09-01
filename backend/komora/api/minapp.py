@@ -20,6 +20,9 @@ from pydantic import BaseModel
 from komora.bot.handlers import (
     Services,
     on_cancel,
+    on_choose_alternative,
+    on_list_alternatives,
+    on_open_active,
     on_open_basket,
     on_preview,
     on_push,
@@ -29,13 +32,33 @@ from komora.bot.handlers import (
     on_text,
     on_trim_optional,
 )
-from komora.bot.outcomes import DraftReady, Outcome, PreviewReady, Spoke, Synced
+from komora.bot.outcomes import (
+    AlternativesReady,
+    DraftReady,
+    Outcome,
+    PreviewReady,
+    Spoke,
+    Synced,
+)
 from komora.core.initdata import InitDataRejected, verify_init_data
 
 
-def serialise(outcome: Outcome) -> dict[str, Any]:
-    """One JSON shape per outcome kind; `kind` is how the frontend tells them apart."""
+def serialise(outcome: Outcome | AlternativesReady) -> dict[str, Any]:
+    """One JSON shape per outcome kind; `kind` is how the frontend tells them apart.
+
+    `AlternativesReady` rides along without being an `Outcome`: it is a lookup this
+    surface makes, not a turn in the conversation, and `render.to_reply` has no way to
+    draw a row of tappable products in a chat. See `bot/outcomes.py`.
+    """
     match outcome:
+        case AlternativesReady():
+            return {
+                "kind": "alternatives",
+                "basket_id": outcome.basket_id,
+                "position": outcome.position,
+                "current": outcome.current.model_dump(mode="json"),
+                "options": [option.model_dump(mode="json") for option in outcome.options],
+            }
         case DraftReady():
             return {
                 "kind": "draft",
@@ -94,6 +117,12 @@ class SwapIn(BaseModel):
     position: int
 
 
+class ChooseIn(BaseModel):
+    product_id: str
+    """Checked against a freshly built candidate list, never trusted — see
+    `handlers.on_choose_alternative`."""
+
+
 class QtyIn(BaseModel):
     qty: float
     """Refused in the handler rather than here: rejecting `NaN` at this layer answers
@@ -109,6 +138,19 @@ def minapp_router(services: Services, bot_token: str) -> APIRouter:
     async def draft(body: DraftIn, user_id: User) -> dict[str, Any]:
         """A free-text turn — the same conversation the bot has."""
         return serialise(await on_text(services, user_id, body.text))
+
+    @router.get("/baskets/active")
+    async def active(user_id: User) -> dict[str, Any]:
+        """The draft this user has open, if any — what a payload-less launch asks for.
+
+        Declared **before** `/baskets/{basket_id}`: Starlette matches in order, and
+        "active" would otherwise be tried as an int and 422 before reaching here.
+
+        No id crosses the wire, so there is nothing to own — the draft is looked up by
+        the sender. A user with none gets a `spoke`, which the app reads as "open on
+        compose" rather than as a destination.
+        """
+        return serialise(await on_open_active(services, user_id))
 
     @router.get("/baskets/{basket_id}")
     async def open_basket(basket_id: int, user_id: User) -> dict[str, Any]:
@@ -143,6 +185,20 @@ def minapp_router(services: Services, bot_token: str) -> APIRouter:
     async def remove_line(basket_id: int, position: int, user_id: User) -> dict[str, Any]:
         """✕ on a row. Edits the draft only; Silpo is still behind the two taps."""
         return serialise(await on_remove_line(services, user_id, basket_id, position))
+
+    @router.get("/baskets/{basket_id}/lines/{position}/alternatives")
+    async def alternatives(basket_id: int, position: int, user_id: User) -> dict[str, Any]:
+        """What else Silpo has for this line. Reads only — nothing is chosen here."""
+        return serialise(await on_list_alternatives(services, user_id, basket_id, position))
+
+    @router.post("/baskets/{basket_id}/lines/{position}/choose")
+    async def choose(
+        basket_id: int, position: int, body: ChooseIn, user_id: User
+    ) -> dict[str, Any]:
+        """Put one of those products on the line. The id is re-checked, not trusted."""
+        return serialise(
+            await on_choose_alternative(services, user_id, basket_id, position, body.product_id)
+        )
 
     @router.post("/baskets/{basket_id}/trim")
     async def trim(basket_id: int, user_id: User) -> dict[str, Any]:

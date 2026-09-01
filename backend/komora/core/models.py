@@ -163,6 +163,13 @@ class ResolvedLine(BaseModel):
     stock: float | None = None
     """Silpo's remaining stock when the search returned it. The ceiling a quantity
     control must respect; `None` means unknown, not unlimited."""
+    synced: bool = False
+    """This line is already in the real Silpo cart, because a push put it there.
+
+    A push can land partly, and a basket that landed partly stays a draft so it can be
+    retried — so «нічого не змінилося у кошику Сільпо», which every draft surface says,
+    is false for exactly these lines. Set from `SyncReport.added`, never guessed.
+    """
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -208,9 +215,20 @@ class SyncReport(BaseModel):
     ok: bool
     """False if *any* line failed. A partial sync is never reported as success."""
     added: list[str] = Field(default_factory=list)
+    added_ids: list[str] = Field(default_factory=list)
+    """Product ids for `added`, so a caller can record what landed.
+
+    Names are for reading and ids are for matching: two lines can carry the same name,
+    and `execute_sync` judges a write by reading the cart back — what it reads back are
+    ids. `handlers._push` marks exactly these as `DraftItem.synced`.
+    """
     failed: list[tuple[str, str]] = Field(default_factory=list)
     """(product name, error) for each line Silpo rejected."""
     removed: list[str] = Field(default_factory=list)
+    removed_ids: list[str] = Field(default_factory=list)
+    """Product ids for `removed` — what to stop calling synced. Same reason as
+    `added_ids`: a removal is confirmed by reading the cart back, and ids are what
+    that read returns."""
     remove_failed: list[tuple[str, str]] = Field(default_factory=list)
     """A removal that did not happen counts against `ok` exactly like a failed add:
     the user asked for the cart to end up a certain way and it did not."""

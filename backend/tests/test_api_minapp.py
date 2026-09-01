@@ -6,6 +6,7 @@ without the second tap, and a basket id from another user buys nothing.
 """
 
 from decimal import Decimal
+from typing import Any, ClassVar
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -13,6 +14,7 @@ from httpx import ASGITransport, AsyncClient
 from komora.api.app import create_app
 from komora.bot.handlers import MAX_TEXT
 from komora.core.agent.tools import PROPOSE_BASKET
+from komora.core.alternatives import MAX_ALTERNATIVES
 from komora.core.llm.protocol import LLMResponse, ToolCall
 from komora.core.mcp.auth import AuthorizationBridge
 from tests.fakes import INITDATA_TOKEN, FakeSilpo, product, signed_init_data
@@ -351,6 +353,206 @@ class TestSwapRoute:
         body = response.json()
         assert body["kind"] == "spoke"
         assert body["toast"] == "Ця чернетка недоступна"
+
+
+class TestTheAlternativesPicker:
+    """«⇄» offers several products at once instead of stepping through them.
+
+    Cycling could only move forward, so a user who tapped past the one they wanted had
+    to go round the whole list — and every tap was a fresh search for a ranked list the
+    server built and threw away. The chat keeps cycling (a Telegram keyboard cannot
+    carry full product names); this is the Mini App's.
+    """
+
+    OPTIONS: ClassVar[list[dict[str, Any]]] = [
+        product("Молоко Злагода 2,5%", 39.90, product_id="zlagoda"),
+        product("Молоко Галичина 2,5%", 44.50, product_id="halychyna"),
+        product("Молоко Простоквашино 2,6%", 47.90, product_id="prostokvashyno"),
+    ]
+
+    def _mcp(self) -> FakeSilpo:
+        return FakeSilpo(
+            {"молоко": [*CATALOGUE["молоко"], *self.OPTIONS], "хліб": CATALOGUE["хліб"]}
+        )
+
+    async def test_it_lists_the_other_products_without_choosing_one(self, sessions) -> None:
+        services, _, _ = services_for(sessions, mcp=self._mcp())
+        async with AsyncClient(transport=_app(services), base_url="http://test") as client:
+            basket_id = (await _draft(client))["basket_id"]
+            response = await client.get(
+                f"/api/baskets/{basket_id}/lines/0/alternatives", headers=header(USER)
+            )
+            body = response.json()
+            after = await client.get(f"/api/baskets/{basket_id}", headers=header(USER))
+
+        assert body["kind"] == "alternatives"
+        assert body["current"]["name"] == "Молоко Яготинське 2,6%"
+        assert [o["name"] for o in body["options"]] == [p["name"] for p in self.OPTIONS]
+        assert body["current"]["product_id"] not in {o["product_id"] for o in body["options"]}, (
+            "a product is not an alternative to itself"
+        )
+        assert after.json()["cart"]["lines"][0]["name"] == "Молоко Яготинське 2,6%", (
+            "listing chooses nothing — an accidental tap costs a search and no more"
+        )
+
+    async def test_the_list_is_capped(self, sessions) -> None:
+        many = [product(f"Молоко {i}", 30.0 + i, product_id=f"m{i}") for i in range(12)]
+        mcp = FakeSilpo({"молоко": [*CATALOGUE["молоко"], *many], "хліб": CATALOGUE["хліб"]})
+        services, _, _ = services_for(sessions, mcp=mcp)
+        async with AsyncClient(transport=_app(services), base_url="http://test") as client:
+            basket_id = (await _draft(client))["basket_id"]
+            body = (
+                await client.get(
+                    f"/api/baskets/{basket_id}/lines/0/alternatives", headers=header(USER)
+                )
+            ).json()
+        assert len(body["options"]) == MAX_ALTERNATIVES
+
+    async def test_choosing_one_returns_the_updated_draft(self, sessions) -> None:
+        services, _, _ = services_for(sessions, mcp=self._mcp())
+        async with AsyncClient(transport=_app(services), base_url="http://test") as client:
+            basket_id = (await _draft(client))["basket_id"]
+            response = await client.post(
+                f"/api/baskets/{basket_id}/lines/0/choose",
+                json={"product_id": "halychyna"},
+                headers=header(USER),
+            )
+            body = response.json()
+            after = await client.get(f"/api/baskets/{basket_id}", headers=header(USER))
+
+        assert body["kind"] == "draft"
+        assert body["cart"]["lines"][0]["name"] == "Молоко Галичина 2,5%"
+        assert "Галичина" in (body["toast"] or "")
+        assert after.json()["cart"]["lines"][0]["name"] == "Молоко Галичина 2,5%", "persisted"
+
+    async def test_the_line_keeps_everything_but_the_product(self, sessions) -> None:
+        """Quantity, reason and description are the user's; only the product changes."""
+        services, _, _ = services_for(sessions, mcp=self._mcp())
+        async with AsyncClient(transport=_app(services), base_url="http://test") as client:
+            basket_id = (await _draft(client))["basket_id"]
+            before = (await client.get(f"/api/baskets/{basket_id}", headers=header(USER))).json()
+            body = (
+                await client.post(
+                    f"/api/baskets/{basket_id}/lines/0/choose",
+                    json={"product_id": "zlagoda"},
+                    headers=header(USER),
+                )
+            ).json()
+
+        was, now = before["cart"]["lines"][0], body["cart"]["lines"][0]
+        assert (now["qty"], now["reason_text"], now["description"]) == (
+            was["qty"],
+            was["reason_text"],
+            was["description"],
+        )
+
+    async def test_an_invented_product_id_is_refused(self, sessions) -> None:
+        """The id comes from the client, so it buys nothing: what can be chosen is
+        exactly what was offered, checked against a freshly built list."""
+        services, _, _ = services_for(sessions, mcp=self._mcp())
+        async with AsyncClient(transport=_app(services), base_url="http://test") as client:
+            basket_id = (await _draft(client))["basket_id"]
+            response = await client.post(
+                f"/api/baskets/{basket_id}/lines/0/choose",
+                json={"product_id": "id-Хліб Київський"},
+                headers=header(USER),
+            )
+            body = response.json()
+            after = await client.get(f"/api/baskets/{basket_id}", headers=header(USER))
+
+        assert body["kind"] == "spoke"
+        assert body["toast"] == "Цього варіанта вже нема"
+        assert after.json()["cart"]["lines"][0]["name"] == "Молоко Яготинське 2,6%", "untouched"
+
+    async def test_a_line_with_nothing_else_offers_an_empty_list(self, sessions) -> None:
+        """Not an error and not a refusal — the surface keeps the basket on screen and
+        says so, which is the whole 2026-08-26 lesson about ⇄ with no alternatives."""
+        services, _, _ = services_for(sessions)
+        async with AsyncClient(transport=_app(services), base_url="http://test") as client:
+            basket_id = (await _draft(client))["basket_id"]
+            body = (
+                await client.get(
+                    f"/api/baskets/{basket_id}/lines/0/alternatives", headers=header(USER)
+                )
+            ).json()
+        assert body["kind"] == "alternatives"
+        assert body["options"] == []
+
+    @pytest.mark.parametrize("position", [-1, 99])
+    async def test_a_position_from_the_client_is_bounds_checked(
+        self, sessions, position: int
+    ) -> None:
+        services, _, _ = services_for(sessions, mcp=self._mcp())
+        async with AsyncClient(transport=_app(services), base_url="http://test") as client:
+            basket_id = (await _draft(client))["basket_id"]
+            body = (
+                await client.get(
+                    f"/api/baskets/{basket_id}/lines/{position}/alternatives",
+                    headers=header(USER),
+                )
+            ).json()
+        assert body["toast"] == "Ця позиція недоступна"
+
+    async def test_someone_else_s_basket_is_refused_on_both_routes(self, sessions) -> None:
+        services, _, _ = services_for(sessions, mcp=self._mcp())
+        async with AsyncClient(transport=_app(services), base_url="http://test") as client:
+            basket_id = (await _draft(client))["basket_id"]
+            listed = await client.get(
+                f"/api/baskets/{basket_id}/lines/0/alternatives", headers=header(OTHER)
+            )
+            chosen = await client.post(
+                f"/api/baskets/{basket_id}/lines/0/choose",
+                json={"product_id": "zlagoda"},
+                headers=header(OTHER),
+            )
+        for response in (listed, chosen):
+            assert response.json()["toast"] == "Ця чернетка недоступна"
+
+
+class TestTheActiveDraft:
+    """«Де мій кошик?» — a draft was reachable only from the message announcing it.
+
+    The menu button carries no launch payload, so the app always opened on compose,
+    and typing there calls `create_from_cart`, which discards the previous draft. The
+    way back to a basket was to destroy it.
+    """
+
+    async def test_it_returns_the_open_draft(self, api) -> None:
+        client, _ = api
+        basket_id = (await _draft(client))["basket_id"]
+        body = (await client.get("/api/baskets/active", headers=header(USER))).json()
+        assert body["kind"] == "draft"
+        assert body["basket_id"] == basket_id
+
+    async def test_no_draft_is_prose_rather_than_an_error(self, api) -> None:
+        """The app reads this as "open on compose", which is where it already is."""
+        client, _ = api
+        body = (await client.get("/api/baskets/active", headers=header(USER))).json()
+        assert body["kind"] == "spoke"
+        assert "нема відкритої чернетки" in body["text"]
+
+    async def test_it_is_scoped_to_the_sender(self, api) -> None:
+        """No id crosses the wire, so there is nothing to guess — but the lookup must
+        still be by sender, or one user's menu button opens another's basket."""
+        client, _ = api
+        await _draft(client)
+        body = (await client.get("/api/baskets/active", headers=header(OTHER))).json()
+        assert body["kind"] == "spoke"
+
+    async def test_a_sent_basket_is_no_longer_active(self, api) -> None:
+        client, _ = api
+        basket_id = (await _draft(client))["basket_id"]
+        await client.post(f"/api/baskets/{basket_id}/preview", headers=header(USER))
+        await client.post(f"/api/baskets/{basket_id}/push", headers=header(USER))
+        body = (await client.get("/api/baskets/active", headers=header(USER))).json()
+        assert body["kind"] == "spoke"
+
+    async def test_the_route_is_not_read_as_a_basket_id(self, api) -> None:
+        """`/baskets/active` is declared before `/baskets/{basket_id}`; the other order
+        parses "active" as an int and 422s before any handler runs."""
+        client, _ = api
+        response = await client.get("/api/baskets/active", headers=header(USER))
+        assert response.status_code == 200
 
 
 class TestPositionsComeFromTheClient:

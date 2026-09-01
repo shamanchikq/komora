@@ -117,6 +117,17 @@ class DraftItem(Base):
     optional: Mapped[bool] = mapped_column(default=False)
     unavailable: Mapped[bool] = mapped_column(default=False)
     removed: Mapped[bool] = mapped_column(default=False)
+    synced: Mapped[bool] = mapped_column(default=False, index=True)
+    """This line is in the user's real Silpo cart, because a push put it there.
+
+    Per line rather than per basket because a push can land partly: `execute_sync`
+    reports what actually arrived, and a basket holding one landed line and one
+    rejected one stays a `draft` so it can be retried. Recording it only as
+    `status == "synced"` made that basket indistinguishable from one that had never
+    been sent — it reopened saying «у кошику Сільпо нічого не зміниться» with a
+    product of its own already sitting there, and `synced_lines` could not offer that
+    product for removal either.
+    """
     weighted: Mapped[bool] = mapped_column(default=False)
     """Priced per kilogram; a Mini App needs this to show «0,15 кг × 999,00 ₴/кг»."""
     step: Mapped[float | None] = mapped_column(default=None)

@@ -71,6 +71,8 @@ def line_text(index: int, line: ResolvedLine) -> str:
 
     if line.substituted_from:
         parts.append(f"   ⇄ заміна (було: {esc(line.substituted_from)})")
+    if line.synced:
+        parts.append("   ✓ вже в кошику Сільпо")
     if line.optional:
         parts.append("   ○ необовʼязково")
     parts.append(f"   — {esc(line.reason_text)}")
@@ -160,6 +162,19 @@ def budget_shown(warnings: list[str], budget_cap: int | None) -> list[str]:
 
 SWAP_HINT = "⇄ 1…N — показати інший варіант для цієї позиції"
 
+ALREADY_SENT = (
+    "✓ {items} з цієї чернетки вже в кошику Сільпо — повторне надсилання оновить "
+    "кількість, а не додасть ще раз."
+)
+"""Said whenever a draft holds a line a push already landed.
+
+A push that lands partly leaves the basket open on purpose, so it can be retried — and
+an open basket is drawn as an ordinary draft on both surfaces, under the promise that
+nothing has reached Silpo yet. For these lines that promise is false, and the user is
+the one who would discover it in their cart. `DraftItem.synced` is set from what the
+cart read back, so this counts landings rather than attempts.
+"""
+
 NO_CHECKOUT_LINK = "Оформити замовлення — у застосунку або на сайті Сільпо."
 """Said whenever a sync lands with no checkout link and no error to blame it on.
 
@@ -221,6 +236,10 @@ def render_cart(
                 f"Необовʼязкові позиції — це {money(trimmable)}. "
                 "Це ваш вибір: надіслати можна попри це."
             )
+
+    already = [ln for ln in cart.lines if ln.synced]
+    if already:
+        blocks.append(ALREADY_SENT.format(items=items(len(already))))
 
     if swappable and len(cart.lines) > 1:
         blocks.append(SWAP_HINT)

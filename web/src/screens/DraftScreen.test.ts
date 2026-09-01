@@ -23,6 +23,7 @@ function line(overrides: Partial<Line>): Line {
     weighted: false,
     step: null,
     stock: null,
+    synced: false,
     ...overrides,
   };
 }

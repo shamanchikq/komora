@@ -2,7 +2,11 @@ import type { ReactNode } from "react";
 import type { Cart, Line } from "../types";
 import { items, pl, quantityText, uiInt, uah } from "../format";
 import {
+  ALREADY_SENT_ROW,
   CANCEL_BUTTON,
+  TRUST_FOOTER,
+  TRUST_FOOTER_PARTIAL,
+  alreadySentNote,
   budgetShown,
   isNotice,
   noticeFirm,
@@ -99,6 +103,8 @@ function LineRow({ line, busy, onSwap, onSetQty, onRemove }: RowProps) {
 
         {atCeiling && <div className="at-ceiling">Більше немає в наявності — це весь залишок.</div>}
 
+        {line.synced && <div className="already-sent">✓ {ALREADY_SENT_ROW}</div>}
+
         <div className={`reason${substituted ? " sub" : ""}`}>
           <i />
           <span>
@@ -157,6 +163,9 @@ export function DraftScreen({
   const notes = [...cart.savings_notes, ...cart.coupon_notes].slice(0, 8);
 
   const optionalLines = sendable.filter((line) => line.optional);
+  // A push can land partly, and a partly-landed basket stays a draft so it can be
+  // retried. Every row below is drawn as if Silpo were untouched; for these it is not.
+  const alreadySent = cart.lines.filter((line) => line.synced);
 
   let budget: { over: boolean; fillPercent: number; caption: ReactNode } | null = null;
   if (budgetCap !== null && Number(cart.total) > 0) {
@@ -188,6 +197,10 @@ export function DraftScreen({
   return (
     <section className="screen">
       <h1>{title}</h1>
+
+      {alreadySent.length > 0 && (
+        <div className="notice firm">{alreadySentNote(alreadySent.length)}</div>
+      )}
 
       {notices.map((code) => (
         <div key={code} className={noticeFirm(code) ? "notice firm" : "notice quiet"}>
@@ -270,8 +283,7 @@ export function DraftScreen({
       )}
 
       <footer className="trust">
-        Чернетка живе в Коморі, поки ви не підтвердите — у кошику Сільпо нічого не
-        зміниться.
+        {alreadySent.length > 0 ? TRUST_FOOTER_PARTIAL : TRUST_FOOTER}
       </footer>
 
       {onCancel !== null && (

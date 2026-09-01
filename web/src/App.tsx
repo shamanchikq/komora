@@ -9,6 +9,7 @@ import type { Attempt } from "./api";
 import { launchTarget } from "./deeplink";
 import { telegramHost } from "./telegram";
 import type {
+  AlternativesOutcome,
   DraftOutcome,
   Outcome,
   PreviewOutcome,
@@ -18,8 +19,9 @@ import { ComposeScreen } from "./screens/ComposeScreen";
 import { DraftScreen } from "./screens/DraftScreen";
 import { PreviewSheet, confirmLabel, hasChanges } from "./screens/PreviewSheet";
 import { SyncedScreen } from "./screens/SyncedScreen";
+import { AlternativesSheet } from "./screens/AlternativesSheet";
 import { SpokeView } from "./screens/SpokeView";
-import { SEND_BUTTON } from "./copy";
+import { SEND_BUTTON, noAlternatives } from "./copy";
 
 interface Banner {
   text: string;
@@ -32,6 +34,7 @@ type View =
   | { name: "draft"; outcome: DraftOutcome }
   | { name: "preview"; outcome: PreviewOutcome }
   | { name: "synced"; outcome: SyncedOutcome }
+  | { name: "alternatives"; outcome: AlternativesOutcome }
   | { name: "spoke"; text: string; needsLink: boolean };
 
 const RETRY_BUTTON = "Спробувати ще раз";
@@ -74,6 +77,9 @@ export default function App() {
         return;
       }
       switch (outcome.kind) {
+        case "alternatives":
+          setView({ name: "alternatives", outcome });
+          break;
         case "preview":
           setView({ name: "preview", outcome });
           break;
@@ -156,6 +162,42 @@ export default function App() {
     [busy, flash, lastDraft, route],
   );
 
+  /** ⇄ — what else Silpo has for this line, as a list rather than one step forward.
+   *
+   * Deliberately not routed through `edit`: an EMPTY list must not become a screen.
+   * That is the 2026-08-26 lesson restated — a ⇄ with nothing behind it used to
+   * replace the whole draft with a sentence, and a Mini App has no scrollback to get
+   * the basket back from. So "no alternatives" stays a quiet banner on the draft, and
+   * only an actual choice is worth navigating to.
+   */
+  const openAlternatives = useCallback(
+    async (basketId: number, position: number) => {
+      if (busy) return;
+      setBusy(true);
+      setBanner(null);
+      try {
+        const outcome = await api.alternatives(basketId, position);
+        if (outcome.kind === "alternatives") {
+          if (outcome.options.length === 0) {
+            setBanner({ text: noAlternatives(outcome.current.name), firm: false });
+          } else {
+            setView({ name: "alternatives", outcome });
+          }
+        } else if (outcome.kind === "spoke" && !outcome.needs_link) {
+          flash(outcome.toast);
+          setBanner({ text: outcome.text, firm: false });
+        } else {
+          route(outcome);
+        }
+      } catch (exc) {
+        setBanner({ text: describeError(exc, "read"), firm: true });
+      } finally {
+        setBusy(false);
+      }
+    },
+    [busy, flash, route],
+  );
+
   /** Discard the draft. The bot puts «Скасувати» beside «Надіслати» on both the draft
    * and the confirmation keyboard; `api.cancel` existed here from the start and
    * nothing called it, so the Mini App could reach a draft and never be rid of one.
@@ -175,7 +217,7 @@ export default function App() {
     // Leaving the screen leaves its failure behind: an error that outlives the thing
     // it was about is just an alarming decoration.
     setBanner(null);
-    if (view.name === "preview" && lastDraft !== null) {
+    if ((view.name === "preview" || view.name === "alternatives") && lastDraft !== null) {
       setView({ name: "draft", outcome: lastDraft });
     } else if (view.name !== "compose" && view.name !== "loading") {
       goCompose();
@@ -191,6 +233,9 @@ export default function App() {
         return () => void run(() => api.draft(text.trim()), "draft");
       case "loading":
       case "spoke":
+      // The choices ARE the actions here; a MainButton would have to pick one for
+      // the user, and picking is the whole point of the screen.
+      case "alternatives":
         return null;
       case "draft":
         if (view.outcome.basket_id === null) return null;
@@ -215,6 +260,7 @@ export default function App() {
         return text.trim() === "" ? null : "Зібрати кошик";
       case "loading":
       case "spoke":
+      case "alternatives":
         return null;
       case "draft":
         return view.outcome.basket_id === null ? null : SEND_BUTTON;
@@ -234,6 +280,36 @@ export default function App() {
     opened.current = true;
     void run(() => api.open(target.id), "open");
   }, [run, target]);
+
+  // A launch with no payload used to mean "compose", always — so the menu button
+  // could not reach a draft the user already had, and typing here builds a new basket
+  // that DISCARDS it (`create_from_cart`). The way back to a basket was to destroy it.
+  // Asked once, silently: a failure or "no draft" both mean compose, which is already
+  // on screen, so neither owes the user a banner.
+  const textRef = useRef(text);
+  textRef.current = text;
+  const probed = useRef(false);
+  useEffect(() => {
+    if (probed.current || target !== null) return;
+    probed.current = true;
+    void (async () => {
+      try {
+        const outcome = await api.openActive();
+        if (outcome.kind !== "draft" || outcome.basket_id === null) return;
+        setLastDraft(outcome);
+        // Only from an untouched compose screen: by the time this lands the user may
+        // have started typing, or already sent something, and taking the screen from
+        // under them would be worse than not restoring the draft at all.
+        setView((current) =>
+          current.name === "compose" && textRef.current === ""
+            ? { name: "draft", outcome }
+            : current,
+        );
+      } catch {
+        // Nothing was asked for, so nothing is owed. Compose is a working screen.
+      }
+    })();
+  }, [target]);
 
   // The banner sits at the top of the screen and the control that failed is usually
   // at the bottom of a long one. An error nobody scrolls to is the silence it replaced.
@@ -357,7 +433,7 @@ export default function App() {
           busy={busy}
           onSwap={(position) =>
             view.outcome.basket_id !== null &&
-            void edit(() => api.swap(view.outcome.basket_id as number, position), "read")
+            void openAlternatives(view.outcome.basket_id as number, position)
           }
           onSetQty={(position, qty) =>
             view.outcome.basket_id !== null &&
@@ -386,6 +462,26 @@ export default function App() {
           onCancel={() => cancel(view.outcome.basket_id)}
         />
       )}
+      {view.name === "alternatives" && (
+        <AlternativesSheet
+          current={view.outcome.current}
+          options={view.outcome.options}
+          busy={busy}
+          onPick={(productId) =>
+            void edit(
+              () =>
+                api.chooseAlternative(
+                  view.outcome.basket_id,
+                  view.outcome.position,
+                  productId,
+                ),
+              "read",
+            )
+          }
+          onBack={goBack}
+        />
+      )}
+
       {view.name === "synced" && <SyncedScreen report={view.outcome.report} />}
 
       {view.name === "spoke" && (

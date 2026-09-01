@@ -16,7 +16,7 @@ differently, that is the moment to give them kinds — not before.
 
 from dataclasses import dataclass
 
-from komora.core.models import ResolvedCart, SyncReport
+from komora.core.models import ResolvedCart, ResolvedLine, SyncReport
 from komora.core.sync import SyncPreview
 
 
@@ -63,3 +63,27 @@ class Spoke:
 
 
 Outcome = DraftReady | PreviewReady | Synced | Spoke
+
+
+@dataclass(frozen=True)
+class AlternativesReady:
+    """The products offered for one line, for a surface that can draw a list.
+
+    **Deliberately not an `Outcome`.** An outcome is a turn in the conversation, and
+    `render.to_reply` must be able to say every one of them in a chat. This is not a
+    turn — it is a lookup a screen makes on its way to an edit, and the answer is a
+    row of tappable products. A Telegram keyboard cannot draw that: the labels are
+    full Ukrainian product names. So the chat keeps «⇄», which cycles one step at a
+    time, and this stays the Mini App's. Putting it in the union would have forced a
+    rendering into `to_reply` that nothing could ever reach.
+
+    A refusal still comes back as a `Spoke`, so every gate answers the same way it
+    does everywhere else.
+    """
+
+    basket_id: int
+    position: int
+    current: ResolvedLine
+    options: list[ResolvedLine]
+    """Ordered best-first, current product excluded. Empty means Silpo offered none —
+    which the surface must show without leaving the draft."""

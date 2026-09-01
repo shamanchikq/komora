@@ -90,6 +90,13 @@ const get = (path: string) => call("GET", path);
 export const api = {
   draft: (text: string) => post("draft", { text }),
   open: (basketId: number) => get(`baskets/${basketId}`),
+  /** The draft this user has open, if any. A `spoke` answer means "there is none" —
+   * the app opens on compose, which is where it would have opened anyway. */
+  openActive: () => get("baskets/active"),
+  alternatives: (basketId: number, position: number) =>
+    get(`baskets/${basketId}/lines/${position}/alternatives`),
+  chooseAlternative: (basketId: number, position: number, productId: string) =>
+    post(`baskets/${basketId}/lines/${position}/choose`, { product_id: productId }),
   preview: (basketId: number) => post(`baskets/${basketId}/preview`),
   push: (basketId: number) => post(`baskets/${basketId}/push`),
   swap: (basketId: number, position: number) =>

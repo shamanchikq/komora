@@ -168,6 +168,7 @@ def _line(item: DraftItem) -> ResolvedLine:
         weighted=item.weighted,
         step=item.step,
         stock=item.stock,
+        synced=item.synced,
     )
 
 
@@ -278,16 +279,23 @@ class BasketRepo:
         remove a product it did not add, because it cannot tell one the user chose in
         the Silpo app from one of its own, and guessing wrong deletes real food.
 
-        Unavailable lines are excluded: they were never sent, so they are not there.
+        Selected by `DraftItem.synced`, which is set from what a push actually landed.
+        The basket's own status used to stand in for that, and it is not the same
+        claim: a push that lands partly leaves a `draft`, so the lines that really did
+        reach the cart were invisible here and «прибери молоко» could not name a
+        product Komora had put there minutes earlier. Unavailable lines never carry
+        the flag, because they are never sent.
         """
         async with self._sessions() as session:
             recent = (
-                select(DraftBasketRow.id)
+                select(DraftItem.basket_id)
+                .join(DraftBasketRow, DraftBasketRow.id == DraftItem.basket_id)
                 .where(
                     DraftBasketRow.user_id == telegram_id,
-                    DraftBasketRow.status == "synced",
+                    DraftItem.synced.is_(True),
                 )
-                .order_by(DraftBasketRow.id.desc())
+                .group_by(DraftItem.basket_id)
+                .order_by(DraftItem.basket_id.desc())
                 .limit(baskets)
                 .scalar_subquery()
             )
@@ -296,7 +304,7 @@ class BasketRepo:
                 .where(
                     DraftItem.basket_id.in_(recent),
                     DraftItem.removed.is_(False),
-                    DraftItem.unavailable.is_(False),
+                    DraftItem.synced.is_(True),
                 )
                 .order_by(DraftItem.basket_id.desc(), DraftItem.position)
             )
@@ -382,6 +390,52 @@ class BasketRepo:
             .limit(1)
         )
         return result.scalar_one_or_none()
+
+    async def mark_synced(self, basket_id: int, product_ids: set[str]) -> None:
+        """Record which of this basket's lines actually reached the Silpo cart.
+
+        Keyed on `product_id` rather than position because that is what
+        `execute_sync` can vouch for: it judges a write by reading the cart back, and
+        what it reads back are product ids. Positions would have to survive an edit
+        between the two taps; ids are what Silpo itself holds.
+        """
+        if not product_ids:
+            return
+        async with self._sessions() as session, session.begin():
+            await session.execute(
+                update(DraftItem)
+                .where(
+                    DraftItem.basket_id == basket_id,
+                    DraftItem.product_id.in_(product_ids),
+                )
+                .values(synced=True)
+            )
+
+    async def unmark_synced(self, telegram_id: int, product_ids: set[str]) -> None:
+        """A product Komora took back out of the cart is no longer in it.
+
+        Scoped to the user, not to a basket: a removal targets whatever earlier basket
+        put the product there, and `_push` knows the sender rather than that basket.
+        Nothing user-visible rests on this — `match_removals` gates every candidate
+        against a live cart read — but a flag that says "this is in your Silpo cart"
+        must not go on saying it after Komora itself removed it.
+        """
+        if not product_ids:
+            return
+        async with self._sessions() as session, session.begin():
+            baskets = (
+                select(DraftBasketRow.id)
+                .where(DraftBasketRow.user_id == telegram_id)
+                .scalar_subquery()
+            )
+            await session.execute(
+                update(DraftItem)
+                .where(
+                    DraftItem.basket_id.in_(baskets),
+                    DraftItem.product_id.in_(product_ids),
+                )
+                .values(synced=False)
+            )
 
     async def update_totals(self, basket_id: int, cart: ResolvedCart) -> None:
         """Write back everything a swap recomputes.

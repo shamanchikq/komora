@@ -29,6 +29,10 @@ export interface Line {
   step: number | null;
   /** Silpo's remaining stock — the stepper's ceiling. null means unknown. */
   stock: number | null;
+  /** Already in the real Silpo cart, because a push landed it. A push can land
+   * partly, and a partly-landed basket stays a draft so it can be retried — so the
+   * screen's «нічого не зміниться» is false for exactly these rows. */
+  synced: boolean;
 }
 
 export interface Cart {
@@ -64,7 +68,20 @@ export interface Report {
   blocking_validations: string[];
 }
 
+/** Not an `Outcome` on the backend either: a lookup this surface makes on its way to
+ * an edit, not a turn in the conversation. A chat keyboard cannot draw a row of
+ * tappable product names, so the bot keeps its one-step «⇄» and this stays ours. */
+export interface Alternatives {
+  kind: "alternatives";
+  basket_id: number;
+  position: number;
+  current: Line;
+  /** Best first, current product excluded. Empty means Silpo offered none. */
+  options: Line[];
+}
+
 export type Outcome =
+  | Alternatives
   | {
       kind: "draft";
       basket_id: number | null;
@@ -77,6 +94,7 @@ export type Outcome =
   | { kind: "synced"; basket_id: number; report: Report }
   | { kind: "spoke"; text: string; needs_link: boolean; toast: string | null };
 
+export type AlternativesOutcome = Extract<Outcome, { kind: "alternatives" }>;
 export type DraftOutcome = Extract<Outcome, { kind: "draft" }>;
 export type PreviewOutcome = Extract<Outcome, { kind: "preview" }>;
 export type SyncedOutcome = Extract<Outcome, { kind: "synced" }>;

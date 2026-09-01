@@ -2,7 +2,7 @@
  * correctness passes. Two rules travel with it: every line shows its reason, and
  * warnings are rendered never dropped — an unknown code falls through verbatim. */
 
-import { uah } from "./format";
+import { items, uah } from "./format";
 
 export const SEND_BUTTON = "Надіслати в Сільпо";
 export const PUSH_BUTTON = "Додати в кошик";
@@ -18,6 +18,27 @@ export const MIXED_TOTALS =
 export const REMOVAL_NOTE =
   "Це те, що Комора додала раніше. Решти у вашому кошику не торкаємось. " +
   "Сама вона це не скасує — якщо передумаєте, попросіть у чаті або додайте в Сільпо.";
+
+export const ALREADY_SENT_ROW = "вже в кошику Сільпо";
+
+/** Mirrors `handlers.NO_ALTERNATIVE`. Shown as a quiet banner ON the draft, never as
+ * a screen of its own: a ⇄ that finds nothing must leave the basket where it was. */
+export function noAlternatives(name: string): string {
+  return `Інших варіантів для «${name}» Сільпо не пропонує.`;
+}
+
+/** Mirrors `render.ALREADY_SENT`. A push that lands partly leaves the basket open on
+ * purpose — it has to be retriable — and an open basket is drawn as an ordinary draft
+ * under a footer promising Silpo is untouched. For these rows it is not. */
+export function alreadySentNote(n: number): string {
+  return `${items(n)} з цієї чернетки вже в кошику Сільпо — повторне надсилання оновить кількість, а не додасть ще раз.`;
+}
+
+export const TRUST_FOOTER =
+  "Чернетка живе в Коморі, поки ви не підтвердите — у кошику Сільпо нічого не зміниться.";
+
+export const TRUST_FOOTER_PARTIAL =
+  "Решта чернетки живе в Коморі, поки ви не підтвердите. Позначені ✓ позиції вже в кошику Сільпо — Комора сама їх не прибере.";
 
 export const DONE_SUBTITLE =
   "Ціна в кошику Сільпо може відрізнятись від чернетки — знижки застосовує Сільпо, не Комора.";

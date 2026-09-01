@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  alreadySentNote,
   budgetShown,
+  noAlternatives,
   isNotice,
   noticeFirm,
   noticeText,
@@ -100,5 +102,25 @@ describe("budgetShown", () => {
   it("leaves every other code alone", () => {
     const other = ["not_found:хліб", "timeslot:expired", "degraded:verification"];
     expect(budgetShown(other, 1500)).toEqual(other);
+  });
+});
+
+describe("wordings that must match the bot's", () => {
+  /** Both surfaces draw an open basket under a promise that Silpo is untouched. A
+   * push can land partly and leave the basket open on purpose, so for those lines the
+   * promise is false — `render.ALREADY_SENT` says it there, this says it here. */
+  it("counts the lines that already landed, in Ukrainian plural", () => {
+    expect(alreadySentNote(1)).toContain("1 позиція");
+    expect(alreadySentNote(2)).toContain("2 позиції");
+    expect(alreadySentNote(5)).toContain("5 позицій");
+    expect(alreadySentNote(1)).toContain("вже в кошику Сільпо");
+  });
+
+  /** Mirrors `handlers.NO_ALTERNATIVE`. Shown as a banner ON the draft — a ⇄ that
+   * finds nothing must not become a screen, which is the 2026-08-26 lesson. */
+  it("names the product it found nothing for", () => {
+    expect(noAlternatives("Сир Мужон")).toBe(
+      "Інших варіантів для «Сир Мужон» Сільпо не пропонує.",
+    );
   });
 });

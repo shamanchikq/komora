@@ -24,11 +24,18 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Protocol
 
-from komora.bot.outcomes import DraftReady, Outcome, PreviewReady, Spoke, Synced
+from komora.bot.outcomes import (
+    AlternativesReady,
+    DraftReady,
+    Outcome,
+    PreviewReady,
+    Spoke,
+    Synced,
+)
 from komora.core.agent.loop import ForbiddenToolCall, run_agent
 from komora.core.agent.recap import draft_recap, sync_recap
 from komora.core.agent.tools import ToolSource
-from komora.core.alternatives import next_alternative
+from komora.core.alternatives import list_alternatives, next_alternative
 from komora.core.llm.protocol import LLMClient, LLMUnavailable, Message
 from komora.core.mcp.errors import McpError, NotAuthenticated
 from komora.core.mcp.protocol import SilpoClient
@@ -93,6 +100,7 @@ UNEXPECTED = (
 STALE = "Ця чернетка вже неактуальна — напишіть, що потрібно, і зберемо нову."
 CANCELLED = "Скасовано. Чернетку прибрано, у кошику Сільпо нічого не змінилося."
 NOTHING_TO_SEND = "У цій чернетці нема чого надсилати."
+NO_ACTIVE_DRAFT = "Зараз нема відкритої чернетки. Напишіть, що потрібно купити, — і зберемо нову."
 NOTHING_OPTIONAL = "У цій чернетці нема необовʼязкових позицій — прибирати нічого."
 BUDGET_HELP = (
     "Тижневий бюджет допомагає бачити, коли кошик виходить за межі.\n"
@@ -360,11 +368,120 @@ async def on_open_basket(services: Services, telegram_id: int, basket_id: int) -
     return await _draft_ready(services, telegram_id, basket_id, gate.title, cart)
 
 
+async def on_open_active(services: Services, telegram_id: int) -> Outcome:
+    """The draft this user has open right now, if any — «де мій кошик?».
+
+    A draft was reachable only from the message that announced it. The Mini App's menu
+    button carries no launch payload, so it always opened on compose; typing there
+    calls `create_from_cart`, which discards the previous draft to keep "confirm"
+    unambiguous — so the way back to a basket was to *destroy* it. In the chat the
+    card scrolls away and there was no command to ask for it either.
+
+    No id crosses the wire, so there is nothing to guess: the draft is looked up *by*
+    the sender rather than checked against them. `get_active` already filtered on
+    `user_id` and `status == "draft"` and had no production caller at all.
+    """
+    await services.users.ensure(telegram_id)
+    basket = await services.baskets.get_active(telegram_id)
+    if basket is None:
+        return Spoke(NO_ACTIVE_DRAFT)
+
+    cart = await services.baskets.load_cart(basket.id)
+    if cart is None:
+        return Spoke(NO_ACTIVE_DRAFT)
+    return await _draft_ready(services, telegram_id, basket.id, basket.title, cart)
+
+
 async def on_swap(services: Services, telegram_id: int, basket_id: int, position: int) -> Outcome:
     gate = await _own_draft(services, telegram_id, basket_id)
     if isinstance(gate, Spoke):
         return gate
     return await _swap(services, telegram_id, basket_id, position, gate.title)
+
+
+async def on_list_alternatives(
+    services: Services, telegram_id: int, basket_id: int, position: int
+) -> AlternativesReady | Spoke:
+    """What else Silpo has for this line — the picker behind «⇄» in the Mini App.
+
+    Reads only. Nothing is chosen here and nothing is written, so an accidental tap
+    costs a search and no more.
+    """
+    gate = await _own_draft(services, telegram_id, basket_id)
+    if isinstance(gate, Spoke):
+        return gate
+
+    cart = await services.baskets.load_cart(basket_id)
+    if cart is None or not 0 <= position < len(cart.lines):
+        return Spoke(STALE, toast="Ця позиція недоступна")
+
+    line = cart.lines[position]
+    try:
+        async with services.connect(telegram_id) as mcp:
+            _, context = await load_context(mcp)
+            options = await list_alternatives(
+                line, mcp, context, await categories_for(mcp, context, services.cache)
+            )
+    except NotAuthenticated:
+        return _needs_link(NEED_AUTH)
+    except CartContextMissing:
+        return Spoke(NO_CONTEXT)
+    except McpError:
+        return Spoke(SILPO_DOWN)
+
+    return AlternativesReady(basket_id=basket_id, position=position, current=line, options=options)
+
+
+async def on_choose_alternative(
+    services: Services, telegram_id: int, basket_id: int, position: int, product_id: str
+) -> Outcome:
+    """Put the product the user picked on this line.
+
+    The id comes from the client, so it buys nothing on its own: the candidate list is
+    rebuilt and the choice has to be *in* it. That is the same rule as everywhere else
+    here — an id is a request, never a permission — and it means what can be chosen is
+    exactly what was offered, priced as Silpo prices it now rather than as the picker
+    happened to draw it.
+    """
+    gate = await _own_draft(services, telegram_id, basket_id)
+    if isinstance(gate, Spoke):
+        return gate
+
+    cart = await services.baskets.load_cart(basket_id)
+    if cart is None or not 0 <= position < len(cart.lines):
+        return Spoke(STALE, toast="Ця позиція недоступна")
+
+    line = cart.lines[position]
+    if product_id == line.product_id:
+        # Already chosen. Not an error, and not worth a write.
+        return await _draft_ready(services, telegram_id, basket_id, gate.title, cart)
+
+    try:
+        async with services.connect(telegram_id) as mcp:
+            _, context = await load_context(mcp)
+            options = await list_alternatives(
+                line, mcp, context, await categories_for(mcp, context, services.cache)
+            )
+    except NotAuthenticated:
+        return _needs_link(NEED_AUTH)
+    except CartContextMissing:
+        return Spoke(NO_CONTEXT)
+    except McpError:
+        return Spoke(SILPO_DOWN)
+
+    chosen = next((o for o in options if o.product_id == product_id), None)
+    if chosen is None:
+        # The list moved under the user — stock ran out, or the payload was invented.
+        return Spoke(STALE, toast="Цього варіанта вже нема")
+
+    await services.baskets.replace_item(basket_id, position, chosen)
+    return await _edited_outcome(
+        services,
+        telegram_id,
+        basket_id,
+        gate.title,
+        toast=f"Обрано {chosen.name}"[:200],
+    )
 
 
 async def on_set_qty(
@@ -574,6 +691,14 @@ async def _push(services: Services, telegram_id: int, basket_id: int) -> Outcome
         return Spoke(NO_CONTEXT)
     except McpError:
         return Spoke(SILPO_DOWN)
+
+    # What actually landed, per line, before anything else. A partial sync leaves the
+    # basket open (below), and an open basket is drawn by every draft surface with
+    # «у кошику Сільпо нічого не зміниться» under it — false for exactly these lines.
+    # Recorded from the report rather than from the attempt: `execute_sync` judges a
+    # write by reading the cart back, and this is that reading.
+    await services.baskets.mark_synced(basket_id, set(report.added_ids))
+    await services.baskets.unmark_synced(telegram_id, set(report.removed_ids))
 
     # Only a complete sync closes the draft. A partial one stays open so the same
     # basket can be retried — safe, because re-adding sets quantities rather than

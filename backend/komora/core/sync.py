@@ -346,6 +346,7 @@ async def execute_sync(cart: ResolvedCart, mcp: SilpoClient) -> SyncReport:
     final = _cart_body(final_payload)
     remaining = {str(p.get("productId")) for p in _lines_of(final_payload)}
     removed = [r.name for r in targets if r.product_id not in remaining]
+    removed_ids = [r.product_id for r in targets if r.product_id not in remaining]
     remove_failed = [
         (r.name, remove_errors.get(r.product_id, "не прибралося"))
         for r in targets
@@ -355,8 +356,10 @@ async def execute_sync(cart: ResolvedCart, mcp: SilpoClient) -> SyncReport:
     return SyncReport(
         ok=not failed and not remove_failed,
         added=added,
-        failed=failed,
+        added_ids=[line.product_id for line in sendable if line.product_id in applied],
         removed=removed,
+        removed_ids=removed_ids,
+        failed=failed,
         remove_failed=remove_failed,
         checkout_web_link=final.get("checkoutWebLink"),
         checkout_mobile_link=final.get("checkoutMobileLink"),

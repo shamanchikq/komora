@@ -24,6 +24,7 @@ from komora.bot.handlers import (
     Services,
     on_budget,
     on_callback,
+    on_open_active,
     on_start,
     on_text,
 )
@@ -110,6 +111,16 @@ def build_router(services: Services, mini_app_url: str | None = None) -> Router:
     async def budget(message: Message, command: CommandObject) -> None:
         outcome = await on_budget(services, _sender(message), command.args or "")
         await send(message, outcome, mini_app_url)
+
+    @router.message(Command("basket"))
+    async def basket(message: Message) -> None:
+        """«/basket» — the draft you have open, again.
+
+        A draft card scrolls away, and until now the only way back to one was to
+        build another — which discards it. Same reason the Mini App's menu button
+        needed `GET /api/baskets/active`.
+        """
+        await send(message, await on_open_active(services, _sender(message)), mini_app_url)
 
     @router.message(F.text)
     async def text(message: Message) -> None:
