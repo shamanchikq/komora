@@ -43,7 +43,7 @@ sheet are built in `web/` (Vite+React, served same-origin from `web/dist`; build
 All from `backend/`.
 
 ```bash
-uv run pytest              # 843 tests
+uv run pytest              # 882 tests
 uv run ruff check .        # lint
 uv run ruff format .       # format
 uv run mypy komora         # strict
@@ -218,6 +218,33 @@ dead code), `on_set_qty` snapping to no grid despite a docstring saying it did, 
 unbounded `/api/draft` body, a confirmation sheet able to ask for «Додати 0 позицій»,
 `on_trim_optional` with no positive test, a `--reserve` variable nothing read, and a
 failed draft edit blaming Silpo for a request that never reached it.
+
+A third review, 2026-09-01, found five — again nothing failing. One was a pipeline
+defect: `resolve_basket` narrowed to the category **before** running the fallback
+search, and `narrow([], shelf)` returns the shelf, so `candidates` was non-empty and
+the retry loop broke on entry. The fallback query was fetched and never read, and any
+line whose own wording missed took the head of its aisle in Silpo's order — the state
+categories were narrowed to get away from. `core/alternatives.py` had the order right
+all along, which is the tell: the two paths that must answer the same question
+identically did not. The rest were input bounds and duplication — a basket id past
+what a row can hold reached the driver (`OverflowError` on SQLite, a bigint `DataError`
+on Postgres) instead of `_own_draft`, so it was an unhandled 500 rather than a
+refusal; `stock: None` was read as *unlimited* rather than *unknown*, so a qty of 1e12
+persisted a total no `Numeric(10, 2)` column can hold; and the over-budget overage was
+printed twice on both surfaces, once as the budget caption and once as the warning
+code the caption restates.
+
+Fixed with them, and new since: a **partial** push now records which lines actually
+landed (`DraftItem.synced`, migration `9b41c07ae512`), because a partly-landed basket
+stays a `draft` on purpose and every draft surface drew it under «у кошику Сільпо нічого
+не зміниться» — false for exactly those lines, and invisible to `synced_lines`, so
+«прибери молоко» could not name a product Komora had put there minutes earlier.
+`GET /api/baskets/active` and `/basket` make an open draft reachable again: the menu
+button carries no launch payload, so the app always opened on compose, and typing there
+discards the draft — the way back to a basket was to destroy it. And «⇄» in the Mini App
+now opens a **picker** of up to five candidates (`core/alternatives.list_alternatives`,
+`GET …/lines/{p}/alternatives`) instead of stepping one product forward per round trip;
+the chat keeps cycling, because a Telegram keyboard cannot carry product names.
 
 Only the "stated basket" intent exists — meal plan, budget-week, deals and event
 handlers are Plan 4; habits are Plan 3.

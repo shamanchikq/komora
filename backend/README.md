@@ -90,19 +90,49 @@ Same process, same handlers, second face. Every route requires
 `Authorization: tma <initData>` — verified against the bot token (`core/initdata.py`,
 ±24 h freshness on `auth_date`) — and every basket route goes through the ownership
 and confirmation gates the chat uses. Outcomes serialise as JSON with a `kind`
-discriminator (`draft` / `preview` / `synced` / `spoke`); money crosses as strings.
+discriminator (`draft` / `preview` / `synced` / `spoke` / `alternatives`); money crosses
+as strings.
 
 | Route | Handler | Meaning |
 |---|---|---|
 | `POST /api/draft` `{text}` | `on_text` | a free-text turn → draft or prose |
+| `GET /api/baskets/active` | `on_open_active` | the draft this user has open, if any — no id crosses the wire |
 | `GET /api/baskets/{id}` | `on_open_basket` | where a deep link lands: show, change nothing |
 | `POST /api/baskets/{id}/preview` | `on_preview` | first tap: live cart read into a sheet |
 | `POST /api/baskets/{id}/push` | `on_push` | second tap: write to the real Silpo cart |
-| `POST /api/baskets/{id}/swap` `{position}` | `on_swap` | next alternative for a line |
+| `POST /api/baskets/{id}/swap` `{position}` | `on_swap` | next alternative for a line (the chat's ⇄) |
+| `GET /api/baskets/{id}/lines/{p}/alternatives` | `on_list_alternatives` | up to 5 other products for a line; reads only |
+| `POST /api/baskets/{id}/lines/{p}/choose` `{product_id}` | `on_choose_alternative` | pick one; the id is re-checked against a fresh list |
 | `POST /api/baskets/{id}/lines/{p}/qty` `{qty}` | `on_set_qty` | stepper; snapped to the product's step and capped at stock, server-side |
 | `POST /api/baskets/{id}/lines/{p}/remove` | `on_remove_line` | ✕ — edits the draft, never the Silpo cart directly |
 | `POST /api/baskets/{id}/trim` | `on_trim_optional` | drop every optional line in one action |
 | `POST /api/baskets/{id}/cancel` | `on_cancel` | discard the draft |
+
+### The alternatives picker
+
+«⇄» in the chat steps forward one product at a time and wraps. That is all a Telegram
+keyboard can carry — the labels are full Ukrainian product names — but it means a user
+who taps past the one they wanted goes round the whole list to reach it again, and each
+tap is a fresh search for a ranked list the server built and discarded.
+
+The Mini App draws the list instead: `GET …/alternatives` returns up to
+`MAX_ALTERNATIVES` (5) candidates from the same `narrow` ordering `resolve_basket` uses,
+the current product excluded, and `POST …/choose` puts one on the line. **Empty is not a
+screen** — a line Silpo has nothing else for keeps the basket on screen and says so in a
+quiet banner, which is the 2026-08-26 lesson about ⇄ restated.
+
+`product_id` arrives from the client, so it buys nothing: `on_choose_alternative`
+rebuilds the candidate list and refuses anything not in it. What can be chosen is
+exactly what was offered, at the price Silpo quotes now rather than the one the picker
+happened to draw.
+
+### Getting back to a draft
+
+`GET /api/baskets/active` and `/basket` in the chat. A draft used to be reachable only
+from the message that announced it: the menu button carries no launch payload, so the
+Mini App always opened on compose, and typing there calls `create_from_cart`, which
+discards the previous draft. The way back to a basket was to destroy it. No id crosses
+the wire here — the draft is looked up *by* the sender rather than checked against them.
 
 ### Deep links
 
@@ -209,9 +239,16 @@ The app itself:
 - [ ] Compose → loading skeleton → draft with reasons on every line.
 - [ ] Stepper on a weighted good moves by its step and stops at stock.
 - [ ] ✕ removes a row from the draft; push then sends one line fewer.
-- [ ] ⇄ swaps and re-renders with the toast.
+- [ ] ⇄ opens the picker: up to five other products, the current one marked «зараз».
+      Tapping one returns to the draft with that product, the same quantity and the
+      same reason, and a toast naming it.
 - [ ] ⇄ on a line Silpo has no alternative for keeps the basket on screen and says so
-      in a quiet banner — it used to navigate away from the draft entirely.
+      in a quiet banner — it must NOT become a screen of its own.
+- [ ] The menu button (no deep link) opens on the draft you already have, not compose;
+      `/basket` in the chat does the same.
+- [ ] After a **partial** push, reopening the basket marks the lines that landed with
+      «✓ вже в кошику Сільпо» and drops the «нічого не зміниться» promise. Hard to
+      stage on a device — `swallow=` in `tests/fakes.py` is how it is exercised.
 - [ ] «Скасувати» on the draft and on the sync sheet discards it; the Silpo cart is
       untouched.
 - [ ] Preview sheet names removals in the inverted panel; confirm label says

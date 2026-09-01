@@ -123,11 +123,13 @@ The full loop works against live Silpo: link your account, send a sentence, revi
 draft, confirm, and the products land in your real cart with a checkout link. Editing in
 plain language works too, including removing something after it's already been sent.
 
-The Mini App exists: initData authentication, the draft-cart screen and the sync sheet —
-built in `web/` to an approved design and served same-origin from `web/dist`. It has not
-yet been verified on a live device. Not built yet: Mini App deep links, the habits
-engine, and the meal-plan, budget-week and deals flows. Open problems are listed honestly
-in [`backend/README.md`](backend/README.md#known-issues), including the ones still unsolved.
+The Mini App exists: initData authentication, the draft-cart screen, the sync sheet and
+deep links onto a named basket — built in `web/` to an approved design and served
+same-origin from `web/dist`. Tapping ⇄ on a line offers five other products to choose
+between, which is the thing a screen can do that a chat keyboard cannot. It has **not**
+yet been verified on a live device. Not built yet: the habits engine, and the meal-plan,
+budget-week and deals flows. Open problems are listed honestly in
+[`backend/README.md`](backend/README.md#known-issues), including the ones still unsolved.
 
 ## Documentation
 
