@@ -63,11 +63,16 @@ def line_text(index: int, line: ResolvedLine) -> str:
     if line.unavailable:
         parts.append("   ✕ немає в наявності — не враховано в сумі")
     else:
-        parts.append(
-            f"   {quantity(line.qty)} × {money(line.unit_price)} = <b>{money(line.line_total)}</b>"
-        )
+        # On a weighted good `qty` is kilograms and `unit_price` is per kilogram, and
+        # nothing else on the line says so: `ratio` is null for every weighted product
+        # observed, so «0,15 × 999,00 ₴» read as a fraction of a piece at a piece price.
+        # The Mini App already writes both units; the chat says the same thing.
+        amount = f"{quantity(line.qty)} кг" if line.weighted else quantity(line.qty)
+        price = f"{money(line.unit_price)}/кг" if line.weighted else money(line.unit_price)
+        parts.append(f"   {amount} × {price} = <b>{money(line.line_total)}</b>")
         if line.old_price and line.old_price > line.unit_price:
-            parts.append(f"   ↓ було {money(line.old_price)}")
+            was = money(line.old_price)
+            parts.append(f"   ↓ було {was}/кг" if line.weighted else f"   ↓ було {was}")
 
     if line.substituted_from:
         parts.append(f"   ⇄ заміна (було: {esc(line.substituted_from)})")

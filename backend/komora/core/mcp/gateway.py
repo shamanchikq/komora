@@ -53,13 +53,26 @@ class SilpoGateway:
         self._cipher = cipher
         self._bridge = bridge
 
-    def _provider(self, telegram_id: int, send_url: SendUrl) -> PersistentOAuthClientProvider:
+    def _provider(
+        self, telegram_id: int, send_url: SendUrl, *, may_register: bool
+    ) -> PersistentOAuthClientProvider:
         """A fresh provider per session.
 
         Caching one per user would save two discovery requests per message, but it also
         caches the tokens it loaded — so a user who has just linked their account would
         keep hitting the state from before. Correctness first; this is the obvious
         optimisation if latency ever matters.
+
+        `may_register` decides whether the storage may discard a registration made
+        against another callback. Only the linking path may: the SDK reads the
+        registration once, at `_initialize`, and needs it for **refresh** as much as for
+        authorization (`can_refresh_token` is false without it). Discarding it on an
+        ordinary `connect()` after a base-URL move therefore did not merely force the
+        next login to re-register — it stopped every linked user's silent refresh at
+        the same moment, and the first expired token turned into «підключіть наново»
+        for an account whose refresh token was perfectly good. A session that refuses
+        to log in has no use for the check; a session that may log in needs it, or
+        Silpo is presented a redirect_uri it never registered.
         """
         redirect_handler, callback_handler = self._bridge.handlers(telegram_id, send_url)
         return PersistentOAuthClientProvider(
@@ -70,7 +83,7 @@ class SilpoGateway:
                 users=self._users,
                 clients=self._clients,
                 cipher=self._cipher,
-                redirect_uri=self._redirect_uri,
+                redirect_uri=self._redirect_uri if may_register else None,
             ),
             redirect_handler=redirect_handler,
             callback_handler=callback_handler,
@@ -83,7 +96,7 @@ class SilpoGateway:
         async def refuse(_: int, __: str) -> None:
             raise NotAuthenticated(f"user {telegram_id} has no usable Silpo tokens")
 
-        async with self._session(telegram_id, refuse) as session:
+        async with self._session(telegram_id, refuse, may_register=False) as session:
             yield session
 
     async def link(self, telegram_id: int, send_url: SendUrl) -> None:
@@ -93,7 +106,7 @@ class SilpoGateway:
         so callers run it as a background task. The `list_tools` call at the end is
         what proves the tokens actually work before we tell the user they are linked.
         """
-        async with self._session(telegram_id, send_url) as session:
+        async with self._session(telegram_id, send_url, may_register=True) as session:
             await session.list_tools()
 
     async def is_linked(self, telegram_id: int) -> bool:
@@ -101,8 +114,10 @@ class SilpoGateway:
         return blob is not None
 
     @asynccontextmanager
-    async def _session(self, telegram_id: int, send_url: SendUrl) -> AsyncIterator[SilpoSession]:
-        provider = self._provider(telegram_id, send_url)
+    async def _session(
+        self, telegram_id: int, send_url: SendUrl, *, may_register: bool
+    ) -> AsyncIterator[SilpoSession]:
+        provider = self._provider(telegram_id, send_url, may_register=may_register)
         try:
             async with open_session(self._server_url, provider) as raw:
                 yield SilpoSession(raw)

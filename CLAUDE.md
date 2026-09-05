@@ -43,7 +43,7 @@ sheet are built in `web/` (Vite+React, served same-origin from `web/dist`; build
 All from `backend/`.
 
 ```bash
-uv run pytest              # 882 tests
+uv run pytest              # 901 tests
 uv run ruff check .        # lint
 uv run ruff format .       # format
 uv run mypy komora         # strict
@@ -245,6 +245,37 @@ discards the draft — the way back to a basket was to destroy it. And «⇄» i
 now opens a **picker** of up to five candidates (`core/alternatives.list_alternatives`,
 `GET …/lines/{p}/alternatives`) instead of stepping one product forward per round trip;
 the chat keeps cycling, because a Telegram keyboard cannot carry product names.
+
+A fourth review, 2026-09-05, read the merged branch end to end and found eight. Same
+shape as the last three: suite green, nothing failing. **Two could cost a user their
+access or their groceries.**
+
+`DBTokenStorage` drops a DCR registration made against a different callback so a login
+can re-register — but the mcp SDK signs a token **refresh** with that same registration
+(`can_refresh_token` is false without `client_info`), and the gateway asked for the
+check on every session. So the first message after a `KOMORA_PUBLIC_BASE_URL` move
+stopped silent refresh for every linked user at once, and an account whose refresh token
+was perfectly good was told to link again. `SilpoGateway` now enables the check on
+`link()` alone — the only path that can actually register.
+
+And **✕ on a draft row made its product unremovable.** The row is marked `removed` and
+`synced_lines` filtered those out, but a row's `synced` flag is the only record that
+Komora put that product in the real Silpo cart. Striking it off the draft therefore hid
+it from «прибери молоко» — from the one surface able to take it back out. Removing a row
+from a draft is not removing it from a cart, and the repo now says so.
+
+The other six: a callback Telegram answered too late raised *before* the reply was sent,
+so a push that had already landed read as silence; the keyboard was cleared after every
+`push`, including one Silpo never answered, so «Додати в кошик» vanished for a failure
+nobody had decided; `/budget` with twenty digits reached the driver instead of the help
+text; the preview's re-pricing sent every description in one call, past Silpo's
+thirty-query ceiling, and swallowed the rejection into "no drift" — a safeguard that
+cannot fire; a weighted line in the chat read «0,15 × 999,00 ₴», a fraction of a piece
+at a piece price, because `ratio` is null on every weighted product and only the Mini
+App wrote the units; and a prose answer to a preview or a push replaced the screen that
+asked for it, so «Сільпо зараз не відповідає» threw away the basket being confirmed and
+took the retry with it. That last one is the 2026-08-26 ⇄ lesson for a third time: on a
+surface with no scrollback, an answer is not a destination.
 
 Only the "stated basket" intent exists — meal plan, budget-week, deals and event
 handlers are Plan 4; habits are Plan 3.

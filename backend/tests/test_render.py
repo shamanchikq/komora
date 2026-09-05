@@ -438,3 +438,26 @@ class TestTheDeepLink:
         labels = [b.label for b in draft_buttons(7, cart(line()), "https://t.me/b/komora")]
         assert "Надіслати в Сільпо" in labels
         assert "Скасувати" in labels
+
+
+class TestWeightedLinesSayWhatTheirNumbersMean:
+    """On a weighted good `qty` is kilograms and `unit_price` is per kilogram, and
+    `ratio` — the only unit field a search hit carries — is null for every one seen.
+    So «0,15 × 999,00 ₴» read as a fraction of a piece at a piece price. The Mini App
+    already writes «кг» and «/кг»; the chat is the surface that did not."""
+
+    def test_a_weighted_line_names_its_units(self) -> None:
+        text = render_cart(cart(line("Пармезан", "999.00", qty=0.15, weighted=True)), "Кошик")
+        assert "0,15 кг × 999,00 ₴/кг = <b>149,85 ₴</b>" in text
+
+    def test_a_weighted_discount_is_per_kilogram_too(self) -> None:
+        text = render_cart(
+            cart(line("Пармезан", "899.00", qty=0.1, weighted=True, old_price=Decimal("999"))),
+            "Кошик",
+        )
+        assert "↓ було 999,00 ₴/кг" in text
+
+    def test_a_countable_line_is_unchanged(self) -> None:
+        text = render_cart(cart(line(qty=2)), "Кошик")
+        assert "2 × 42,90 ₴ = <b>85,80 ₴</b>" in text
+        assert "кг" not in text

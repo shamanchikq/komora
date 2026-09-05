@@ -30,6 +30,9 @@ export function ComposeScreen({
         onChange={(event) => onText(event.target.value)}
         placeholder="Що потрібно купити?"
         rows={3}
+        // `handlers.MAX_TEXT`: the backend refuses a longer turn in words. Stopping
+        // the paste here saves a round trip that could only ever say «задовге».
+        maxLength={4096}
         aria-label="Що потрібно купити"
       />
       <div className="hint">Наприклад: молоко, хліб і щось до чаю</div>

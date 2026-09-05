@@ -463,3 +463,31 @@ class TestMissingCartId:
     async def test_draft_time_check_refuses(self) -> None:
         with pytest.raises(CartContextMissing):
             await cart_product_ids(NoCartId())
+
+
+class TestRepricingRespectsTheBatchCeiling:
+    """`find_products_batch` takes thirty queries at most — the ceiling `resolve`
+    already chunks for. The preview's re-pricing sent every description in one call,
+    and a longer basket had that call refused; the refusal was then swallowed into
+    "no drift", which is the one thing a price check must never say by accident."""
+
+    async def test_a_long_basket_is_repriced_in_chunks(self) -> None:
+        lines = [line(f"Товар {i}", "10.00", description=f"товар {i}") for i in range(31)]
+        mcp = FakeSilpo({f"товар {i}": [product(f"Товар {i}", 10.00)] for i in range(31)})
+
+        await preview_sync(cart(*lines), mcp, CONTEXT)
+
+        assert len(mcp.search_calls) == 2
+        assert max(len(call) for call in mcp.search_calls) <= 30
+        assert sorted(q for call in mcp.search_calls for q in call) == sorted(
+            f"товар {i}" for i in range(31)
+        )
+
+    async def test_a_price_that_moved_past_the_first_chunk_is_still_caught(self) -> None:
+        lines = [line(f"Товар {i}", "10.00", description=f"товар {i}") for i in range(31)]
+        catalogue = {f"товар {i}": [product(f"Товар {i}", 10.00)] for i in range(31)}
+        catalogue["товар 30"] = [product("Товар 30", 90.00)]
+
+        preview = await preview_sync(cart(*lines), FakeSilpo(catalogue), CONTEXT)
+
+        assert preview.drift is not None, "the 31st line moved by 80 ₴ and must be seen"

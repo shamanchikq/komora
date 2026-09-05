@@ -64,6 +64,15 @@ Not a guess at how many baskets there will be: it is the point past which the
 *database driver* fails rather than answering. See `_own_draft`.
 """
 
+MAX_BUDGET = 1_000_000
+"""Sanity ceiling for «/budget N», in ₴.
+
+`budget_weekly` is an `Integer` column: SQLite takes 64 bits and Postgres 32, so a
+number past either reached the driver — an `OverflowError` here, a `DataError` there —
+as an unhandled error where the help text belonged. No household budgets a million a
+week; the narrow miss is nobody and the wide miss was a crash on a typo.
+"""
+
 MAX_TEXT = 4096
 """Telegram's own message limit, restated because the Mini App is not Telegram.
 
@@ -180,6 +189,8 @@ async def on_budget(services: Services, telegram_id: int, argument: str) -> Outc
     try:
         amount = int(argument.replace(" ", "").replace("₴", ""))
     except ValueError:
+        return Spoke(BUDGET_HELP)
+    if amount > MAX_BUDGET:
         return Spoke(BUDGET_HELP)
 
     if amount <= 0:

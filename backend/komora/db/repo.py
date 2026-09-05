@@ -285,6 +285,13 @@ class BasketRepo:
         reach the cart were invisible here and «прибери молоко» could not name a
         product Komora had put there minutes earlier. Unavailable lines never carry
         the flag, because they are never sent.
+
+        **`removed` is deliberately not a filter here.** ✕ on a draft row hides it from
+        the draft; it does nothing to the Silpo cart, and the row's `synced` flag is
+        the record that the product is still there. Filtering on `removed` made a
+        product Komora had put in the cart, and the user then struck off the draft,
+        impossible to name in the chat — «прибери молоко» found no candidate, so the
+        one surface that could take it back out said it had nothing to remove.
         """
         async with self._sessions() as session:
             recent = (
@@ -303,7 +310,6 @@ class BasketRepo:
                 select(DraftItem)
                 .where(
                     DraftItem.basket_id.in_(recent),
-                    DraftItem.removed.is_(False),
                     DraftItem.synced.is_(True),
                 )
                 .order_by(DraftItem.basket_id.desc(), DraftItem.position)
@@ -359,6 +365,11 @@ class BasketRepo:
     async def drop_item(self, basket_id: int, position: int) -> bool:
         """Mark one line removed. The row stays (history keeps what was synced) but
         `load_cart` filters it out from here on.
+
+        Only the draft changes. A row that already landed in the Silpo cart keeps its
+        `synced` flag, and `synced_lines` keeps offering it — striking a product off
+        the draft is not the same as taking it out of the cart, and the chat is the
+        surface that can do the second.
         """
         async with self._sessions() as session, session.begin():
             item = await self._visible_item(session, basket_id, position)

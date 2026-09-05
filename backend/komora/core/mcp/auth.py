@@ -83,12 +83,19 @@ class DBTokenStorage(TokenStorage):
         self._telegram_id = telegram_id
         self._redirect_uri = redirect_uri
         """The callback this process would send. A stored registration that does not
-        list it is unusable — see `get_client_info`. `None` disables the check, which
-        is what a caller that does not know its own callback should get."""
+        list it is unusable for *authorizing* — see `get_client_info`. `None` disables
+        the check, which is what a session that will never authorize should pass: the
+        same registration is what a token refresh signs with, and `SilpoGateway`
+        enables the check only on the linking path for that reason."""
         self._users = users
         self._clients = clients
         self._cipher = cipher
         self._loaded_expiry: float | None = None
+
+    @property
+    def redirect_uri(self) -> str | None:
+        """The callback a stored registration must list, or `None` when not checked."""
+        return self._redirect_uri
 
     @property
     def loaded_expiry_timestamp(self) -> float | None:
@@ -138,8 +145,12 @@ class DBTokenStorage(TokenStorage):
         could explain. Returning `None` makes the SDK register afresh, which is the
         recovery `OAuthClientRepo.clear()` existed to perform by hand.
 
-        Existing users are untouched by this: their tokens refresh against a client id
-        that only changes when a new registration is actually made.
+        Existing users are untouched by this only while the check stays off their
+        path: a refresh signs with this very registration (`can_refresh_token` needs
+        `client_info`), so the gateway asks for the check on `link()` alone and an
+        ordinary `connect()` keeps whatever is stored. Once a login has re-registered,
+        tokens issued to the old client stop refreshing — that is inherent to a new
+        client id, and those users are asked to link again.
         """
         payload = await self._clients.get()
         if not payload:

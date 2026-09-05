@@ -2,7 +2,7 @@
 
 **A shopping agent that can suggest anything and change nothing.**
 
-Python 3.14 · 793 tests · `mypy --strict` clean · the whole suite runs with no network, no model and no bot
+Python 3.14 · 901 tests · `mypy --strict` clean · the whole suite runs with no network, no model and no bot
 
 You send a message — «купи молоко, хліб і щось до чаю» — and Komora comes back with a real
 cart: actual products, actual prices, in stock at your store, each line saying why it's
@@ -100,7 +100,7 @@ decrypt rather than quietly granting someone else's access.
 Everything from `backend/`, using [uv](https://docs.astral.sh/uv/):
 
 ```bash
-uv run pytest              # 793 tests, no network needed
+uv run pytest              # 901 tests, no network needed
 uv run ruff check .
 uv run mypy komora
 ```

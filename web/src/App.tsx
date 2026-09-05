@@ -4,7 +4,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { api, describeError } from "./api";
+import { api, describeError, staysOnScreen } from "./api";
 import type { Attempt } from "./api";
 import { launchTarget } from "./deeplink";
 import { telegramHost } from "./telegram";
@@ -108,7 +108,15 @@ export default function App() {
       // every other one is launched from a screen that is still true while it runs.
       if (FROM_NOTHING.includes(attempt)) setView({ name: "loading" });
       try {
-        route(await action());
+        const outcome = await action();
+        if (outcome.kind === "spoke" && staysOnScreen(outcome, attempt)) {
+          // An answer, not a destination: «Сільпо зараз не відповідає» to a preview
+          // leaves the draft exactly as it was, and the sheet a push came from is
+          // still the sheet to retry it from — the same rule the catch below keeps.
+          setBanner({ text: outcome.text, firm: true });
+        } else {
+          route(outcome);
+        }
       } catch (exc) {
         setBanner({ text: describeError(exc, attempt), firm: true });
         // …which is why only the shell falls back to compose. A failed preview leaves

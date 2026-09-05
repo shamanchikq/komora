@@ -6,9 +6,15 @@ the bot has nothing to match on and every failure looks the same.
 """
 
 import asyncio
+import base64
 
+from sqlalchemy.ext.asyncio import async_sessionmaker
+
+from komora.core.crypto import TokenCipher
+from komora.core.mcp.auth import AuthorizationBridge, DBTokenStorage
 from komora.core.mcp.errors import McpUnavailable, NotAuthenticated, RateLimited
-from komora.core.mcp.gateway import _translated
+from komora.core.mcp.gateway import SilpoGateway, _translated
+from komora.db.repo import OAuthClientRepo, UserRepo
 
 
 def nested(exc: BaseException) -> BaseException:
@@ -63,3 +69,39 @@ class TestCancellation:
     def test_a_bare_cancellation_is_not_swallowed(self) -> None:
         cancelled = asyncio.CancelledError()
         assert _translated(cancelled) is cancelled
+
+
+class TestWhenARegistrationMayBeDiscarded:
+    """The stored DCR registration is what a token **refresh** signs with, as much as
+    what a login presents. `DBTokenStorage` drops one made against another callback so
+    a login can re-register — and the gateway used to ask for that on every session,
+    so a base-URL move stopped every linked user's silent refresh at once: with no
+    `client_info` the SDK cannot refresh, the expired token went out anyway, and an
+    account whose refresh token was perfectly good was told to link again."""
+
+    def _gateway(self, sessions: async_sessionmaker) -> SilpoGateway:
+        return SilpoGateway(
+            server_url="https://mcp.silpo.ua/mcp",
+            public_base_url="https://komora.example",
+            users=UserRepo(sessions),
+            clients=OAuthClientRepo(sessions),
+            cipher=TokenCipher(base64.urlsafe_b64encode(b"k" * 32).decode()),
+            bridge=AuthorizationBridge(),
+        )
+
+    async def _send(self, telegram_id: int, url: str) -> None:
+        pass
+
+    def test_an_ordinary_session_keeps_whatever_is_stored(
+        self, sessions: async_sessionmaker
+    ) -> None:
+        provider = self._gateway(sessions)._provider(1, self._send, may_register=False)
+        storage = provider.context.storage
+        assert isinstance(storage, DBTokenStorage)
+        assert storage.redirect_uri is None, "a session that cannot log in must not discard"
+
+    def test_a_linking_session_checks_the_callback(self, sessions: async_sessionmaker) -> None:
+        provider = self._gateway(sessions)._provider(1, self._send, may_register=True)
+        storage = provider.context.storage
+        assert isinstance(storage, DBTokenStorage)
+        assert storage.redirect_uri == "https://komora.example/auth/silpo/callback"
