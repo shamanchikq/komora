@@ -10,6 +10,7 @@ from collections.abc import Iterator
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import (
     CallbackQuery,
@@ -28,7 +29,7 @@ from komora.bot.handlers import (
     on_start,
     on_text,
 )
-from komora.bot.outcomes import Outcome, Spoke
+from komora.bot.outcomes import Outcome, Spoke, Synced
 from komora.bot.render import Reply, to_reply
 
 log = logging.getLogger(__name__)
@@ -43,6 +44,39 @@ TERMINAL_ACTIONS = ("push", "cancel")
 own keyboard, and clearing the old one every time would litter the chat with dead
 cards the user may still want to scroll back to.
 """
+
+
+def should_clear_keyboard(action: str, outcome: Outcome) -> bool:
+    """Whether the tap that produced `outcome` has spent the keyboard it came from.
+
+    Only when the basket really moved on. A push that Silpo did not answer comes back
+    as a toast-less `Spoke` («Сільпо зараз не відповідає») with the draft still open —
+    and clearing «Додати в кошик» from under it left the user with no way to try
+    again except `/basket`, for a failure that was nobody's decision. A refusal of the
+    basket itself (`STALE`, always with a toast) and a completed write (`Synced`, whose
+    own message carries a retry when it needs one) are the cases the rule was for.
+    """
+    if action not in TERMINAL_ACTIONS:
+        return False
+    if isinstance(outcome, Synced):
+        return True
+    if isinstance(outcome, Spoke):
+        return action == "cancel" or outcome.toast is not None
+    return True
+
+
+async def answer_quietly(query: CallbackQuery, toast: str | None) -> None:
+    """Answer a callback without letting a late answer cost the reply.
+
+    Telegram expects `answerCallbackQuery` within seconds, and a push or a swap can
+    spend longer than that on Silpo. The late answer fails with «query is too old» —
+    which used to raise out of the handler *before* the reply was sent, so the user
+    saw the spinner stop and then nothing at all, for a write that had happened.
+    """
+    try:
+        await query.answer(toast or "")
+    except TelegramAPIError:
+        log.debug("callback answered too late for Telegram; sending the reply anyway")
 
 
 def make_bot(token: str) -> Bot:
@@ -130,10 +164,12 @@ def build_router(services: Services, mini_app_url: str | None = None) -> Router:
     @router.callback_query(F.data)
     async def callback(query: CallbackQuery) -> None:
         data = query.data or ""
-        reply = to_reply(await on_callback(services, _sender(query), data), mini_app_url)
-        await query.answer(reply.toast or "")
+        outcome = await on_callback(services, _sender(query), data)
+        reply = to_reply(outcome, mini_app_url)
+        await answer_quietly(query, reply.toast)
 
-        if data.partition(":")[0] in TERMINAL_ACTIONS and isinstance(query.message, Message):
+        action = data.partition(":")[0]
+        if should_clear_keyboard(action, outcome) and isinstance(query.message, Message):
             try:
                 await query.message.edit_reply_markup(reply_markup=None)
             except Exception:

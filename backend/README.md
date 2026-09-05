@@ -23,6 +23,13 @@ API over the same handlers, and the draft-cart screen + sync sheet in `web/` —
 same-origin from `web/dist`. The Mini App has **not yet been verified on a live device**;
 that checklist lives at the bottom of [its section](#mini-app-api).
 
+Reviewed a fourth time on 2026-09-05, against a green suite as ever. Eight defects, two
+of them able to cost a user something real: the registration check that lets a login
+re-register also ran on ordinary sessions, where it stopped token **refresh** for every
+linked user after a base-URL move; and ✕ on a draft row hid its product from
+«прибери…», which is the only way to take something back out of the Silpo cart. Both
+fixed, with tests. The rest are written up in [CLAUDE.md](../CLAUDE.md#status).
+
 **Before touching Silpo calls, read [docs/silpo-mcp-reference.md](../docs/silpo-mcp-reference.md)** —
 field names, call order and domain rules, all verified against the live server. Every
 parameter name assumed from a tool name in this project turned out to be wrong.
@@ -411,6 +418,33 @@ Found by the live runs on 2026-08-11/12, and left open deliberately.
 - **Silpo's coupon endpoints are intermittently unavailable.** One run in three saw
   `get_my_coupons` fail outright. Komora degrades as designed — the cart is built, the
   coupon is listed without its enriched value — but the enrichment is best-effort.
+- **A re-registration retires the tokens issued to the old client.** The DCR
+  registration is dropped and remade when a login presents a callback it does not list
+  (a `KOMORA_PUBLIC_BASE_URL` move), and refresh tokens are bound to the client id that
+  issued them. Users linked before the move keep working until their next login, then
+  need one. Inherent to a new client id; the alternative is presenting Silpo a
+  redirect_uri it never registered, which fails harder and later. The check runs on
+  `link()` only, so an ordinary message never triggers it — see `SilpoGateway._provider`.
+- **An unknown slash command goes to the model.** `/help`, `/cancel`, a typo — anything
+  that is not `/start`, `/budget` or `/basket` falls through the `F.text` handler and
+  becomes a basket request, which spends a model request to answer confusion. A command
+  list and a plain refusal is the fix, and it is cheap.
+- **`/api/draft` has no per-user rate limit.** Anyone holding a valid `initData` can
+  spend the day's model quota in a loop. The bot inherits Telegram's own flood control
+  for free; HTTP inherits nothing, exactly as it inherited no length limit before
+  `MAX_TEXT`. Not a data-exposure hole — the payload is still HMAC-bound to one user —
+  but a self-inflicted denial of service.
+- **A line Silpo caps at stock between the two taps is reported as a failure.**
+  `execute_sync` judges a write by comparing what landed against what was asked for, so
+  a quantity Silpo lowered to the remaining stock does not match, and the line reads
+  «не додалося» while sitting in the cart. Safe in the honest direction — a retry is
+  idempotent — but it names the wrong outcome. Accepting any positive quantity as
+  landed, and reporting the amount, would be truer.
+- **`smoke_e2e.py --push` restores product ids, not quantities.** The cleanup removes
+  what it added and then asserts the id set matches; a product that was *already* in the
+  cart has had its quantity replaced by the draft's, and it is left that way. The script
+  says "cart restored to its original contents", which is true of the membership and
+  not of the amounts.
 - **Telegram is untested against the real API.** Everything below it is not.
 
 ## Model providers

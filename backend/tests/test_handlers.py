@@ -27,6 +27,7 @@ from komora.bot.handlers import (
     on_callback,
     on_open_active,
     on_open_basket,
+    on_remove_line,
     on_start,
     on_text,
 )
@@ -819,3 +820,71 @@ class TestTheActiveDraftIsReachable:
         assert isinstance(draft, DraftReady)
         await on_callback(services, USER, f"push:{draft.basket_id}")
         assert await on_open_active(services, USER) == Spoke(NO_ACTIVE_DRAFT)
+
+
+class TestStrikingARowOffTheDraftLeavesTheCartAlone:
+    """✕ edits the draft and nothing else — so a product Komora already put in the
+    Silpo cart is still there afterwards, and still Komora's to take back out.
+
+    `synced_lines` filtered `removed` rows out, which made exactly that product the
+    one thing «прибери молоко» could not name: the draft had forgotten it, the cart
+    had not, and the only surface able to remove it said it had nothing to remove.
+    """
+
+    REMOVE_MILK = ToolCall(
+        PROPOSE_BASKET,
+        {"title": "Прибрати молоко", "lines": [], "removals": ["молоко"]},
+    )
+
+    async def _landed_then_struck(self, sessions):  # type: ignore[no-untyped-def]
+        """Milk lands in the cart, bread is swallowed, then ✕ on the milk row."""
+        mcp = FakeSilpo(CATALOGUE, swallow={"id-Хліб Київський"})
+        services, _, _ = services_for(sessions, mcp=mcp)
+        draft = await on_text(services, USER, "купи молоко і хліб")
+        assert isinstance(draft, DraftReady) and draft.basket_id is not None
+        await on_callback(services, USER, f"push:{draft.basket_id}")
+        assert "id-Молоко Яготинське 2,6%" in {p["productId"] for p in mcp._cart}
+
+        struck = await on_remove_line(services, USER, draft.basket_id, 0)
+        assert isinstance(struck, DraftReady)
+        assert [ln.name for ln in struck.cart.lines] == ["Хліб Київський"]
+        return services, mcp
+
+    async def test_the_silpo_cart_is_untouched_by_the_strike(self, sessions) -> None:
+        _, mcp = await self._landed_then_struck(sessions)
+        assert "id-Молоко Яготинське 2,6%" in {p["productId"] for p in mcp._cart}
+
+    async def test_the_struck_product_is_still_a_removal_candidate(self, sessions) -> None:
+        services, _ = await self._landed_then_struck(sessions)
+        assert [ln.name for ln in await services.baskets.synced_lines(USER)] == [
+            "Молоко Яготинське 2,6%"
+        ]
+
+    async def test_the_chat_can_still_take_it_out(self, sessions) -> None:
+        services, mcp = await self._landed_then_struck(sessions)
+        services.llm._responses.append(LLMResponse(tool_calls=(self.REMOVE_MILK,)))
+
+        outcome = await on_text(services, USER, "прибери молоко")
+        assert isinstance(outcome, DraftReady)
+        assert [r.name for r in outcome.cart.removals] == ["Молоко Яготинське 2,6%"]
+
+        assert outcome.basket_id is not None
+        await on_callback(services, USER, f"push:{outcome.basket_id}")
+        assert "id-Молоко Яготинське 2,6%" not in {p["productId"] for p in mcp._cart}
+
+
+class TestBudgetBounds:
+    async def test_a_number_no_column_can_hold_gets_the_help_text(self, sessions) -> None:
+        """`Integer` is 32 bits on Postgres and 64 on SQLite; past either the driver
+        raised where the help text belonged."""
+        services, _, _ = services_for(sessions)
+        reply = to_reply(await on_budget(services, USER, "99999999999999999999"))
+        assert "/budget 1500" in reply.text
+        user = await services.users.get(USER)
+        assert user is not None and user.budget_weekly is None, "nothing was stored"
+
+    async def test_a_large_but_sane_budget_is_accepted(self, sessions) -> None:
+        services, _, _ = services_for(sessions)
+        to_reply(await on_budget(services, USER, "1000000"))
+        user = await services.users.get(USER)
+        assert user is not None and user.budget_weekly == 1_000_000

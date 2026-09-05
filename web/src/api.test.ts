@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ApiError, describeError } from "./api";
+import { ApiError, describeError, staysOnScreen } from "./api";
 
 /** The mapping, not the prose: what a failure is allowed to claim depends on what was
  * being attempted. The rule this guards is the repo's own — never claim more than the
@@ -40,5 +40,45 @@ describe("describeError", () => {
   it("distinguishes a server answer from no answer", () => {
     expect(describeError(new ApiError(500), "read")).toContain("на сервері");
     expect(describeError(new Error("network"), "read")).toContain("Щось пішло не так");
+  });
+});
+
+/** Whether a spoken answer replaces the screen that asked, or stays on it as a
+ * banner. The distinction is the backend's own: a refusal of the basket carries a
+ * toast, an answer about a living screen does not. */
+describe("staysOnScreen", () => {
+  const spoke = (toast: string | null, needsLink = false) => ({
+    kind: "spoke" as const,
+    needs_link: needsLink,
+    toast,
+  });
+
+  it("keeps a draft on screen when the preview it asked for is refused in prose", () => {
+    // «Сільпо зараз не відповідає», «нема чого надсилати», «уже нема чого міняти» —
+    // each used to become a full-screen sentence with the basket gone behind it.
+    expect(staysOnScreen(spoke(null), "read")).toBe(true);
+  });
+
+  it("keeps the sync sheet when a push comes back as prose", () => {
+    // The sheet is the one screen the write can be retried from — the same rule the
+    // error path already follows for an exception.
+    expect(staysOnScreen(spoke(null), "write")).toBe(true);
+  });
+
+  it("navigates when the basket itself was refused", () => {
+    // Foreign, spent, or gone: the backend names the reason in the toast, and the
+    // draft underneath is dead.
+    expect(staysOnScreen(spoke("Чернетка вже неактуальна"), "read")).toBe(false);
+    expect(staysOnScreen(spoke("Ця чернетка недоступна"), "write")).toBe(false);
+  });
+
+  it("navigates when the session lapsed", () => {
+    expect(staysOnScreen(spoke(null, true), "read")).toBe(false);
+  });
+
+  it("never holds a screen that does not exist yet, and lets a cancel leave", () => {
+    expect(staysOnScreen(spoke(null), "draft")).toBe(false);
+    expect(staysOnScreen(spoke(null), "open")).toBe(false);
+    expect(staysOnScreen(spoke(null), "edit")).toBe(false);
   });
 });

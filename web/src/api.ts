@@ -28,6 +28,32 @@ export class ApiError extends Error {
  * stays for ⇄, which really does search Silpo again. */
 export type Attempt = "draft" | "open" | "read" | "edit" | "write";
 
+/** Whether a prose answer to `attempt` is news about the screen that asked, rather
+ * than somewhere to go.
+ *
+ * The backend says which it is by the shape of the `spoke`. A refusal of the basket
+ * itself — foreign, spent, gone — always carries a `toast` naming the reason, and
+ * the draft under it is dead, so that is a destination. `needs_link` is one too: a
+ * lapsed session means nothing on screen can be acted on until the chat re-links.
+ * Everything else — «Сільпо зараз не відповідає», «нема чого надсилати», the cart
+ * emptied by hand between the two taps — is an answer to a screen that is still
+ * true, and navigating to a full-screen sentence threw that screen away: a preview
+ * that Silpo failed to answer used to replace the draft with the failure, and the
+ * BackButton from there led to compose, not back to the basket. The same lesson the
+ * 2026-08-26 review learned for ⇄, applied to the two attempts `run` makes from a
+ * screen that survives them.
+ *
+ * `draft` and `open` have no screen behind them, and `edit` here is only ever cancel,
+ * whose whole point is that the draft is gone — all three stay destinations. */
+export function staysOnScreen(
+  outcome: { kind: "spoke"; needs_link: boolean; toast: string | null },
+  attempt: Attempt,
+): boolean {
+  if (outcome.needs_link) return false;
+  if (attempt !== "read" && attempt !== "write") return false;
+  return outcome.toast === null;
+}
+
 const NEEDS_TELEGRAM =
   "Відкрийте Комору через Telegram — інакше вона не може довести, що це ви.";
 const WRITE_UNKNOWN =

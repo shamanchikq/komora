@@ -27,7 +27,7 @@ from komora.core.models import (
     SearchContext,
     SyncReport,
 )
-from komora.core.passes.resolve import flatten_search
+from komora.core.passes.resolve import MAX_QUERIES_PER_BATCH, flatten_search
 from komora.core.pipeline import CartContextMissing
 
 DRIFT_TOLERANCE = Decimal("0.02")
@@ -221,8 +221,15 @@ async def _reprice(
     if not queries:
         return {}
 
+    # Silpo's ceiling is thirty queries per call — the same one `resolve._search`
+    # chunks for. One unchunked call over a longer basket was rejected outright, and
+    # the rejection was swallowed below into "no drift", which is the one answer a
+    # price check must never give by accident.
+    grouped: dict[str, list[dict[str, Any]]] = {}
     try:
-        grouped = flatten_search(await mcp.find_products_batch(queries, context))
+        for start in range(0, len(queries), MAX_QUERIES_PER_BATCH):
+            chunk = queries[start : start + MAX_QUERIES_PER_BATCH]
+            grouped |= flatten_search(await mcp.find_products_batch(chunk, context))
     except Exception:
         return {}
 

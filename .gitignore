@@ -46,3 +46,6 @@ backend/verify.db
 
 # Specs, plans and design prompts. Their own private repo — see CLAUDE.md.
 docs/superpowers/
+
+# TypeScript incremental build state (tsc -b), next to the ignored web/dist.
+*.tsbuildinfo
