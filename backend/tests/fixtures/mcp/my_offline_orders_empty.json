@@ -1,0 +1,10 @@
+{
+  "success": true,
+  "summary": "No offline orders found",
+  "orders": [],
+  "meta": {
+    "limit": 10,
+    "offset": 0,
+    "total": 0
+  }
+}

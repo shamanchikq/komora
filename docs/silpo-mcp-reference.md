@@ -424,3 +424,62 @@ successful empty result. It was found by sending `get_time_slots` a naive dateti
 Hence the rule in `core/mcp/payload.py: error_of` — **any bare string is a failure.**
 Every tool Komora calls declares an object output schema, so a string where an object
 belongs is never a result.
+
+## 9. Purchase history — the habits input, captured 2026-09-13
+
+Three tools carry what a habits engine would need. All were called live against a
+linked account; **all three answered `total: 0`**, so the shapes below are the *empty*
+envelope and nothing more.
+
+| Tool | Context required | `limit` | Observed |
+|---|---|---|---|
+| `silpo_get_my_online_orders` | none | 1–100, default 10 | `total: 0` — «No orders found» |
+| `silpo_get_my_offline_orders` | `branchId`, `deliveryType`, `timeslotStart`, `timeslotEnd` — all four **required** | 1–**10**, default 10 | `total: 0` — «No offline orders found» |
+| `silpo_get_my_favorites` | `branchId`, `deliveryType`, `timeslotStart` | 1–100 | `total: 0` — «No favorite products found» |
+
+All three share one envelope, which is worth knowing because it is *not* the shape the
+cart tools use:
+
+```json
+{ "success": true, "summary": "No orders found",
+  "orders": [], "meta": { "limit": 10, "offset": 0, "total": 0 } }
+```
+
+`silpo_get_my_favorites` names its array `products`, not `orders`.
+
+**The offline call is bound to a live cart.** Its four required parameters come from
+`silpo_get_shopping_cart_by_id`, which means in-store purchase history cannot be read
+without a branch and an unexpired timeslot — the same context a product search needs.
+Any background job that imports history therefore depends on cart state, which is a
+design constraint, not an implementation detail.
+
+**`limit` really is capped at 10** for the offline tool (`"max: 10"` in its own schema),
+against 100 for the online one. Sending 20 returns `-32602 too_big`. Read the schema.
+
+### What is still unknown, and it is the important half
+
+A populated response has **never been seen** — same standing as
+`silpo_get_my_food_restrictions` (§6). The account it was called against holds a real
+loyalty card (`typeName: "Постійна"`, status Active) and has simply never bought
+anything, online or in store. So every question the habits engine's design depends on is
+open:
+
+- **Does an order line carry a category?** Spec §6 keys habits on the *leaf category*
+  from `get_categories_tree`. If lines carry only `lagerId` and a name, the engine needs
+  a resolution step per product, at a cost per import.
+- **What timestamp does an order carry**, and at what granularity? The median-interval
+  rule and the same-day collapse both need one.
+- **How far back does paging reach** — `offset` has no documented ceiling, but 10 orders
+  per call against an unknown history length sets the cost of a first import.
+- **Which source is the real signal?** Most Silpo shopping is in store, so `offline` is
+  probably where the ≥4 events come from — and that is the tool with the cart coupling
+  and the smaller page.
+
+What the tool descriptions claim, unverified: online orders come "with product details";
+offline orders return `products[]` where `catalogProduct !== null` is reorderable and
+`products[].lagerId` equals the `externalProductId` of the catalog tools, so a receipt
+line can be matched to a product by searching that id numerically rather than by name.
+
+**Plan 3 cannot be designed against this account.** It needs one linked to a person who
+actually shops at Silpo; until then the line shape would be a guess, and every parameter
+this project guessed from a tool name has turned out wrong.
