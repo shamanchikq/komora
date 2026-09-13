@@ -38,6 +38,7 @@ import argparse
 import asyncio
 import contextlib
 import os
+from collections.abc import Iterator
 from typing import Any
 
 import uvicorn
@@ -63,7 +64,9 @@ OFFLINE_MAX_LIMIT = 10
 """`silpo_get_my_offline_orders` declares `max: 10` and enforces it with -32602.
 The online tool takes 100. Reading the schema would have saved a round trip."""
 
-CATEGORY_HINTS = ("category", "categoryid", "categoryname", "section", "group")
+CATEGORY_HINTS = ("categor",)
+"""Matched inside a key's last segment. `section` and `group` were here once, and `group`
+matched `rewards.rewardGroupCodeName` — a loyalty reward group — as a product category."""
 DATE_HINTS = ("date", "createdat", "orderdate", "purchasedat", "time", "timestamp")
 
 
@@ -74,7 +77,12 @@ def cart_context(cart: Any) -> dict[str, str] | None:
     branch and an unexpired slot. That coupling is the constraint a nightly import job
     inherits; it is not an accident of this script.
     """
-    body = cart.get("shoppingCart", cart) if isinstance(cart, dict) else {}
+    # The response wraps the cart as {"success": true, "cart": {...}} — the key
+    # `pipeline._cart_body` and `verify_mcp.cart_body` both read. This line first
+    # guessed `shoppingCart`, found nothing, and reported a slot that was set as
+    # missing, twice, against a real account.
+    inner = cart.get("cart") if isinstance(cart, dict) else None
+    body = inner if isinstance(inner, dict) else (cart if isinstance(cart, dict) else {})
     shipments = [s for s in (body.get("shipments") or []) if isinstance(s, dict)]
     timeslot = body.get("timeslot") or {}
     fields = {
@@ -115,20 +123,75 @@ def describe(name: str, payload: Any) -> None:
         return
 
     first = items[0]
-    if not isinstance(first, dict):
-        return
-    print(f"      order keys: {sorted(first)}")
-    for key in ("products", "lines", "items"):
-        lines = first.get(key)
-        if isinstance(lines, list) and lines and isinstance(lines[0], dict):
-            keys = sorted(lines[0])
-            print(f"      line keys ({key}): {keys}")
-            cats = [k for k in keys if any(h in k.lower() for h in CATEGORY_HINTS)]
-            dates = [k for k in first if any(h in k.lower() for h in DATE_HINTS)]
-            # The two questions Plan 3 cannot be written without.
-            check(f"{name}: a line carries a category field", bool(cats), f"found {cats}")
-            check(f"{name}: an order carries a date field", bool(dates), f"found {dates}")
-            break
+    print("      shape of the first entry (keys and types only — no values):")
+    for line in skeleton(first):
+        print(f"        {line}")
+
+    # The two questions Plan 3 cannot be written without. Searched at every depth: the
+    # tool description puts `catalogProduct` — an object — on each line, and a category
+    # nested inside it is still a category.
+    paths = list(key_paths(first))
+    cats = [p for p, _ in paths if any(h in p.rsplit(".", 1)[-1].lower() for h in CATEGORY_HINTS)]
+    dates = [
+        (p, v)
+        for p, v in paths
+        if isinstance(v, str | int | float)
+        and any(h in p.rsplit(".", 1)[-1].lower() for h in DATE_HINTS)
+    ]
+    check(f"{name}: a category field exists somewhere", bool(cats), f"found {cats}")
+    check(
+        f"{name}: a date field exists somewhere",
+        bool(dates),
+        ", ".join(f"{p} like {date_format(v)!r}" for p, v in dates),
+    )
+
+
+def skeleton(value: Any, depth: int = 0) -> list[str]:
+    """Keys and types, recursively. A list shows its length and its first element's shape.
+
+    Types only, so the output can be read — and pasted — without exposing what anyone
+    bought, when, or for how much.
+    """
+    pad = "  " * depth
+    out: list[str] = []
+    if isinstance(value, dict):
+        for k in sorted(value):
+            v = value[k]
+            if isinstance(v, dict | list) and v:
+                label = f"list[{len(v)}]" if isinstance(v, list) else "object"
+                out.append(f"{pad}{k}: {label}")
+                inner = v[0] if isinstance(v, list) else v
+                if isinstance(inner, dict | list):
+                    out.extend(skeleton(inner, depth + 1))
+                else:
+                    out.append(f"{pad}  [0]: {type(inner).__name__}")
+            else:
+                out.append(f"{pad}{k}: {'null' if v is None else type(v).__name__}")
+    elif isinstance(value, list) and value:
+        out.extend(skeleton(value[0], depth))
+    return out
+
+
+def key_paths(value: Any, prefix: str = "") -> Iterator[tuple[str, Any]]:
+    """Every `a.b.c` path in the first element of each list, with its leaf value."""
+    if isinstance(value, dict):
+        for k, v in value.items():
+            path = f"{prefix}.{k}" if prefix else k
+            yield path, v
+            yield from key_paths(v, path)
+    elif isinstance(value, list) and value:
+        yield from key_paths(value[0], prefix)
+
+
+def date_format(value: Any) -> str:
+    """The format of a timestamp without the timestamp: every digit becomes 9.
+
+    Enough to tell ISO-8601 from epoch seconds from a local date string — which the
+    median-interval rule has to parse — and nothing about when anyone shopped.
+    """
+    if isinstance(value, str):
+        return "".join("9" if c.isdigit() else c for c in value)
+    return type(value).__name__
 
 
 async def main(write_fixtures: bool, keep_tokens: bool, port: int) -> int:
