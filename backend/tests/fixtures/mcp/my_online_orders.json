@@ -1,0 +1,461 @@
+{
+  "success": true,
+  "summary": "Found 6 orders (total: 97)",
+  "orders": [
+    {
+      "orderId": "1f0e5761-f5c0-607c-b0b2-3e7db720820c",
+      "number": "34074894",
+      "status": "received",
+      "createdAt": "2026-04-24T15:11:48+00:00",
+      "amount": 902,
+      "discount": 64.84,
+      "delivery": {
+        "type": "SelfPickup",
+        "timeSlot": {
+          "from": "2026-04-24T16:30:00+00:00",
+          "to": "2026-04-24T17:00:00+00:00"
+        },
+        "deliveredAt": "2026-04-24T16:34:49+00:00"
+      },
+      "address": {
+        "city": "Львів",
+        "street": "<redacted>",
+        "building": "<redacted>",
+        "apartment": "<redacted>"
+      },
+      "products": [
+        {
+          "id": "1ed07604-a3ca-624e-87ee-dd63763181f9",
+          "name": "Свинина, ошийок без кістки охолоджений",
+          "price": 289,
+          "quantity": 3.09,
+          "subtotal": 893.01,
+          "removed": false,
+          "image": "https://images.silpo.ua/v2/products/500x500/webp/d012268c-a984-4509-98c3-b6a9cc467ac9.png",
+          "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+          "branchId": "1ef75882-088d-6d58-8219-7bbaea7db06e"
+        }
+      ]
+    },
+    {
+      "orderId": "1f0b50d0-5fb8-6f75-b53e-cf30165fee8c",
+      "number": "31638918",
+      "status": "received",
+      "createdAt": "2025-12-30T11:53:14+00:00",
+      "amount": 1124,
+      "discount": 527.9100000000001,
+      "delivery": {
+        "type": "SelfPickup",
+        "timeSlot": {
+          "from": "2025-12-30T13:00:00+00:00",
+          "to": "2025-12-30T13:30:00+00:00"
+        },
+        "deliveredAt": "2025-12-30T13:24:56+00:00"
+      },
+      "address": {
+        "city": "Львів",
+        "street": "<redacted>",
+        "building": "<redacted>",
+        "apartment": "<redacted>"
+      },
+      "products": [
+        {
+          "id": "1ed07697-4cd6-6d50-81b8-5f148feebb3f",
+          "name": "Сир «Ферма» кисломолочний 9%",
+          "price": 62.99,
+          "quantity": 1,
+          "subtotal": 62.99,
+          "removed": false,
+          "image": "https://images.silpo.ua/v2/products/500x500/webp/dbfabdb2-ea04-417d-9cb0-e98822fac785.png",
+          "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+          "branchId": "1edb733c-6d3f-6e64-bf04-0f7f0c3d0cd0"
+        },
+        {
+          "id": "1ed07697-4cd6-6a08-aac2-5f148feebb3f",
+          "name": "Сир «Ферма» кисломолочний 5%",
+          "price": 59.99,
+          "quantity": 1,
+          "subtotal": 59.99,
+          "removed": false,
+          "image": "https://images.silpo.ua/v2/products/500x500/webp/a203170e-8d93-44cd-9470-b92324970962.png",
+          "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+          "branchId": "1edb733c-6d3f-6e64-bf04-0f7f0c3d0cd0"
+        },
+        {
+          "id": "1ed075da-6532-6146-a995-dd63763181f9",
+          "name": "Молоко «Селянське» питне ультрапастеризоване 2,5%",
+          "price": 32.99,
+          "quantity": 8,
+          "subtotal": 263.92,
+          "removed": false,
+          "image": "https://images.silpo.ua/v2/products/500x500/webp/fffd93c6-5f1b-4b5f-860c-e39c30f670f1.png",
+          "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+          "branchId": "1edb733c-6d3f-6e64-bf04-0f7f0c3d0cd0"
+        },
+        {
+          "id": "1ef4ba12-8224-6f74-a3d2-a9c44e6b1e0c",
+          "name": "Ковбаса Алан Ностальгія с/в в/ґ",
+          "price": 179,
+          "quantity": 1,
+          "subtotal": 179,
+          "removed": false,
+          "image": "https://images.silpo.ua/v2/products/500x500/webp/73a44dbc-a984-44d2-834f-f745d1c0a9f0.png",
+          "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+          "branchId": "1edb733c-6d3f-6e64-bf04-0f7f0c3d0cd0"
+        },
+        {
+          "id": "1ed07606-0b54-6f08-9713-dd63763181f9",
+          "name": "Кролик охолоджений в/у",
+          "price": 309.6,
+          "quantity": 1.265,
+          "subtotal": 391.64,
+          "removed": false,
+          "image": "https://images.silpo.ua/v2/products/500x500/webp/2f2b34a8-a792-4234-9fee-3d5a8f837ec7.png",
+          "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+          "branchId": "1edb733c-6d3f-6e64-bf04-0f7f0c3d0cd0"
+        },
+        {
+          "id": "1ee71f19-5799-647c-b967-113073ce40ee",
+          "name": "Салат листовий Зелена Країна свіжий мікс з руколою митий",
+          "price": 39.99,
+          "quantity": 2,
+          "subtotal": 79.98,
+          "removed": false,
+          "image": "https://images.silpo.ua/v2/products/500x500/webp/7924fd62-28fe-48b9-b6e2-2152ee2551cc.png",
+          "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+          "branchId": "1edb733c-6d3f-6e64-bf04-0f7f0c3d0cd0"
+        },
+        {
+          "id": "1ed075e8-1b2f-632e-8dcb-dd63763181f9",
+          "name": "Томат гілка",
+          "price": 143.65,
+          "quantity": 0.43,
+          "subtotal": 61.77,
+          "removed": false,
+          "image": "https://images.silpo.ua/v2/products/500x500/webp/d51987e1-a93b-4d1b-83cd-7628a0d218ed.png",
+          "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+          "branchId": "1edb733c-6d3f-6e64-bf04-0f7f0c3d0cd0"
+        },
+        {
+          "id": "1edb03a8-73ac-65b2-a48f-9f7fd78fecf4",
+          "name": "Пакет біорозкладний",
+          "price": 1.2,
+          "quantity": 1,
+          "subtotal": 1.2,
+          "removed": false,
+          "image": "https://images.silpo.ua/v2/products/500x500/webp/a7943839-ac83-4826-86fc-0c26821609d9.png",
+          "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+          "branchId": "1edb733c-6d3f-6e64-bf04-0f7f0c3d0cd0"
+        },
+        {
+          "id": "1f0a62d6-53c4-6382-b0fc-11f90094186a",
+          "name": "Пакет для катання Сільпо з додаванням вторинного поліетилену 12 кг",
+          "price": 7.49,
+          "quantity": 1,
+          "subtotal": 7.49,
+          "removed": false,
+          "image": "https://images.silpo.ua/v2/products/500x500/webp/44f78472-252f-4b6c-9dd8-61ebdbbbc715.jpg",
+          "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+          "branchId": "1edb733c-6d3f-6e64-bf04-0f7f0c3d0cd0"
+        },
+        {
+          "id": "1edb0366-9962-6c76-b609-9f7fd78fecf4",
+          "name": "Пакет Сільпо Пакет з Пакетів 18 кг",
+          "price": 8.49,
+          "quantity": 1,
+          "subtotal": 8.49,
+          "removed": false,
+          "image": "https://images.silpo.ua/v2/products/500x500/webp/1ba21803-6fab-4c3d-9e51-eda2e2245d7d.png",
+          "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+          "branchId": "1edb733c-6d3f-6e64-bf04-0f7f0c3d0cd0"
+        }
+      ]
+    },
+    {
+      "orderId": "86aa7b94-053e-4267-9868-040a78292db2",
+      "number": "20868547",
+      "status": "received",
+      "createdAt": "2025-05-26T04:25:15+00:00",
+      "amount": 1220,
+      "discount": 446.762,
+      "delivery": {
+        "type": "SelfPickup",
+        "timeSlot": {
+          "from": "2025-05-26T06:00:00+00:00",
+          "to": "2025-05-26T06:30:00+00:00"
+        },
+        "deliveredAt": "2025-05-26T06:00:00+00:00"
+      },
+      "address": {
+        "city": "Львів",
+        "street": "<redacted>",
+        "building": "<redacted>",
+        "apartment": "<redacted>"
+      },
+      "products": [
+        {
+          "id": "1effaebb-7763-6d12-8dc5-c523a39afdd6",
+          "name": "Папір туалетний NUA 3-шаровий",
+          "price": 499,
+          "quantity": 1,
+          "subtotal": 499,
+          "removed": false,
+          "image": "https://images.silpo.ua/v2/products/500x500/webp/https://content.silpo.ua/sku/ecommerce/97/480x480wwm/979770_480x480wwm_a2581802-2bbd-4ba3-76b5-0058edb38a42.png",
+          "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+          "branchId": "1ee53937-41b1-600c-8e8c-11f5061cd563"
+        },
+        {
+          "id": "1f01016c-1caa-6f42-b0df-cfeb294c4380",
+          "name": "Сметана Ферма 15%, стакан",
+          "price": 49.9,
+          "quantity": 1,
+          "subtotal": 49.9,
+          "removed": false,
+          "image": "https://images.silpo.ua/v2/products/500x500/webp/https://content.silpo.ua/sku/ecommerce/98/480x480wwm/981489_480x480wwm_512b1ab8-7648-a8d7-de02-2672ee224451.png",
+          "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+          "branchId": "1ee53937-41b1-600c-8e8c-11f5061cd563"
+        },
+        {
+          "id": "1ed07697-4cd6-6d50-81b8-5f148feebb3f",
+          "name": "Сир «Ферма» кисломолочний 9%",
+          "price": 69.9,
+          "quantity": 2,
+          "subtotal": 139.8,
+          "removed": false,
+          "image": "https://images.silpo.ua/v2/products/500x500/webp/https://content.silpo.ua/sku/ecommerce/86/480x480wwm/862308_480x480wwm_4585b0cb-8566-f343-b1c5-377e33389ec0.png",
+          "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+          "branchId": "1ee53937-41b1-600c-8e8c-11f5061cd563"
+        },
+        {
+          "id": "1ed07630-00f7-65c2-86c0-dd63763181f9",
+          "name": "Шоколад молочний Milka без добавок",
+          "price": 49.99,
+          "quantity": 1,
+          "subtotal": 49.99,
+          "removed": false,
+          "image": "https://images.silpo.ua/v2/products/500x500/webp/https://content.silpo.ua/sku/ecommerce/58/480x480wwm/581713_480x480wwm_b6eac3d0-62ce-dea7-950b-51cbe867c899.png",
+          "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+          "branchId": "1ee53937-41b1-600c-8e8c-11f5061cd563"
+        },
+        {
+          "id": "1ed075de-2c79-68aa-ad90-dd63763181f9",
+          "name": "Скумбрія свіжоморожена",
+          "price": 201.24,
+          "quantity": 0.958,
+          "subtotal": 192.79,
+          "removed": false,
+          "image": "https://images.silpo.ua/v2/products/500x500/webp/https://content.silpo.ua/sku/ecommerce/3/480x480wwm/36488_480x480wwm_203ef561-8a7c-74fe-c6ad-5708b501fb81.png",
+          "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+          "branchId": "1ee53937-41b1-600c-8e8c-11f5061cd563"
+        },
+        {
+          "id": "1ed07697-4cd6-6a08-aac2-5f148feebb3f",
+          "name": "Сир «Ферма» кисломолочний 5%",
+          "price": 64.9,
+          "quantity": 1,
+          "subtotal": 64.9,
+          "removed": false,
+          "image": "https://images.silpo.ua/v2/products/500x500/webp/https://content.silpo.ua/sku/ecommerce/86/480x480wwm/862307_480x480wwm_23b7bb25-e1cf-b455-a01e-3a304b348f59.png",
+          "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+          "branchId": "1ee53937-41b1-600c-8e8c-11f5061cd563"
+        },
+        {
+          "id": "1ed0765c-17fd-69fc-8ff2-dd63763181f9",
+          "name": "Молоко «Галичина» «З чистих Карпат» 2,5%",
+          "price": 35.99,
+          "quantity": 6,
+          "subtotal": 215.94,
+          "removed": false,
+          "image": "https://images.silpo.ua/v2/products/500x500/webp/https://content.silpo.ua/sku/ecommerce/71/480x480wwm/716286_480x480wwm_17dee2a5-9304-8a86-c2dc-b3755c514cbf.png",
+          "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+          "branchId": "1ee53937-41b1-600c-8e8c-11f5061cd563"
+        }
+      ]
+    },
+    {
+      "orderId": "8f3e246b-541c-46d3-896b-17ddb988f713",
+      "number": "18930588",
+      "status": "received",
+      "createdAt": "2025-02-25T09:00:55+00:00",
+      "amount": 823.71,
+      "discount": 323.18,
+      "delivery": {
+        "type": "SelfPickup",
+        "timeSlot": {
+          "from": "2025-02-25T10:00:00+00:00",
+          "to": "2025-02-25T10:30:00+00:00"
+        },
+        "deliveredAt": "2025-02-25T10:00:00+00:00"
+      },
+      "address": {
+        "city": "Львів",
+        "street": "<redacted>",
+        "building": "<redacted>",
+        "apartment": "<redacted>"
+      },
+      "products": [
+        {
+          "id": "1ee6a174-2f0e-6764-b5c3-c7331fa6c38e",
+          "name": "Цукерки Millennium Cocktail Truffles Collection",
+          "price": 99.9,
+          "quantity": 1,
+          "subtotal": 0,
+          "removed": false,
+          "image": "https://images.silpo.ua/v2/products/500x500/webp/https://content.silpo.ua/sku/ecommerce/94/480x480wwm/940003_480x480wwm_2ee17998-2d1d-c54e-1297-bfb2701c487d.png",
+          "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+          "branchId": "1ee53937-41b1-600c-8e8c-11f5061cd563"
+        },
+        {
+          "id": "1ed2a9fc-8780-6128-b1a1-8f05abac3364",
+          "name": "Ковбаса «Самобранка» «Теляча» варена",
+          "price": 54.99,
+          "quantity": 1,
+          "subtotal": 54.99,
+          "removed": false,
+          "image": "https://images.silpo.ua/v2/products/500x500/webp/https://content.silpo.ua/sku/ecommerce/90/480x480wwm/908377_480x480wwm_ec344a33-b123-fd15-8557-15b99e2ad00b.png",
+          "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+          "branchId": "1ee53937-41b1-600c-8e8c-11f5061cd563"
+        },
+        {
+          "id": "1ed07635-47ed-6e2c-959f-dd63763181f9",
+          "name": "Печиво Bahlsen «Хіт» какао",
+          "price": 49.99,
+          "quantity": 1,
+          "subtotal": 49.99,
+          "removed": false,
+          "image": "https://images.silpo.ua/v2/products/500x500/webp/https://content.silpo.ua/sku/ecommerce/59/480x480wwm/592752_480x480wwm_f27f230d-0ae9-c264-ea0f-4173609b7179.png",
+          "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+          "branchId": "1ee53937-41b1-600c-8e8c-11f5061cd563"
+        },
+        {
+          "id": "1ed075fc-9435-6c82-ac86-dd63763181f9",
+          "name": "Оцет Ponti бальзамічний з Модени",
+          "price": 119,
+          "quantity": 1,
+          "subtotal": 119,
+          "removed": false,
+          "image": "https://images.silpo.ua/v2/products/500x500/webp/https://content.silpo.ua/sku/ecommerce/39/480x480wwm/391346_480x480wwm_2c6a6feb-5ffd-c3f8-9b64-2a0eef0873dc.png",
+          "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+          "branchId": "1ee53937-41b1-600c-8e8c-11f5061cd563"
+        },
+        {
+          "id": "1ed07694-ab23-68a2-a197-5f148feebb3f",
+          "name": "Цукерки Millennium Choco Crunch з арахісом, мигдалем та рисовими кульками",
+          "price": 39.99,
+          "quantity": 1,
+          "subtotal": 39.99,
+          "removed": false,
+          "image": "https://images.silpo.ua/v2/products/500x500/webp/https://content.silpo.ua/sku/ecommerce/85/480x480wwm/857543_480x480wwm_a8147744-25e9-7a35-10f7-7eea12ff2d77.png",
+          "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+          "branchId": "1ee53937-41b1-600c-8e8c-11f5061cd563"
+        },
+        {
+          "id": "1ed07697-4cd6-6a08-aac2-5f148feebb3f",
+          "name": "Сир «Ферма» кисломолочний 5%",
+          "price": 64.9,
+          "quantity": 1,
+          "subtotal": 64.9,
+          "removed": false,
+          "image": "https://images.silpo.ua/v2/products/500x500/webp/https://content.silpo.ua/sku/ecommerce/86/480x480wwm/862307_480x480wwm_23b7bb25-e1cf-b455-a01e-3a304b348f59.png",
+          "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+          "branchId": "1ee53937-41b1-600c-8e8c-11f5061cd563"
+        },
+        {
+          "id": "1ed07697-4cd6-6d50-81b8-5f148feebb3f",
+          "name": "Сир «Ферма» кисломолочний 9%",
+          "price": 69.9,
+          "quantity": 1,
+          "subtotal": 69.9,
+          "removed": false,
+          "image": "https://images.silpo.ua/v2/products/500x500/webp/https://content.silpo.ua/sku/ecommerce/86/480x480wwm/862308_480x480wwm_4585b0cb-8566-f343-b1c5-377e33389ec0.png",
+          "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+          "branchId": "1ee53937-41b1-600c-8e8c-11f5061cd563"
+        },
+        {
+          "id": "1edb033e-7a6c-6344-b722-9f7fd78fecf4",
+          "name": "Молоко пастеризоване «РадиМо» 3,2%",
+          "price": 40.99,
+          "quantity": 1,
+          "subtotal": 40.99,
+          "removed": false,
+          "image": "https://images.silpo.ua/v2/products/500x500/webp/https://content.silpo.ua/sku/ecommerce/88/480x480wwm/886898_480x480wwm_611e37d8-8ebb-ed62-b72c-a0ed05e1d153.png",
+          "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+          "branchId": "1ee53937-41b1-600c-8e8c-11f5061cd563"
+        },
+        {
+          "id": "1ed0767a-5e3d-696c-a777-9d79fa2ad32f",
+          "name": "Молоко ультрапастеризоване «Премія»® 2,5%",
+          "price": 36.99,
+          "quantity": 5,
+          "subtotal": 184.95,
+          "removed": false,
+          "image": "https://images.silpo.ua/v2/products/500x500/webp/https://content.silpo.ua/sku/ecommerce/79/480x480wwm/799508_480x480wwm_4731f97e-64a0-4c21-d788-b0e412d50741.png",
+          "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+          "branchId": "1ee53937-41b1-600c-8e8c-11f5061cd563"
+        },
+        {
+          "id": "1efaabba-b57e-61be-8276-9bfca0eee8f7",
+          "name": "Сир Paturages Comtois Брі 60% з коров'ячого молока",
+          "price": 199,
+          "quantity": 1,
+          "subtotal": 199,
+          "removed": false,
+          "image": "https://images.silpo.ua/v2/products/500x500/webp/https://content.silpo.ua/sku/ecommerce/97/480x480wwm/972575_480x480wwm_e9b3dd58-3217-41fb-abbc-823de6ddd13f.png",
+          "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+          "branchId": "1ee53937-41b1-600c-8e8c-11f5061cd563"
+        }
+      ]
+    },
+    {
+      "orderId": "f83ad059-20d8-4bbd-9824-1e2d0ceaa4d6",
+      "number": "17246521",
+      "status": "canceled",
+      "createdAt": "2024-12-09T12:18:13+00:00",
+      "amount": 203.96,
+      "discount": 0,
+      "delivery": {
+        "type": "SelfPickup",
+        "timeSlot": {
+          "from": "2024-12-09T13:00:00+00:00",
+          "to": "2024-12-09T13:30:00+00:00"
+        },
+        "deliveredAt": "2024-12-09T13:00:00+00:00"
+      },
+      "address": {
+        "city": "Львів",
+        "street": "<redacted>",
+        "building": "<redacted>",
+        "apartment": "<redacted>"
+      },
+      "products": []
+    },
+    {
+      "orderId": "09bc0227-b2eb-462a-8b7a-533412a2beb3",
+      "number": "17305833",
+      "status": "received",
+      "createdAt": "2024-12-12T11:52:09+00:00",
+      "amount": 1399.85,
+      "discount": 0.006,
+      "delivery": {
+        "type": "SelfPickup",
+        "timeSlot": {
+          "from": "2024-12-12T12:30:00+00:00",
+          "to": "2024-12-12T13:00:00+00:00"
+        },
+        "deliveredAt": "2024-12-12T12:30:00+00:00"
+      },
+      "address": {
+        "city": "Львів",
+        "street": "<redacted>",
+        "building": "<redacted>",
+        "apartment": "<redacted>"
+      },
+      "products": []
+    }
+  ],
+  "meta": {
+    "limit": 50,
+    "offset": 0,
+    "total": 97
+  }
+}

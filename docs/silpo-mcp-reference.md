@@ -433,9 +433,9 @@ envelope and nothing more.
 
 | Tool | Context required | `limit` | Observed |
 |---|---|---|---|
-| `silpo_get_my_online_orders` | none | 1–100, default 10 | `total: 0` — «No orders found» |
+| `silpo_get_my_online_orders` | none | 1–**50** live (the August fixture says 100), default 10 | `total: 0` — «No orders found» |
 | `silpo_get_my_offline_orders` | `branchId`, `deliveryType`, `timeslotStart`, `timeslotEnd` — all four **required** | 1–**10**, default 10 | `total: 0` — «No offline orders found» |
-| `silpo_get_my_favorites` | `branchId`, `deliveryType`, `timeslotStart` | 1–100 | `total: 0` — «No favorite products found» |
+| `silpo_get_my_favorites` | `branchId`, `deliveryType`, `timeslotStart` | 1–500 live, default 25 | `total: 0` — «No favorite products found» |
 
 All three share one envelope, which is worth knowing because it is *not* the shape the
 cart tools use:
@@ -510,9 +510,11 @@ What that settles for the habits engine:
   second — and an order that never arrived is a `status` to check, not a purchase.
 - **`removed: bool` on a line.** A line can sit in an order without having been bought.
   An engine that counts it counts a purchase that did not happen.
-- **A full online import is one call** for this account: the tool pages up to 100 and
-  97 orders fit in one page. The capture asked for 10 at a time — the script's choice,
-  not the API's. Receipts are the expensive side: 10 per call, and a live cart context.
+- **A full online import is two calls** for this account. The *live* schema caps a page
+  at **50** (read 2026-09-13), and the server enforces it with `-32602 too_big`;
+  `tests/fixtures/mcp/tools.json`, captured in August, still says 100. A correction here
+  once said "one call" by reading that stale fixture. Receipts are the expensive side:
+  10 per call, and a live cart context.
 - **`address` rides on every order.** `core/mcp/sanitize.py` redacts it by key, but an
   import has no reason to keep it at all.
 
@@ -576,3 +578,45 @@ What it settles:
 Still open: whether an online delivery *also* appears as a loyalty receipt — if it does, an
 import reading both counts one purchase twice; the unit of a weighted receipt line; and
 whether online `price: int` is kopiykas.
+
+### Task 0 answers — values, 2026-09-13
+
+Read from the same account's *full* history — 97 online orders, 21 receipts, 20 favourites
+— with the account holder's permission. The raw payloads stayed in a scratch directory and
+were deleted afterwards; trimmed, sanitised fixtures are `my_online_orders.json`,
+`my_offline_orders.json` and `my_favorites.json`.
+
+| # | Question | Answer |
+|---|---|---|
+| 1 | Is an online line's `id` the catalog id? | **Yes.** 6 online ids are also receipt `catalogProduct.id`s, and a name search found the line's own id in 4 of the 5 searches that found anything. 7 of 12 whole product names found *nothing*: searching by a full name is unreliable. |
+| 2 | Is receipt `lagerId` the catalog `externalProductId`? | **Yes, where the product exists.** A numeric search returned the same product 8 of the 8 times it returned anything; the other 2 — a salmon steak and a chicken fillet, both weighted — were not found at that branch. |
+| 3 | What is a weighted receipt line? | `unit: "кг"` with a fractional `quantity`: kilograms, as §3 says for the catalog, and never `кг` on a non-weighted line. For piece goods `unit` is the **pack size** — «400г», «1,5л», «2*100г» — and `quantity` counts packs. Size is on a receipt even though it is not on a search hit. |
+| 4 | Is online `price` kopiykas? | **No — hryvnias.** `subtotal == price × quantity` on 27 of 28 lines; an `int` is just a whole price. |
+| 5 | Does an online delivery also appear as a receipt? | **Untested.** This account's last online order with lines is April 2026 and its first receipt June 2026. Nothing overlaps, so "0 matches" proves nothing. |
+| 6 | What identifies a receipt? | `receiptUrl` — an opaque token path, 21 distinct of 21 — and `(filId, createdAt)`, also 21 of 21. |
+| 7 | Can a receipt list a product twice? | **Yes, 6 of 21 — including negative lines.** Bread at +2.096, +1.048 and −2.096 kg: a till correction is a line. Quantities must be *netted*; 6 products net to ≤ 0 on their receipt and were never bought. |
+| 8 | How far back? | Receipts: **80 days** (2026-06-24 → 09-13) — whether that is the API's reach or when the card came into use cannot be told from one account. Online orders go back to 2021, but **only 4 of 97 carry product lines** (Feb 2025 → Apr 2026); every older order is a header with no products. |
+| 9 | Does merging help? | Not by replacements — see below. |
+| 10 | What does `status` say? | `received` (94) or `canceled` (3). **`deliveredAt` is set on all three canceled orders**: it is not evidence of delivery. `status` is. |
+| 11 | Does `branchId` filter receipts? | **No.** One branch returned receipts from 5 shops in two cities, and a Kyiv branch returned the same 21. It prices `catalogProduct`; it does not select receipts. |
+
+**The measure behind "product id or grouping".** Rules: `received` orders only, removed
+lines dropped, receipt quantities netted, carrier bags excluded, same-day purchases
+collapsed.
+
+- 202 products; **6** bought on ≥ 4 days over all history, 5 in the last year, **4 within
+  the 80 days of receipts**. 162 were bought exactly once.
+- `get_replacements` answered for **13 of 180** bought products and returned none of the
+  others as a replacement. As a grouping signal it is mostly silent.
+- A crude proxy for variant grouping — names sharing their first three words — leaves the
+  count at 6 but **changes which habits exist**: it merges Ферма 5 % with Ферма 9 % and two
+  Французька breads, and surfaces two the product key cannot see (four variants of Молокія
+  cottage cheese over 6 days; three dorado over 4).
+- **No habit survives CV ≤ 0.5 in any window.** CV ≤ 0.75 keeps 1–2; ≤ 1.0 keeps 3–5.
+- Two of the six all-history habits are artefacts of missing data: «Ферма 5 % every ~146
+  days» is a year of online orders without lines, followed by receipts.
+
+**Carrier bags are named first.** Of the 10 names here containing «пакет», the 7 bags all
+*start* with «Пакет»; the other 3 are cottage cheese sold in one («Сир кисломолочний Ферма
+5 % пакет»). The substring rule in §5 — and in `passes/resolve.py` — rejects that cheese as
+a bag. Filed as its own fix.

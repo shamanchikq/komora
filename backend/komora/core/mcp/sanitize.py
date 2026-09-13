@@ -34,6 +34,9 @@ _SENSITIVE_KEYS: frozenset[str] = frozenset(
         "courriercomment",  # Silpo's own spelling
         "street",
         "house",
+        # Silpo calls the house number `building` on an online order's address. It is not
+        # `house`, so a real delivery address reached a fixture before this line.
+        "building",
         "apartment",
         "flat",
         "entrance",

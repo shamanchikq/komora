@@ -1,0 +1,791 @@
+{
+  "success": true,
+  "summary": "Found 3 offline orders (total: 21)",
+  "orders": [
+    {
+      "filId": 3746,
+      "filialName": "вул. Володимира Великого, буд. 1-р",
+      "cityName": "Дрогобич",
+      "createdAt": "2026-09-13T13:21:25",
+      "sumReg": 680,
+      "accruedBalaBonusesSum": 2.13,
+      "sumDiscount": 191.51,
+      "receiptUrl": "https://receipt.silpo.elkasa.com.ua/FIXTURE0001",
+      "chequeMagicName": "Фантазійний спогад",
+      "chequePrediction": "Ми вами не можемо намилуватися.",
+      "rewards": [
+        {
+          "rewardGroupCodeName": "CN_REWARD_VOUCHERS",
+          "applyText": "Використані балобонуси",
+          "valueText": "0.91грн.",
+          "applyRewardAmount": 0.91,
+          "promoId": null
+        }
+      ],
+      "products": [
+        {
+          "lagerId": 958358,
+          "name": "Пакет біорозкладний 3кг 958358",
+          "unit": "шт",
+          "quantity": 1,
+          "price": 1.49,
+          "image": "https://content.silpo.ua/sku/ecommerce/95/480x480wwm/958358_480x480wwm_1e0f7f3c-5b48-ca2e-639a-2e78045def40.png",
+          "catalogProduct": {
+            "id": "1f0abac8-5501-6b06-a64e-9992f337b3cd",
+            "name": "Пакет біорозкладний 3 кг 958358",
+            "slug": "paket-biorozkladnyi-3-kg-958358-958358",
+            "price": 1.49,
+            "stock": 21510,
+            "available": true,
+            "image": "https://images.silpo.ua/v2/products/500x500/webp/465233fd-8731-4597-8498-f749afce8f04.png",
+            "weighted": false,
+            "step": 1,
+            "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+            "branchId": "1ef75882-088d-6d58-8219-7bbaea7db06e"
+          }
+        },
+        {
+          "lagerId": 755409,
+          "name": "Сьомга стейк охолоджений",
+          "unit": "кг",
+          "quantity": 0.582,
+          "price": 699,
+          "image": "https://content.silpo.ua/sku/ecommerce/75/480x480wwm/755409_480x480wwm_3b79f3db-1693-a6f3-9564-b03a4fa732e5.png",
+          "catalogProduct": {
+            "id": "1ed0766d-a0c5-6a76-a24d-dd63763181f9",
+            "name": "Сьомга, стейк охолоджений",
+            "slug": "somga-steik-okholodzhenyi-755409",
+            "price": 699,
+            "stock": 0,
+            "available": false,
+            "image": "https://images.silpo.ua/v2/products/500x500/webp/e91d49ec-f04e-475a-93fe-9aa1fb2009d5.png",
+            "weighted": true,
+            "step": 0.3,
+            "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+            "branchId": "1ef75882-088d-6d58-8219-7bbaea7db06e"
+          }
+        },
+        {
+          "lagerId": 815253,
+          "name": "Хліб подовий Паризький ГП",
+          "unit": "кг",
+          "quantity": 2.096,
+          "price": 159,
+          "image": "https://content.silpo.ua/sku/ecommerce/81/480x480wwm/815253_480x480wwm_d6f9931c-cf8b-b137-ef43-668715b9f6aa.png",
+          "catalogProduct": {
+            "id": "1edb8b63-f5ab-6462-a933-350473e48254",
+            "name": "Хліб Крафтяр подовий «Паризький»",
+            "slug": "khlib-kraftiar-podovyi-paryzkyi-815253",
+            "price": 169,
+            "stock": 1.8,
+            "available": true,
+            "image": "https://images.silpo.ua/v2/products/500x500/webp/1d202f4a-4b1b-4d09-9ab6-cc0b7f583c52.png",
+            "weighted": true,
+            "step": 0.1,
+            "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+            "branchId": "1ef75882-088d-6d58-8219-7bbaea7db06e"
+          }
+        },
+        {
+          "lagerId": 815253,
+          "name": "Хліб подовий Паризький ГП",
+          "unit": "кг",
+          "quantity": 1.048,
+          "price": 159,
+          "image": "https://content.silpo.ua/sku/ecommerce/81/480x480wwm/815253_480x480wwm_d6f9931c-cf8b-b137-ef43-668715b9f6aa.png",
+          "catalogProduct": {
+            "id": "1edb8b63-f5ab-6462-a933-350473e48254",
+            "name": "Хліб Крафтяр подовий «Паризький»",
+            "slug": "khlib-kraftiar-podovyi-paryzkyi-815253",
+            "price": 169,
+            "stock": 1.8,
+            "available": true,
+            "image": "https://images.silpo.ua/v2/products/500x500/webp/1d202f4a-4b1b-4d09-9ab6-cc0b7f583c52.png",
+            "weighted": true,
+            "step": 0.1,
+            "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+            "branchId": "1ef75882-088d-6d58-8219-7bbaea7db06e"
+          }
+        },
+        {
+          "lagerId": 878840,
+          "name": "Багет подовий Софіївський ГП",
+          "unit": "220г",
+          "quantity": 2,
+          "price": 29.99,
+          "image": "https://content.silpo.ua/sku/ecommerce/87/480x480wwm/878840_480x480wwm_88c98e80-a356-d7db-8fb0-2e952cc4e242.png",
+          "catalogProduct": {
+            "id": "1edbc51f-6ef1-693a-a461-1df4cd9fb6b0",
+            "name": "Багет «Крафтяр» подовий «Софіївський»",
+            "slug": "baget-kraftiar-podovyi-sofiivskyi-878840",
+            "price": 29.99,
+            "stock": 18,
+            "available": true,
+            "image": "https://images.silpo.ua/v2/products/500x500/webp/1cdaf260-8ef2-4c62-9f56-a675ec23b866.png",
+            "weighted": false,
+            "step": 1,
+            "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+            "branchId": "1ef75882-088d-6d58-8219-7bbaea7db06e"
+          }
+        },
+        {
+          "lagerId": 804378,
+          "name": "Булка подова Французька ГП",
+          "unit": "400г",
+          "quantity": 1,
+          "price": 45.99,
+          "image": "https://content.silpo.ua/sku/ecommerce/80/480x480wwm/804378_480x480wwm_5b6e88eb-418d-b41c-0f26-2c9dad53c6af.png",
+          "catalogProduct": {
+            "id": "1edb8b2d-eb8f-6cb6-9385-5dc9096b392c",
+            "name": "Булка подова Французька",
+            "slug": "bulka-podova-frantsuzka-804378",
+            "price": 52.79,
+            "stock": 18,
+            "available": true,
+            "image": "https://images.silpo.ua/v2/products/500x500/webp/9d3ed8b7-f96a-4585-80a6-112f27d7ff23.png",
+            "weighted": false,
+            "step": 1,
+            "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+            "branchId": "1ef75882-088d-6d58-8219-7bbaea7db06e"
+          }
+        },
+        {
+          "lagerId": 815253,
+          "name": "Хліб подовий Паризький ГП",
+          "unit": "кг",
+          "quantity": -2.096,
+          "price": 159,
+          "image": "https://content.silpo.ua/sku/ecommerce/81/480x480wwm/815253_480x480wwm_d6f9931c-cf8b-b137-ef43-668715b9f6aa.png",
+          "catalogProduct": {
+            "id": "1edb8b63-f5ab-6462-a933-350473e48254",
+            "name": "Хліб Крафтяр подовий «Паризький»",
+            "slug": "khlib-kraftiar-podovyi-paryzkyi-815253",
+            "price": 169,
+            "stock": 1.8,
+            "available": true,
+            "image": "https://images.silpo.ua/v2/products/500x500/webp/1d202f4a-4b1b-4d09-9ab6-cc0b7f583c52.png",
+            "weighted": true,
+            "step": 0.1,
+            "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+            "branchId": "1ef75882-088d-6d58-8219-7bbaea7db06e"
+          }
+        }
+      ]
+    },
+    {
+      "filId": 3398,
+      "filialName": "вул. Садова, буд. 2а",
+      "cityName": "Львів",
+      "createdAt": "2026-09-04T15:42:58",
+      "sumReg": 1222,
+      "accruedBalaBonusesSum": 0.93,
+      "sumDiscount": 532.8,
+      "receiptUrl": "https://receipt.silpo.elkasa.com.ua/FIXTURE0002",
+      "chequeMagicName": "Дружелюбна полуниця",
+      "chequePrediction": "Вам неочікувано пощастить.",
+      "rewards": [
+        {
+          "rewardGroupCodeName": "CN_REWARD_VOUCHERS",
+          "applyText": "Використані балобонуси",
+          "valueText": "0.76грн.",
+          "applyRewardAmount": 0.76,
+          "promoId": null
+        }
+      ],
+      "products": [
+        {
+          "lagerId": 958358,
+          "name": "Пакет біорозкладний 3кг 958358",
+          "unit": "шт",
+          "quantity": 2,
+          "price": 1.49,
+          "image": "https://content.silpo.ua/sku/ecommerce/95/480x480wwm/958358_480x480wwm_1e0f7f3c-5b48-ca2e-639a-2e78045def40.png",
+          "catalogProduct": {
+            "id": "1f0abac8-5501-6b06-a64e-9992f337b3cd",
+            "name": "Пакет біорозкладний 3 кг 958358",
+            "slug": "paket-biorozkladnyi-3-kg-958358-958358",
+            "price": 1.49,
+            "stock": 21510,
+            "available": true,
+            "image": "https://images.silpo.ua/v2/products/500x500/webp/465233fd-8731-4597-8498-f749afce8f04.png",
+            "weighted": false,
+            "step": 1,
+            "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+            "branchId": "1ef75882-088d-6d58-8219-7bbaea7db06e"
+          }
+        },
+        {
+          "lagerId": 984725,
+          "name": "Свинячий окіст для шніцеля охолоджений",
+          "unit": "кг",
+          "quantity": 0.868,
+          "price": 199,
+          "image": "https://content.silpo.ua/sku/ecommerce/98/480x480wwm/984725_480x480wwm_80c88514-6e2c-4942-6c4e-12e9a4b6db17.png",
+          "catalogProduct": {
+            "id": "1f004552-a45e-6f6e-b01a-556499710906",
+            "name": "Свинячий окіст для шніцеля охолоджений",
+            "slug": "svyniachyi-okist-dlia-shnitselia-okholodzhenyi-984725",
+            "price": 294,
+            "stock": 6.5,
+            "available": true,
+            "image": "https://images.silpo.ua/v2/products/500x500/webp/2d634faf-57d0-410d-9f21-9e5915fdaa40.png",
+            "weighted": true,
+            "step": 0.5,
+            "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+            "branchId": "1ef75882-088d-6d58-8219-7bbaea7db06e"
+          }
+        },
+        {
+          "lagerId": 890590,
+          "name": "Форель кусок охолоджений",
+          "unit": "кг",
+          "quantity": 0.708,
+          "price": 599,
+          "image": "https://content.silpo.ua/sku/ecommerce/89/480x480wwm/890590_480x480wwm_6e8c9f1d-9962-f414-ef54-ad9e56cf5e7f.png",
+          "catalogProduct": null
+        },
+        {
+          "lagerId": 716286,
+          "name": "Молоко Галичина з чистих Карпат 2,5% тетра-фина",
+          "unit": "900г",
+          "quantity": 5,
+          "price": 39.99,
+          "image": "https://content.silpo.ua/sku/ecommerce/71/480x480wwm/716286_480x480wwm_b54e667e-4052-6f48-ef90-98ed6224524b.png",
+          "catalogProduct": {
+            "id": "1ed0765c-17fd-69fc-8ff2-dd63763181f9",
+            "name": "Молоко «Галичина» «З чистих Карпат» 2,5%",
+            "slug": "moloko-galychyna-z-chystykh-karpat-2-5-716286",
+            "price": 69.49,
+            "stock": 0,
+            "available": false,
+            "image": "https://images.silpo.ua/v2/products/500x500/webp/76c6c1f4-ce55-446c-9e35-71c0b574186a.png",
+            "weighted": false,
+            "step": 1,
+            "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+            "branchId": "1ef75882-088d-6d58-8219-7bbaea7db06e"
+          }
+        },
+        {
+          "lagerId": 952861,
+          "name": "Печінка куряча охолоджена в/у",
+          "unit": "кг",
+          "quantity": 0.488,
+          "price": 119,
+          "image": "https://content.silpo.ua/sku/ecommerce/95/480x480wwm/952861_480x480wwm_55f2be01-b59f-6460-db7e-66fea0e4cfc6.png",
+          "catalogProduct": null
+        },
+        {
+          "lagerId": 862801,
+          "name": "Хліб подовий Вулкан міні ГП",
+          "unit": "350г",
+          "quantity": 1,
+          "price": 32.99,
+          "image": "https://content.silpo.ua/sku/ecommerce/86/480x480wwm/862801_480x480wwm_c25388a9-91fd-5aa3-0079-f0d89d4f9769.png",
+          "catalogProduct": {
+            "id": "1edbc517-8eb2-6740-878d-696912d125c0",
+            "name": "Xліб «Крафтяр» «Вулкан» подовий міні",
+            "slug": "xlib-kraftiar-vulkan-podovyi-mini-862801",
+            "price": 33.99,
+            "stock": 6,
+            "available": true,
+            "image": "https://images.silpo.ua/v2/products/500x500/webp/3caf71e9-e59f-4928-8388-5e9b04d5f774.png",
+            "weighted": false,
+            "step": 1,
+            "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+            "branchId": "1ef75882-088d-6d58-8219-7bbaea7db06e"
+          }
+        },
+        {
+          "lagerId": 804380,
+          "name": "Булка подова Французька зернова ГП",
+          "unit": "400г",
+          "quantity": 1,
+          "price": 44.99,
+          "image": "https://content.silpo.ua/sku/ecommerce/80/480x480wwm/804380_480x480wwm_39be9b3d-c94c-584b-2a98-bcadb62012f5.png",
+          "catalogProduct": {
+            "id": "1edb8b2e-d22d-6a56-804d-39a07e017bad",
+            "name": "Булка подова Французька зернова",
+            "slug": "bulka-podova-frantsuzka-zernova-804380",
+            "price": 44.99,
+            "stock": 19,
+            "available": true,
+            "image": "https://images.silpo.ua/v2/products/500x500/webp/8af0ba89-ab20-4400-8b88-f7ff155e6cc2.png",
+            "weighted": false,
+            "step": 1,
+            "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+            "branchId": "1ef75882-088d-6d58-8219-7bbaea7db06e"
+          }
+        },
+        {
+          "lagerId": 804368,
+          "name": "Багет подовий Прованський з сиром ГП",
+          "unit": "300г",
+          "quantity": 1,
+          "price": 46.99,
+          "image": "https://content.silpo.ua/sku/ecommerce/80/480x480wwm/804368_480x480wwm_6beded22-0c59-3105-db47-ad7674593f06.png",
+          "catalogProduct": {
+            "id": "1edb8b2d-eb8e-6ea6-9b03-5dc9096b392c",
+            "name": "Багет подовий Прованський з сиром",
+            "slug": "baget-podovyi-provanskyi-z-syrom-804368",
+            "price": 65.99,
+            "stock": 18,
+            "available": true,
+            "image": "https://images.silpo.ua/v2/products/500x500/webp/a9797498-42cd-4b7b-88c8-c76b8b96fa2c.png",
+            "weighted": false,
+            "step": 1,
+            "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+            "branchId": "1ef75882-088d-6d58-8219-7bbaea7db06e"
+          }
+        },
+        {
+          "lagerId": 914280,
+          "name": "Масло Селянське солодковершкове екстра 82%",
+          "unit": "180г",
+          "quantity": 3,
+          "price": 114,
+          "image": "https://content.silpo.ua/sku/ecommerce/91/480x480wwm/914280_480x480wwm_d3a3e713-7544-f770-4cfd-347605519c15.png",
+          "catalogProduct": {
+            "id": "1ed7fcc3-ca27-6f98-ac51-e9b219550c40",
+            "name": "Масло «Селянське» солодковершкове екстра 82%",
+            "slug": "maslo-selianske-solodkovershkove-ekstra-82-914280",
+            "price": 164,
+            "stock": 21,
+            "available": true,
+            "image": "https://images.silpo.ua/v2/products/500x500/webp/3ada09f0-2d02-4823-b2f0-06eefd9348af.png",
+            "weighted": false,
+            "step": 1,
+            "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+            "branchId": "1ef75882-088d-6d58-8219-7bbaea7db06e"
+          }
+        },
+        {
+          "lagerId": 892644,
+          "name": "Масло солодковершкове Галичина 82,5%",
+          "unit": "180г",
+          "quantity": 3,
+          "price": 79.99,
+          "image": "https://content.silpo.ua/sku/ecommerce/89/480x480wwm/892644_480x480wwm_b67efd43-6e44-cad6-2e8c-e78b49278edb.png",
+          "catalogProduct": {
+            "id": "1ed076a9-8f6e-65e8-9d1b-eb0bb71c4ffc",
+            "name": "Масло солодковершкове «Галичина» 82,5%",
+            "slug": "maslo-solodkovershkove-galychyna-82-5-892644",
+            "price": 144,
+            "stock": 0,
+            "available": false,
+            "image": "https://images.silpo.ua/v2/products/500x500/webp/a7266067-506e-4a8e-9f50-0d62225bd390.png",
+            "weighted": false,
+            "step": 1,
+            "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+            "branchId": "1ef75882-088d-6d58-8219-7bbaea7db06e"
+          }
+        },
+        {
+          "lagerId": 914280,
+          "name": "Масло Селянське солодковершкове екстра 82%",
+          "unit": "180г",
+          "quantity": -3,
+          "price": 114,
+          "image": "https://content.silpo.ua/sku/ecommerce/91/480x480wwm/914280_480x480wwm_d3a3e713-7544-f770-4cfd-347605519c15.png",
+          "catalogProduct": {
+            "id": "1ed7fcc3-ca27-6f98-ac51-e9b219550c40",
+            "name": "Масло «Селянське» солодковершкове екстра 82%",
+            "slug": "maslo-selianske-solodkovershkove-ekstra-82-914280",
+            "price": 164,
+            "stock": 21,
+            "available": true,
+            "image": "https://images.silpo.ua/v2/products/500x500/webp/3ada09f0-2d02-4823-b2f0-06eefd9348af.png",
+            "weighted": false,
+            "step": 1,
+            "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+            "branchId": "1ef75882-088d-6d58-8219-7bbaea7db06e"
+          }
+        }
+      ]
+    },
+    {
+      "filId": 3254,
+      "filialName": "вул. Стрийська, буд. 45",
+      "cityName": "Львів",
+      "createdAt": "2026-09-11T16:10:58",
+      "sumReg": 2347,
+      "accruedBalaBonusesSum": 0.02,
+      "sumDiscount": 951.7,
+      "receiptUrl": "https://receipt.silpo.elkasa.com.ua/FIXTURE0003",
+      "chequeMagicName": "Щаслива роса",
+      "chequePrediction": "Нові знайомства - нові можливості.",
+      "rewards": [
+        {
+          "rewardGroupCodeName": "CN_REWARD_VOUCHERS",
+          "applyText": "Використані балобонуси",
+          "valueText": "0.88грн.",
+          "applyRewardAmount": 0.88,
+          "promoId": null
+        }
+      ],
+      "products": [
+        {
+          "lagerId": 910665,
+          "name": "Кефір РадиМо 2,5% пет",
+          "unit": "870г",
+          "quantity": 1,
+          "price": 50.49,
+          "image": "https://content.silpo.ua/sku/ecommerce/91/480x480wwm/910665_480x480wwm_7f6dceae-b9d5-8c14-e2df-e7ab83d8e53d.png",
+          "catalogProduct": {
+            "id": "1ee72b96-52cb-6498-8ca9-113073ce40ee",
+            "name": "Кефір РадиМо 2,5%, пет",
+            "slug": "kefir-radymo-2-5-pet-910665",
+            "price": 67.99,
+            "stock": 10,
+            "available": true,
+            "image": "https://images.silpo.ua/v2/products/500x500/webp/6ba618ab-5253-4359-b5f8-11abf6c3c4cb.png",
+            "weighted": false,
+            "step": 1,
+            "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+            "branchId": "1ef75882-088d-6d58-8219-7bbaea7db06e"
+          }
+        },
+        {
+          "lagerId": 750297,
+          "name": "Філе куряче Епікур охолоджене малий лоток",
+          "unit": "кг",
+          "quantity": 0.637,
+          "price": 209,
+          "image": "https://content.silpo.ua/sku/ecommerce/75/480x480wwm/750297_480x480wwm_26048d45-0715-a71e-2203-b8a3f0c53197.png",
+          "catalogProduct": {
+            "id": "1edcdaa9-c3c2-6edc-9c4e-6dbfaf07983e",
+            "name": "Філе куряче «Епікур» охолоджене, малий лоток",
+            "slug": "file-kuriache-epikur-okholodzhene-malyi-lotok-750297",
+            "price": 209,
+            "stock": 0,
+            "available": false,
+            "image": "https://images.silpo.ua/v2/products/500x500/webp/6f831f51-cab5-420b-aa5d-5a49f6d15f89.png",
+            "weighted": true,
+            "step": 0.6,
+            "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+            "branchId": "1ef75882-088d-6d58-8219-7bbaea7db06e"
+          }
+        },
+        {
+          "lagerId": 443466,
+          "name": "Свинина ошийок б/к охолоджений",
+          "unit": "кг",
+          "quantity": 1.872,
+          "price": 299,
+          "image": "https://content.silpo.ua/sku/ecommerce/44/480x480wwm/443466_480x480wwm_1837fe02-338e-3e4f-aadd-960d787a06e7.png",
+          "catalogProduct": {
+            "id": "1ed07604-a3ca-624e-87ee-dd63763181f9",
+            "name": "Свинина, ошийок без кістки охолоджений",
+            "slug": "svynyna-oshyiok-bez-kistky-okholodzhenyi-443466",
+            "price": 299,
+            "stock": 13.5,
+            "available": true,
+            "image": "https://images.silpo.ua/v2/products/500x500/webp/d012268c-a984-4509-98c3-b6a9cc467ac9.png",
+            "weighted": true,
+            "step": 0.5,
+            "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+            "branchId": "1ef75882-088d-6d58-8219-7bbaea7db06e"
+          }
+        },
+        {
+          "lagerId": 443465,
+          "name": "Свинина окіст б/к охолоджений",
+          "unit": "кг",
+          "quantity": 1.166,
+          "price": 204,
+          "image": "https://content.silpo.ua/sku/ecommerce/44/480x480wwm/443465_480x480wwm_c981d75e-71ed-f775-4c2a-5a593f566d92.png",
+          "catalogProduct": {
+            "id": "1ed07604-a3c9-6eb6-883a-dd63763181f9",
+            "name": "Свинина, окіст без кістки охолоджений",
+            "slug": "svynyna-okist-bez-kistky-okholodzhenyi-443465",
+            "price": 199,
+            "stock": 11.5,
+            "available": true,
+            "image": "https://images.silpo.ua/v2/products/500x500/webp/9d4a97d8-0967-4715-85be-3ea884160cff.png",
+            "weighted": true,
+            "step": 0.5,
+            "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+            "branchId": "1ef75882-088d-6d58-8219-7bbaea7db06e"
+          }
+        },
+        {
+          "lagerId": 958358,
+          "name": "Пакет біорозкладний 3кг 958358",
+          "unit": "шт",
+          "quantity": 2,
+          "price": 1.49,
+          "image": "https://content.silpo.ua/sku/ecommerce/95/480x480wwm/958358_480x480wwm_1e0f7f3c-5b48-ca2e-639a-2e78045def40.png",
+          "catalogProduct": {
+            "id": "1f0abac8-5501-6b06-a64e-9992f337b3cd",
+            "name": "Пакет біорозкладний 3 кг 958358",
+            "slug": "paket-biorozkladnyi-3-kg-958358-958358",
+            "price": 1.49,
+            "stock": 21510,
+            "available": true,
+            "image": "https://images.silpo.ua/v2/products/500x500/webp/465233fd-8731-4597-8498-f749afce8f04.png",
+            "weighted": false,
+            "step": 1,
+            "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+            "branchId": "1ef75882-088d-6d58-8219-7bbaea7db06e"
+          }
+        },
+        {
+          "lagerId": 716286,
+          "name": "Молоко Галичина з чистих Карпат 2,5% тетра-фина",
+          "unit": "900г",
+          "quantity": 5,
+          "price": 39.99,
+          "image": "https://content.silpo.ua/sku/ecommerce/71/480x480wwm/716286_480x480wwm_b54e667e-4052-6f48-ef90-98ed6224524b.png",
+          "catalogProduct": {
+            "id": "1ed0765c-17fd-69fc-8ff2-dd63763181f9",
+            "name": "Молоко «Галичина» «З чистих Карпат» 2,5%",
+            "slug": "moloko-galychyna-z-chystykh-karpat-2-5-716286",
+            "price": 69.49,
+            "stock": 0,
+            "available": false,
+            "image": "https://images.silpo.ua/v2/products/500x500/webp/76c6c1f4-ce55-446c-9e35-71c0b574186a.png",
+            "weighted": false,
+            "step": 1,
+            "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+            "branchId": "1ef75882-088d-6d58-8219-7bbaea7db06e"
+          }
+        },
+        {
+          "lagerId": 839325,
+          "name": "Сметана Молокія 15% стакан",
+          "unit": "300г",
+          "quantity": 3,
+          "price": 43.99,
+          "image": "https://content.silpo.ua/sku/ecommerce/83/480x480wwm/839325_480x480wwm_faf5def6-2839-c979-1309-37402c1ea2e0.png",
+          "catalogProduct": {
+            "id": "1ed0768b-3ca6-61d0-8028-eb0bb71c4ffc",
+            "name": "Сметана «Молокія» 15%",
+            "slug": "smetana-molokiia-15-839325",
+            "price": 59.99,
+            "stock": 10,
+            "available": true,
+            "image": "https://images.silpo.ua/v2/products/500x500/webp/080b71c8-3b26-4652-ba0a-8d12833367d0.png",
+            "weighted": false,
+            "step": 1,
+            "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+            "branchId": "1ef75882-088d-6d58-8219-7bbaea7db06e"
+          }
+        },
+        {
+          "lagerId": 954289,
+          "name": "Сметана Простонаше 20% стакан",
+          "unit": "300г",
+          "quantity": 1,
+          "price": 52.99,
+          "image": "https://content.silpo.ua/sku/ecommerce/95/480x480wwm/954289_480x480wwm_67fc0838-f08e-6684-5afd-335281e94844.png",
+          "catalogProduct": {
+            "id": "1ef080fc-5448-65ae-bb61-ad8ad3c178d2",
+            "name": "Сметана ПростоНаше 20% стакан",
+            "slug": "smetana-prostonashe-20-stakan-954289",
+            "price": 52.99,
+            "stock": 85,
+            "available": true,
+            "image": "https://images.silpo.ua/v2/products/500x500/webp/16be8dbb-020c-40cc-af7c-ba1cc9a296eb.png",
+            "weighted": false,
+            "step": 1,
+            "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+            "branchId": "1ef75882-088d-6d58-8219-7bbaea7db06e"
+          }
+        },
+        {
+          "lagerId": 874616,
+          "name": "Масло солодковершкове Яготинське Екстра 82,5%",
+          "unit": "180г",
+          "quantity": 5,
+          "price": 74.99,
+          "image": "https://content.silpo.ua/sku/ecommerce/87/480x480wwm/874616_480x480wwm_5fe0cd75-387b-3852-57a2-138fe608928e.png",
+          "catalogProduct": {
+            "id": "1ed0769f-4f5c-6464-92d6-c1af87aa927f",
+            "name": "Масло солодковершкове «Яготинське» екстра 82,5%",
+            "slug": "maslo-solodkovershkove-yagotynske-ekstra-82-5-874616",
+            "price": 74.99,
+            "stock": 542,
+            "available": true,
+            "image": "https://images.silpo.ua/v2/products/500x500/webp/8b917742-634c-4574-84ad-765baec2921b.png",
+            "weighted": false,
+            "step": 1,
+            "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+            "branchId": "1ef75882-088d-6d58-8219-7bbaea7db06e"
+          }
+        },
+        {
+          "lagerId": 580621,
+          "name": "Балик М'ясна Гільдія Традиційний в/к в/г мал/вак",
+          "unit": "кг",
+          "quantity": 0.293,
+          "price": 399,
+          "image": "https://content.silpo.ua/sku/ecommerce/58/480x480wwm/580621_480x480wwm_6702423c-38a0-13b2-6216-fe3163fcda41.png",
+          "catalogProduct": {
+            "id": "1f0b04b5-8b17-6b5a-b68f-1b62200d034f",
+            "name": "Балик М'ясна Гільдія Традиційний в/к в/ґ, вакуумна упаковка",
+            "slug": "balyk-m-iasna-gildiia-tradytsiinyi-v-k-v-g-vakuumna-upakovka-580621",
+            "price": 399,
+            "stock": 10.2,
+            "available": true,
+            "image": "https://images.silpo.ua/v2/products/500x500/webp/e97f6d0a-214d-4b4f-bff0-4a6d053cc32b.png",
+            "weighted": true,
+            "step": 0.3,
+            "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+            "branchId": "1ef75882-088d-6d58-8219-7bbaea7db06e"
+          }
+        },
+        {
+          "lagerId": 143391,
+          "name": "Чай Hyleys Ерл Грей крупнолистовий",
+          "unit": "100г",
+          "quantity": 1,
+          "price": 139,
+          "image": "https://content.silpo.ua/sku/ecommerce/14/480x480wwm/143391_480x480wwm_2f2f42a3-4257-cd80-1ee9-348c2a7fc636.png",
+          "catalogProduct": {
+            "id": "1ed075e8-2248-6b4c-914d-dd63763181f9",
+            "name": "Чай Hyleys «Ерл Грей» великолистовий",
+            "slug": "chai-hyleys-erl-grei-velykolystovyi-143391",
+            "price": 139,
+            "stock": 1,
+            "available": true,
+            "image": "https://images.silpo.ua/v2/products/500x500/webp/f29fa05d-a254-41c1-af66-673a13d3a240.png",
+            "weighted": false,
+            "step": 1,
+            "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+            "branchId": "1ef75882-088d-6d58-8219-7bbaea7db06e"
+          }
+        },
+        {
+          "lagerId": 838498,
+          "name": "Сир кисломолочний Молокія 9%",
+          "unit": "350г",
+          "quantity": 1,
+          "price": 69.99,
+          "image": "https://content.silpo.ua/sku/ecommerce/83/480x480wwm/838498_480x480wwm_fd2578c1-0f91-1d41-8177-09a3d0535ec7.png",
+          "catalogProduct": {
+            "id": "1ed07691-5af7-6958-ad2d-dd63763181f9",
+            "name": "Сир кисломолочний «Молокія» 9%",
+            "slug": "syr-kyslomolochnyi-molokiia-9-838498",
+            "price": 69.99,
+            "stock": 76,
+            "available": true,
+            "image": "https://images.silpo.ua/v2/products/500x500/webp/ee4e8614-c2b4-4c0d-9335-9a7c482bdf52.png",
+            "weighted": false,
+            "step": 1,
+            "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+            "branchId": "1ef75882-088d-6d58-8219-7bbaea7db06e"
+          }
+        },
+        {
+          "lagerId": 972730,
+          "name": "Папір туалетний Сніжна панда Baby вологий",
+          "unit": "48шт",
+          "quantity": 1,
+          "price": 39.99,
+          "image": "https://content.silpo.ua/sku/ecommerce/97/480x480wwm/972730_480x480wwm_0048f736-5007-07c1-19ef-17787f66aaca.png",
+          "catalogProduct": {
+            "id": "1efad173-abf1-63a6-b700-9bfca0eee8f7",
+            "name": "Папір туалетний Сніжна панда Baby вологий",
+            "slug": "papir-tualetnyi-snizhna-panda-baby-vologyi-972730",
+            "price": 39.99,
+            "stock": 31,
+            "available": true,
+            "image": "https://images.silpo.ua/v2/products/500x500/webp/149b537d-3b99-4ee9-bcaf-99d928c7d53f.png",
+            "weighted": false,
+            "step": 1,
+            "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+            "branchId": "1ef75882-088d-6d58-8219-7bbaea7db06e"
+          }
+        },
+        {
+          "lagerId": 878840,
+          "name": "Багет подовий Софіївський ГП",
+          "unit": "220г",
+          "quantity": 1,
+          "price": 29.99,
+          "image": "https://content.silpo.ua/sku/ecommerce/87/480x480wwm/878840_480x480wwm_88c98e80-a356-d7db-8fb0-2e952cc4e242.png",
+          "catalogProduct": {
+            "id": "1edbc51f-6ef1-693a-a461-1df4cd9fb6b0",
+            "name": "Багет «Крафтяр» подовий «Софіївський»",
+            "slug": "baget-kraftiar-podovyi-sofiivskyi-878840",
+            "price": 29.99,
+            "stock": 18,
+            "available": true,
+            "image": "https://images.silpo.ua/v2/products/500x500/webp/1cdaf260-8ef2-4c62-9f56-a675ec23b866.png",
+            "weighted": false,
+            "step": 1,
+            "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+            "branchId": "1ef75882-088d-6d58-8219-7bbaea7db06e"
+          }
+        },
+        {
+          "lagerId": 963047,
+          "name": "Яйця курячі Ясенсвіт Mixed різновагові",
+          "unit": "10шт",
+          "quantity": 1,
+          "price": 64.99,
+          "image": "https://content.silpo.ua/sku/ecommerce/96/480x480wwm/963047_480x480wwm_189e80c6-d3f1-f7be-3ce0-54f09be7f987.png",
+          "catalogProduct": {
+            "id": "1ef72200-2b13-6e62-801f-2571ce2700cb",
+            "name": "Яйця курячі Ясенсвіт Mixed різновагові",
+            "slug": "yaitsia-kuriachi-yasensvit-mixed-riznovagovi-963047",
+            "price": 80.29,
+            "stock": 86,
+            "available": true,
+            "image": "https://images.silpo.ua/v2/products/500x500/webp/47e4c2c4-b17a-4803-90b9-d45bdbc8e26e.png",
+            "weighted": false,
+            "step": 1,
+            "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+            "branchId": "1ef75882-088d-6d58-8219-7bbaea7db06e"
+          }
+        },
+        {
+          "lagerId": 989274,
+          "name": "Вафлі Світоч Артек класичні",
+          "unit": "188г",
+          "quantity": 1,
+          "price": 34.99,
+          "image": "https://content.silpo.ua/sku/ecommerce/98/480x480wwm/989274_480x480wwm_5c30bd7a-47cd-8bcc-c401-4821e50f34f5.png",
+          "catalogProduct": {
+            "id": "1f03a8b1-93ee-60f6-974b-63a0570277fb",
+            "name": "Вафлі Світоч Артек класичні",
+            "slug": "vafli-svitoch-artek-klasychni-989274",
+            "price": 34.99,
+            "stock": 173,
+            "available": true,
+            "image": "https://images.silpo.ua/v2/products/500x500/webp/c1306fea-9855-431a-a002-f7454ce1baff.png",
+            "weighted": false,
+            "step": 1,
+            "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+            "branchId": "1ef75882-088d-6d58-8219-7bbaea7db06e"
+          }
+        },
+        {
+          "lagerId": 878328,
+          "name": "Вироби макаронні Cantare Cellentani",
+          "unit": "400г",
+          "quantity": 3,
+          "price": 35.99,
+          "image": "https://content.silpo.ua/sku/ecommerce/87/480x480wwm/878328_480x480wwm_f5c1536d-8c4a-82da-e67d-1232cae6bf93.png",
+          "catalogProduct": {
+            "id": "1ed61c7d-4026-686c-ac69-e94d6677599a",
+            "name": "Вироби макаронні Cantare Cellentani",
+            "slug": "vyroby-makaronni-cantare-cellentani-878328",
+            "price": 55.99,
+            "stock": 795,
+            "available": true,
+            "image": "https://images.silpo.ua/v2/products/500x500/webp/87ae2784-8d03-4114-9ce3-9c2048c994ba.png",
+            "weighted": false,
+            "step": 1,
+            "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+            "branchId": "1ef75882-088d-6d58-8219-7bbaea7db06e"
+          }
+        }
+      ]
+    }
+  ],
+  "meta": {
+    "limit": 10,
+    "offset": 0,
+    "total": 21
+  }
+}
