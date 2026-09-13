@@ -424,3 +424,199 @@ successful empty result. It was found by sending `get_time_slots` a naive dateti
 Hence the rule in `core/mcp/payload.py: error_of` — **any bare string is a failure.**
 Every tool Komora calls declares an object output schema, so a string where an object
 belongs is never a result.
+
+## 9. Purchase history — the habits input, captured 2026-09-13
+
+Three tools carry what a habits engine would need. All were called live against a
+linked account; **all three answered `total: 0`**, so the shapes below are the *empty*
+envelope and nothing more.
+
+| Tool | Context required | `limit` | Observed |
+|---|---|---|---|
+| `silpo_get_my_online_orders` | none | 1–**50** live (the August fixture says 100), default 10 | `total: 0` — «No orders found» |
+| `silpo_get_my_offline_orders` | `branchId`, `deliveryType`, `timeslotStart`, `timeslotEnd` — all four **required** | 1–**10**, default 10 | `total: 0` — «No offline orders found» |
+| `silpo_get_my_favorites` | `branchId`, `deliveryType`, `timeslotStart` | 1–500 live, default 25 | `total: 0` — «No favorite products found» |
+
+All three share one envelope, which is worth knowing because it is *not* the shape the
+cart tools use:
+
+```json
+{ "success": true, "summary": "No orders found",
+  "orders": [], "meta": { "limit": 10, "offset": 0, "total": 0 } }
+```
+
+`silpo_get_my_favorites` names its array `products`, not `orders`.
+
+**The offline call is bound to a live cart.** Its four required parameters come from
+`silpo_get_shopping_cart_by_id`, which means in-store purchase history cannot be read
+without a branch and an unexpired timeslot — the same context a product search needs.
+Any background job that imports history therefore depends on cart state, which is a
+design constraint, not an implementation detail.
+
+**`limit` really is capped at 10** for the offline tool (`"max: 10"` in its own schema),
+against 100 for the online one. Sending 20 returns `-32602 too_big`. Read the schema.
+
+### What is still unknown, and it is the important half
+
+A populated response has **never been seen** — same standing as
+`silpo_get_my_food_restrictions` (§6). The account it was called against holds a real
+loyalty card (`typeName: "Постійна"`, status Active) and has simply never bought
+anything, online or in store. So every question the habits engine's design depends on is
+open:
+
+- **Does an order line carry a category?** Spec §6 keys habits on the *leaf category*
+  from `get_categories_tree`. If lines carry only `lagerId` and a name, the engine needs
+  a resolution step per product, at a cost per import.
+- **What timestamp does an order carry**, and at what granularity? The median-interval
+  rule and the same-day collapse both need one.
+- **How far back does paging reach** — `offset` has no documented ceiling, but 10 orders
+  per call against an unknown history length sets the cost of a first import.
+- **Which source is the real signal?** Most Silpo shopping is in store, so `offline` is
+  probably where the ≥4 events come from — and that is the tool with the cart coupling
+  and the smaller page.
+
+What the tool descriptions claim, unverified: online orders come "with product details";
+offline orders return `products[]` where `catalogProduct !== null` is reorderable and
+`products[].lagerId` equals the `externalProductId` of the catalog tools, so a receipt
+line can be matched to a product by searching that id numerically rather than by name.
+
+**Plan 3 cannot be designed against this account.** It needs one linked to a person who
+actually shops at Silpo; until then the line shape would be a guess, and every parameter
+this project guessed from a tool name has turned out wrong.
+
+### Populated online orders — a second account, 2026-09-13
+
+An account that actually shops answered `silpo_get_my_online_orders` with
+`total: 97`, ten per page. Types only; no value was printed or recorded
+(`scripts/capture_history.py` prints the skeleton, not the payload):
+
+```
+orderId: str   number: str   status: str   createdAt: str   (ISO-8601 with offset)
+amount: int    discount: float
+address:  { city: str, street: str, building: str, apartment: str | null }
+delivery: { type: str, deliveredAt: str, timeSlot: { from: str, to: str } }
+products: [ { id: str, branchId: str, companyId: str, name: str, image: str,
+              price: int, quantity: float, subtotal: float, removed: bool } ]
+```
+
+What that settles for the habits engine:
+
+- **No category on a line, at any depth.** Spec §6 keys habits on the leaf category,
+  so that key is one catalog lookup per *distinct* product, cached by product id — not
+  something an import reads off the order. A household that rebuys the same things
+  resolves far fewer products than it has lines.
+- **Two dates, and they mean different things.** `createdAt` is when the order was
+  placed; `delivery.deliveredAt` is when it arrived. "When did they last buy it" is the
+  second — and an order that never arrived is a `status` to check, not a purchase.
+- **`removed: bool` on a line.** A line can sit in an order without having been bought.
+  An engine that counts it counts a purchase that did not happen.
+- **A full online import is two calls** for this account. The *live* schema caps a page
+  at **50** (read 2026-09-13), and the server enforces it with `-32602 too_big`;
+  `tests/fixtures/mcp/tools.json`, captured in August, still says 100. A correction here
+  once said "one call" by reading that stale fixture. Receipts are the expensive side:
+  10 per call, and a live cart context.
+- **`address` rides on every order.** `core/mcp/sanitize.py` redacts it by key, but an
+  import has no reason to keep it at all.
+
+Still open, because each needs a value and none was printed: whether `price` — an int
+beside a float `subtotal` — is kopiykas; and whether `products[].id` is the catalog id
+`get_products` returns. The tool description says the ids reorder through
+`silpo_add_or_update_cart_products`, which implies yes; that is a claim, not a capture.
+
+### Populated offline orders and favourites — same account, same day
+
+Two runs first reported this account's cart as having no timeslot. It had one: the
+capture script read the cart under `shoppingCart`, and the envelope is
+`{"success": true, "cart": {...}}` — the key `pipeline._cart_body` already reads. The
+lesson is the one at the top of this file, relearned inside the script written to obey it.
+
+`silpo_get_my_offline_orders` answered `total: 21` — three calls for a full import:
+
+```
+createdAt: str   (like 9999-99-99T99:99:99 — no offset)
+filId: int   filialName: str   cityName: str   receiptUrl: str
+sumReg: int   sumDiscount: float   accruedBalaBonusesSum: float
+chequeMagicName: str   chequePrediction: str
+rewards:  [ { rewardGroupCodeName: str, applyText: str, valueText: str,
+              applyRewardAmount: float, promoId: null } ]
+products: [ { lagerId: int, name: str, price: float, quantity: int, unit: str, image: str,
+              catalogProduct: { id: str, slug: str, branchId: str, companyId: str,
+                                name: str, image: str, price: float, step: int,
+                                stock: int, available: bool, weighted: bool } } ]
+```
+
+`silpo_get_my_favorites` answered `total: 20` (its default page is 25) in the `get_products`
+format — `id: str` beside `externalProductId: int`, `slug`, `price`, `oldPrice`, `step`,
+`stock`, `weighted` — and, being a set rather than events, carries no date.
+
+What it settles:
+
+- **No product payload in this API carries a category.** Not an online line, not a receipt
+  line or its `catalogProduct`, not a favourite — and not the captured fixtures of
+  `find_products_batch`, `get_products` or the cart, nor the *declared output schemas* of
+  `find_products_batch`, `get_products`, `get_product_details` or
+  `get_my_offline_orders`. The link runs one way only: `get_products` takes a category and
+  returns its products. So spec §6's habits key — the leaf category — cannot be looked up
+  per product. It must be derived by walking the tree and inverting the listings, or the
+  key must change. That is a Plan 3 decision, to be made knowing this.
+- **Receipt times have no timezone.** Online `createdAt` carries an offset; offline
+  `createdAt` does not. Komora's timestamps are aware UTC and a naive one raises
+  (`db/base.py`), so an import has to localise receipt times — to Europe/Kyiv, the only
+  honest assumption about a Silpo till — before storing them.
+- **A receipt line is `quantity: int` plus `unit: str`.** For a weighted good that is not
+  obviously kilograms, and the line captured does not say. Spec §6's "expected next
+  purchase scales with quantity bought" needs it settled against a weighted line.
+- **`catalogProduct` can be null** (the tool description says so): a till item with no
+  catalog counterpart has a `lagerId` and a name and nothing to key on.
+- **`lagerId: int` and favourites' `externalProductId: int` agree in type**, which fits the
+  description's claim that they are one identifier. Agreeing in type is not matching.
+- **Receipts carry the store, the city and a `receiptUrl`.** An import needs none of them.
+- **The capture's category check passed on `rewards.rewardGroupCodeName`** — a loyalty
+  reward group — because `group` was among its hints. A false positive; the hints are
+  narrowed to `categor`.
+
+Still open: whether an online delivery *also* appears as a loyalty receipt — if it does, an
+import reading both counts one purchase twice; the unit of a weighted receipt line; and
+whether online `price: int` is kopiykas.
+
+### Task 0 answers — values, 2026-09-13
+
+Read from the same account's *full* history — 97 online orders, 21 receipts, 20 favourites
+— with the account holder's permission. The raw payloads stayed in a scratch directory and
+were deleted afterwards; trimmed, sanitised fixtures are `my_online_orders.json`,
+`my_offline_orders.json` and `my_favorites.json`.
+
+| # | Question | Answer |
+|---|---|---|
+| 1 | Is an online line's `id` the catalog id? | **Yes.** 6 online ids are also receipt `catalogProduct.id`s, and a name search found the line's own id in 4 of the 5 searches that found anything. 7 of 12 whole product names found *nothing*: searching by a full name is unreliable. |
+| 2 | Is receipt `lagerId` the catalog `externalProductId`? | **Yes, where the product exists.** A numeric search returned the same product 8 of the 8 times it returned anything; the other 2 — a salmon steak and a chicken fillet, both weighted — were not found at that branch. |
+| 3 | What is a weighted receipt line? | `unit: "кг"` with a fractional `quantity`: kilograms, as §3 says for the catalog, and never `кг` on a non-weighted line. For piece goods `unit` is the **pack size** — «400г», «1,5л», «2*100г» — and `quantity` counts packs. Size is on a receipt even though it is not on a search hit. |
+| 4 | Is online `price` kopiykas? | **No — hryvnias.** `subtotal == price × quantity` on 27 of 28 lines; an `int` is just a whole price. |
+| 5 | Does an online delivery also appear as a receipt? | **Untested.** This account's last online order with lines is April 2026 and its first receipt June 2026. Nothing overlaps, so "0 matches" proves nothing. |
+| 6 | What identifies a receipt? | `receiptUrl` — an opaque token path, 21 distinct of 21 — and `(filId, createdAt)`, also 21 of 21. |
+| 7 | Can a receipt list a product twice? | **Yes, 6 of 21 — including negative lines.** Bread at +2.096, +1.048 and −2.096 kg: a till correction is a line. Quantities must be *netted*; 6 products net to ≤ 0 on their receipt and were never bought. |
+| 8 | How far back? | Receipts: **80 days** (2026-06-24 → 09-13) — whether that is the API's reach or when the card came into use cannot be told from one account. Online orders go back to 2021, but **only 4 of 97 carry product lines** (Feb 2025 → Apr 2026); every older order is a header with no products. |
+| 9 | Does merging help? | Not by replacements — see below. |
+| 10 | What does `status` say? | `received` (94) or `canceled` (3). **`deliveredAt` is set on all three canceled orders**: it is not evidence of delivery. `status` is. |
+| 11 | Does `branchId` filter receipts? | **No.** One branch returned receipts from 5 shops in two cities, and a Kyiv branch returned the same 21. It prices `catalogProduct`; it does not select receipts. |
+
+**The measure behind "product id or grouping".** Rules: `received` orders only, removed
+lines dropped, receipt quantities netted, carrier bags excluded, same-day purchases
+collapsed.
+
+- 202 products; **6** bought on ≥ 4 days over all history, 5 in the last year, **4 within
+  the 80 days of receipts**. 162 were bought exactly once.
+- `get_replacements` answered for **13 of 180** bought products and returned none of the
+  others as a replacement. As a grouping signal it is mostly silent.
+- A crude proxy for variant grouping — names sharing their first three words — leaves the
+  count at 6 but **changes which habits exist**: it merges Ферма 5 % with Ферма 9 % and two
+  Французька breads, and surfaces two the product key cannot see (four variants of Молокія
+  cottage cheese over 6 days; three dorado over 4).
+- **No habit survives CV ≤ 0.5 in any window.** CV ≤ 0.75 keeps 1–2; ≤ 1.0 keeps 3–5.
+- Two of the six all-history habits are artefacts of missing data: «Ферма 5 % every ~146
+  days» is a year of online orders without lines, followed by receipts.
+
+**Carrier bags are named first.** Of the 10 names here containing «пакет», the 7 bags all
+*start* with «Пакет»; the other 3 are cottage cheese sold in one («Сир кисломолочний Ферма
+5 % пакет»). The substring rule in §5 — and in `passes/resolve.py` — rejects that cheese as
+a bag. Filed as its own fix.

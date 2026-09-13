@@ -20,7 +20,9 @@ and the cart was restored exactly. What it found along the way is in
 
 Plan 2 (the Mini App) is built through its third task: initData authentication, the JSON
 API over the same handlers, and the draft-cart screen + sync sheet in `web/` — served
-same-origin from `web/dist`. The Mini App has **not yet been verified on a live device**;
+same-origin from `web/dist`. The Mini App is **verified in part on a live device**
+(2026-09-13: it opens, authenticates, composes a draft, swaps a line and pushes to the
+real cart) — the rest of the checklist is unwalked;
 that checklist lives at the bottom of [its section](#mini-app-api).
 
 Reviewed a fourth time on 2026-09-05, against a green suite as ever. Eight defects, two
@@ -182,7 +184,11 @@ CORS. Without it the process is API-plus-callback only. For live UI work,
 
 ### Manual checklist for the Mini App
 
-**Not yet run.** Everything below needs a physical device and a published Mini App;
+**Partly run, 2026-09-13** — @moya_komora_bot, iOS Telegram, against live Silpo. The
+Mini App opens, authenticates and works: compose resolves real products, «⇄» swaps a
+line, and a push lands in the real Silpo cart. Those items are ticked below and nothing
+else is: the rest of this list has not been walked, and an untested box is not a
+passing one. Everything below needs a physical device and a published Mini App;
 nothing in it can be verified from a test suite, which is exactly why it is written
 down rather than assumed.
 
@@ -196,7 +202,7 @@ BotFather, all found by audit on 2026-08-26 rather than by reasoning:
       about it (`timeslot:expired` is raised and shown) but no basket can be built at
       all, so the first real step of the checklist fails for a reason that looks like
       Komora being broken. Open the Silpo app, pick a branch and a slot, then start.
-- [ ] **An HTTPS `KOMORA_PUBLIC_BASE_URL`.** Telegram will not accept an `http://` or
+- [x] **An HTTPS `KOMORA_PUBLIC_BASE_URL`.** Telegram will not accept an `http://` or
       loopback Web App URL, so the device test needs `cloudflared` even though local
       OAuth does not — see the note under the Plan 1 checklist.
 - [x] ~~Clear the stored DCR registration after changing that URL.~~ **Now automatic.**
@@ -210,10 +216,12 @@ BotFather, all found by audit on 2026-08-26 rather than by reasoning:
 
 Then, in BotFather:
 
-- [ ] `/newapp` on the bot → a **short name** and the Web App URL
+- [x] `/newapp` on the bot → a **short name** and the Web App URL
       (`KOMORA_PUBLIC_BASE_URL`, which serves `web/dist` at `/`).
-- [ ] `/setmenubutton` → the same URL, so the chat has a door.
-- [ ] `KOMORA_TELEGRAM_MINI_APP_URL` set to the `t.me/<bot>/<app>` link BotFather
+- [ ] `/setmenubutton` → the same URL, so the chat has a door. **Still open:**
+      `setChatMenuButton` at the default scope answers `ok: true` and does not take
+      (verified twice, 2026-09-08); the per-chat call does. Needs BotFather.
+- [x] `KOMORA_TELEGRAM_MINI_APP_URL` set to the `t.me/<bot>/<app>` link BotFather
       reports, and the process restarted. **Empty today** — until it is set the bot
       renders no «Відкрити в Коморі» button and the deep-link section below cannot run.
 
@@ -242,11 +250,16 @@ The URL is a **credential**: it grants that user's access for 24 hours. Developm
 
 The app itself:
 
-- [ ] Menu button opens the Mini App; initData accepted (no 401).
-- [ ] Compose → loading skeleton → draft with reasons on every line.
+- [ ] Menu button opens the Mini App; initData accepted (no 401). **Half done
+      2026-09-13:** the app opens and `initData` is accepted — no 401 — but the
+      *default* menu button is still `{"type": "commands"}`; only this operator's
+      own chat has the web_app button, set through the Bot API.
+- [x] Compose → loading skeleton → draft with reasons on every line. **2026-09-13.**
 - [ ] Stepper on a weighted good moves by its step and stops at stock.
 - [ ] ✕ removes a row from the draft; push then sends one line fewer.
-- [ ] ⇄ opens the picker: up to five other products, the current one marked «зараз».
+- [x] ⇄ opens the picker: up to five other products, the current one marked «зараз».
+      **2026-09-13** — the swap itself works; the «зараз» marking and the returned
+      quantity/reason were not checked line by line.
       Tapping one returns to the draft with that product, the same quantity and the
       same reason, and a toast naming it.
 - [ ] ⇄ on a line Silpo has no alternative for keeps the basket on screen and says so
@@ -260,7 +273,8 @@ The app itself:
       untouched.
 - [ ] Preview sheet names removals in the inverted panel; confirm label says
       «Прибрати N позицій» when nothing is added.
-- [ ] Push lands in the real Silpo cart; both checkout buttons work.
+- [ ] Push lands in the real Silpo cart; both checkout buttons work. **Half done
+      2026-09-13:** the push lands; neither checkout button was followed.
 - [ ] Onest and IBM Plex Mono render (they are served from `/assets`, not Google) and
       the palette follows the client's light/dark setting.
 - [ ] **Nothing hides under the native MainButton.** The sticky summary bar is

@@ -35,7 +35,9 @@ outcomes as JSON (`core/initdata.py`, `api/minapp.py`), the draft-cart screen + 
 sheet are built in `web/` (Vite+React, served same-origin from `web/dist`; build with
 `npm run build`), and deep links open the app on one basket —
 `?startapp=basket_<id>` → `GET /api/baskets/{id}`, behind the same ownership gate.
-**None of it has been verified on a device**; the checklist is in
+**Verified in part on a device 2026-09-13** — it opens, authenticates, builds a draft
+from live Silpo, swaps a line and pushes to the real cart; the rest is unwalked and the
+default menu button still is not set. The checklist is in
 [backend/README.md](backend/README.md).
 
 ## Commands
@@ -194,7 +196,7 @@ checkout link gave no reason, savings printed as `15.000 ₴`, and the model's s
 API (`api/minapp.py`, every basket route behind `handlers._own_draft`), the draft-cart
 screen + sync sheet in `web/`, built to the approved design and its three correctness
 passes (in `docs/superpowers/design/`), and deep links onto a named basket. The Mini App
-has **not yet been verified on a live device** — the unchecked checklist lives in
+is **verified in part on a live device** (2026-09-13) — the remaining checklist lives in
 [backend/README.md](backend/README.md), and it needs BotFather setup that no test can
 stand in for.
 

@@ -1,0 +1,10 @@
+{
+  "success": true,
+  "summary": "No orders found",
+  "orders": [],
+  "meta": {
+    "limit": 20,
+    "offset": 0,
+    "total": 0
+  }
+}

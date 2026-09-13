@@ -1,0 +1,10 @@
+{
+  "success": true,
+  "summary": "No favorite products found",
+  "products": [],
+  "meta": {
+    "limit": 10,
+    "offset": 0,
+    "total": 0
+  }
+}

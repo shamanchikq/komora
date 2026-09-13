@@ -16,6 +16,7 @@ class TestRedacts:
             "email",
             "birthDate",
             "address",
+            "building",
             "latitude",
             "cardNumber",
             "userId",
@@ -85,6 +86,24 @@ class TestPreserves:
         cleaned = sanitize({"address": {"street": "вул. Хрещатик", "city": "Київ"}})
         assert cleaned["address"]["street"] == REDACTED
         assert cleaned["address"]["city"] == "Київ", "city alone is not identifying"
+
+    def test_an_online_order_address_is_reached(self) -> None:
+        """Silpo's online orders call the house number `building`, not `house`.
+
+        A real delivery address reached a fixture through exactly this gap.
+        """
+        order = {
+            "address": {
+                "city": "Київ",
+                "street": "вул. Хрещатик",
+                "building": "1",
+                "apartment": None,
+            }
+        }
+        cleaned = sanitize(order)
+        assert cleaned["address"]["street"] == REDACTED
+        assert cleaned["address"]["building"] == REDACTED
+        assert cleaned["address"]["city"] == "Київ"
 
     def test_scalar_personal_data_is_still_redacted(self) -> None:
         assert sanitize({"address": "вул. Хрещатик 1"})["address"] == REDACTED
