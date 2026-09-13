@@ -510,7 +510,9 @@ What that settles for the habits engine:
   second — and an order that never arrived is a `status` to check, not a purchase.
 - **`removed: bool` on a line.** A line can sit in an order without having been bought.
   An engine that counts it counts a purchase that did not happen.
-- **A full import is ~10 calls** for one active account (97 orders, 10 per page).
+- **A full online import is one call** for this account: the tool pages up to 100 and
+  97 orders fit in one page. The capture asked for 10 at a time — the script's choice,
+  not the API's. Receipts are the expensive side: 10 per call, and a live cart context.
 - **`address` rides on every order.** `core/mcp/sanitize.py` redacts it by key, but an
   import has no reason to keep it at all.
 
