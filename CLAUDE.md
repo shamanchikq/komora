@@ -341,9 +341,13 @@ it can read one. Restrictions are told to the model for the menu and flagged as
 unchecked on the cart; nothing filters a line. `agent/tools.describe` now keeps
 Silpo's descriptions paragraph by paragraph and drops the ones Komora contradicts
 («ALWAYS fill the cart as close to the budget limit»), with a test that fails if a
-kept description gains such a phrase. **Task 0's live half is not done:** the fixture
-is still August's, the four probes are open, and the checklist in
-[backend/README.md](backend/README.md#manual-checklist--plan-4) is unwalked.
+kept description gains such a phrase. **Task 0's live half ran the same evening**
+(`scripts/capture_task0.py`, reference §10.9): the fixtures are re-captured with
+annotations, a deal read against a passed slot is empty (so the scan stays after-turn),
+an out-of-stock product is missing from article search, and `displayRatio` has
+multipacks («4*0,5л») the parser now reads. Still open: `all-food`, delivery-as-receipt,
+and the checklist in [backend/README.md](backend/README.md#manual-checklist--plan-4),
+which is unwalked.
 
 Known gaps, all deliberate — the current list lives in
 [backend/README.md](backend/README.md#known-issues).

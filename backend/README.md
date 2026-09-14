@@ -201,9 +201,11 @@ the model is spent only on a plan or an event, and there exactly as on a stated 
   model request.
 
 `uv run alembic upgrade head`: two tables and five columns (`a1f4c2d9e7b3`). Task 0's
-live half — re-capturing `tools.json`, the four probes, the sanitised fixtures — is
-still to do; the code reads the 2026-09-14 fields wherever the fixture's August shape
-allows and tolerates their absence everywhere.
+live half ran the same evening: `tools.json` re-captured with annotations, sanitised
+fixtures for promotions, sets, personal promos, coupons, a rewarded receipt and a
+search hit with the new fields (`tests/test_task0_fixtures.py`), and the §10.8 probes
+answered where one account could answer them (reference §10.9). Re-run with
+`uv run python scripts/capture_task0.py --user <telegram_id> --out <dir outside the repo>`.
 
 ## Mini App API
 
@@ -567,16 +569,15 @@ been walked; the suite covers the rules, not Telegram or a phone.
 
 Found by the live runs on 2026-08-11/12, and left open deliberately.
 
-- **Plan 4 is unwalked, and its Task 0 is half done.** The code reads
-  `displayRatio`, `displayPrice`, `specialPrices` and the coupon list's value fields as
-  the 2026-09-14 live read measured them, but `tests/fixtures/mcp/tools.json` is still
-  the August capture: no sanitised fixture carries the new fields, the four §10.8
-  probes the plan's Task 0 lists (a promotion read against a passed slot, `promoId` on
-  a paid-out reward, `all-food`, delivery-as-receipt) are unanswered, and
-  `get_similar_products` is declared to the model from a schema that predates its
-  three new required parameters — the loop injects them regardless. Re-capture with
-  `scripts/verify_mcp.py` and expect `test_agent_loop`, `test_schema_map` and
-  `test_silpo_client` to need attention.
+- **Plan 4 is unwalked, and three of Task 0's questions are still open** (reference
+  §10.9). `all-food` is the only restriction Silpo reports for the one account read, and
+  its holder finds no such setting in the Silpo app — so the plan's advisory names that
+  slug verbatim on every plan-shaped draft for that account. Whether an online delivery
+  also appears as a receipt cannot be seen on that account: receipt history reaches
+  back 82 days and its last online order is older. And no receipt reward's `promoId`
+  joined a coupon held today, so coupon matching stays out. The rest — a promotion read
+  against a passed slot, `displayRatio`'s vocabulary, out-of-stock goods in article
+  search, `sumReg` — was measured and is in the fixtures and tests.
 - **The digest's coupon section only exists when a session is open.** The job tick
   sends the digest from stored data without opening a Silpo session per subscriber,
   so «Купон згорає» appears only when `digest_for` is given a client — today, nowhere
@@ -584,11 +585,13 @@ Found by the live runs on 2026-08-11/12, and left open deliberately.
   the cheap fix; it waits on knowing how many subscribers there are.
 - **Online savings are not claimed.** An online order line carries no `oldPrice`, so
   the digest's «заощаджено» is receipts only, and says so.
-- **`describe` drops by denylist, not by allowlist.** The plan asked for a per-tool
-  list of kept headings. Without the live descriptions to hand (the fixture is
-  August's), an allowlist would silently drop any heading it did not know; the
-  denylist keeps everything but the instructions Komora contradicts, and the test that
-  guards it is the same either way. Revisit with the re-captured fixture.
+- **`describe` drops by name, not by allowlist.** The plan asked for a per-tool list of
+  kept headings. Revisited against the re-captured descriptions: a heading Silpo adds
+  tomorrow is kept by default, and only two named lists are dropped — BUDGET, which
+  contradicts Komora, and four paragraphs of no use to this model (EMPTY ENTRIES,
+  SEARCH BY BARCODE, RESULT COUNT, STOCK ACCURACY) that were pushing PACKAGE SIZE and
+  the weighted-units sentence past the length cap. A new heading that contradicts
+  Komora is caught only if it uses one of `DROPPED_PHRASES`.
 
 - **Habits were walked once, on one account (2026-09-14)** — see the checklist for what that walk could not reach. The normaliser, the engine and `resolve_known`
   ran over one real shopping history on 2026-09-14 (reference §9): 3 habits tracked,

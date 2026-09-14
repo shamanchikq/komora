@@ -98,12 +98,18 @@ class TestCapturedEnvelopes:
         assert sorted(payload) == ["coupons", "success", "summary"]
         assert _listed(payload, "coupons", "items", "data") == payload["coupons"]
 
-    def test_a_live_coupon_carries_no_discount_value(self) -> None:
-        """The headline "swap X for Y to trigger a 40% coupon" feature rests on this,
-        and this is the evidence: the real coupon has no value field at all."""
-        [coupon] = _fixture("my_coupons")["coupons"]
-        assert "rewardValue" not in coupon and "rewardText" not in coupon
-        assert coupon["description"] == "на онлайн чек", "a fragment, not a description"
+    def test_a_live_coupon_carries_its_value_and_still_no_products(self) -> None:
+        """Captured 2026-08-12 the list had no value field at all; re-captured
+        2026-09-14 it carries `rewardText`/`rewardValue`, so the per-coupon details
+        call is no longer needed for the value. What it still never carries is an
+        eligible-product list — the "swap X for Y to trigger a coupon" feature stays
+        unimplementable, and the conditions are still prose."""
+        coupons = _fixture("my_coupons")["coupons"]
+        assert coupons
+        for coupon in coupons:
+            assert {"rewardText", "rewardValue", "rewardUnit", "promoId"} <= set(coupon)
+            assert not {"products", "productIds", "eligibleProducts"} & set(coupon)
+            assert isinstance(coupon["limitText"], str), "conditions are prose"
 
     def test_restrictions_arrive_under_restrictions(self) -> None:
         """Nothing reads this yet — the dietary pass was removed until a populated

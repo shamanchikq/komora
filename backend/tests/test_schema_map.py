@@ -2,7 +2,8 @@
 
 The SDK does not normalise hand-built function declarations — `t_json_schema()` is
 literally `return origin` — so a bad schema is not rejected locally, it just 400s
-server-side. These tests run against the 39 schemas actually captured from Silpo.
+server-side. These tests run against the 40 schemas actually captured from Silpo
+(re-captured 2026-09-14).
 """
 
 import json

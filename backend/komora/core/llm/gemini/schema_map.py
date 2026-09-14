@@ -14,9 +14,11 @@ Where a rule cannot be expressed, we move it into `description` rather than drop
 it silently — the model can still act on prose, and a lost constraint that nobody
 noticed is the worse outcome.
 
-Measured against the 39 schemas captured from Silpo (`tests/fixtures/mcp/tools.json`):
-`anyOf: [X, null]` is by far the most common construct, `$schema` appears on every
-tool, and `format: uuid` appears 15 times.
+Measured against the 40 schemas re-captured from Silpo on 2026-09-14
+(`tests/fixtures/mcp/tools.json`): `$schema` appears on 35 of them, `format: uuid` 15
+times, and `anyOf: [X, null]`, `exclusiveMinimum`, `propertyNames` and
+`additionalProperties` a handful of times each. The August capture had `anyOf` on
+nearly every nullable field; the server now mostly omits nullable ones instead.
 """
 
 from typing import Any, Final

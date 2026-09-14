@@ -50,8 +50,8 @@ def decl(name: str):  # type: ignore[no-untyped-def]
 
 class TestWhatTheModelIsShown:
     def test_the_budget_paragraph_never_reaches_the_model(self) -> None:
-        """The August fixture already carries «BUDGET: ALWAYS fill the cart…» on
-        `find_products_batch`; the 400-character cut hid it by accident."""
+        """Both captures carry «BUDGET: ALWAYS fill the cart…» on `find_products_batch`;
+        the 400-character cut once hid it by accident."""
         search = decl("silpo_find_products_batch").description.lower()
         for phrase in DROPPED_PHRASES:
             assert phrase not in search
@@ -97,12 +97,16 @@ class TestWhatTheModelIsShown:
         assert not any(w in n for n in READ_TOOLS for w in ("add_", "update_", "remove_", "clear_"))
 
     def test_a_server_hint_may_check_the_allowlist_never_extend_it(self) -> None:
-        """Annotations arrived 2026-09-14. Where the fixture carries them, every
-        allowlisted tool must be `readOnlyHint: true`; a tool with the hint and no
-        allowlist entry stays unreachable."""
+        """Annotations arrived 2026-09-14 and the fixture carries them since Task 0's
+        re-capture: every allowlisted tool must be `readOnlyHint: true`, and a tool with
+        the hint and no allowlist entry stays unreachable."""
         hinted = {t["name"]: t.get("annotations") or {} for t in ALL_TOOLS}
+        assert all(hinted.values()), "the fixture lost its annotations — re-capture"
         for name in READ_TOOLS:
-            assert hinted.get(name, {}).get("readOnlyHint", True) is True, name
+            assert hinted[name]["readOnlyHint"] is True, name
+        read_only = {n for n, a in hinted.items() if a.get("readOnlyHint")}
+        assert read_only - set(READ_TOOLS), "hinted reads exist that the model is not given"
+        assert "silpo_get_my_family" in read_only - {d.name for d in build_tool_decls(ALL_TOOLS)}
 
     def test_clipping_keeps_products_whole_and_counts_the_rest(self) -> None:
         page = {"products": [product(f"p{i}", 1) for i in range(30)], "meta": {"total": 30}}

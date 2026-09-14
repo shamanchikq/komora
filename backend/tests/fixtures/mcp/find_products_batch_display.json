@@ -1,0 +1,101 @@
+{
+  "success": true,
+  "summary": "Found 4 products across 2 search queries",
+  "queries": [
+    {
+      "query": "875413",
+      "totalFound": 1,
+      "products": [
+        {
+          "id": "1ed076a1-4472-6ab0-b107-e902eb641b79",
+          "name": "Мигдалеві пластівці",
+          "slug": "mygdalevi-plastivtsi-875413",
+          "price": 189,
+          "displayPrice": 189,
+          "oldPrice": null,
+          "stock": 32,
+          "available": true,
+          "image": "https://images.silpo.ua/v2/products/500x500/webp/5e6cb5cb-b728-4234-a9da-9479349857a1.png",
+          "weighted": false,
+          "step": 1,
+          "displayRatio": "150г",
+          "specialPrices": [
+            {
+              "price": 128.52,
+              "count": 2,
+              "type": "from"
+            }
+          ],
+          "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+          "branchId": "1ef75882-088d-6d58-8219-7bbaea7db06e",
+          "externalProductId": 875413
+        }
+      ]
+    },
+    {
+      "query": "молоко",
+      "totalFound": 90,
+      "products": [
+        {
+          "id": "1f18a0dd-a1ff-6b16-936b-993049b0fabd",
+          "name": "Молоко ультрапастеризоване Яготинське 2,5% тетра",
+          "slug": "moloko-ultrapasteryzovane-yagotynske-2-5-tetra-1034354",
+          "price": 74.99,
+          "displayPrice": 74.99,
+          "oldPrice": null,
+          "stock": 2,
+          "available": true,
+          "image": "https://images.silpo.ua/v2/products/500x500/webp/2a8de111-df1a-4c04-bf2e-fea90b0c338d.png",
+          "weighted": false,
+          "step": 1,
+          "displayRatio": "950г",
+          "specialPrices": null,
+          "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+          "branchId": "1ef75882-088d-6d58-8219-7bbaea7db06e",
+          "externalProductId": 1034354
+        },
+        {
+          "id": "1eef27f9-62dd-6fae-b548-230de63eaad5",
+          "name": "Молоко пастеризоване Organic Milk органічне 2,5% пляшка",
+          "slug": "moloko-pasteryzovane-organic-milk-organichne-2-5-pliashka-951611",
+          "price": 86.99,
+          "displayPrice": 86.99,
+          "oldPrice": null,
+          "stock": 6,
+          "available": true,
+          "image": "https://images.silpo.ua/v2/products/500x500/webp/ba84566d-716c-49b1-9f22-b4032439e2d5.png",
+          "weighted": false,
+          "step": 1,
+          "displayRatio": "900г",
+          "specialPrices": null,
+          "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+          "branchId": "1ef75882-088d-6d58-8219-7bbaea7db06e",
+          "externalProductId": 951611
+        },
+        {
+          "id": "1efd95cb-8f49-6af4-a289-330345a6c2d0",
+          "name": "Молоко пастеризоване Feels good мікрофільтроване 2,5 %",
+          "slug": "moloko-pasteryzovane-feels-good-mikrofiltrovane-2-5-979167",
+          "price": 69.99,
+          "displayPrice": 69.99,
+          "oldPrice": null,
+          "stock": 6,
+          "available": true,
+          "image": "https://images.silpo.ua/v2/products/500x500/webp/523a2f6f-d357-4f3c-8814-bb2fba5c6c6f.png",
+          "weighted": false,
+          "step": 1,
+          "displayRatio": "950г",
+          "specialPrices": null,
+          "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+          "branchId": "1ef75882-088d-6d58-8219-7bbaea7db06e",
+          "externalProductId": 979167
+        }
+      ]
+    }
+  ],
+  "meta": {
+    "totalQueries": 2,
+    "totalProducts": 4,
+    "droppedCount": 0
+  }
+}
