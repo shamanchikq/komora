@@ -101,6 +101,29 @@ class SilpoSession:
     async def get_my_food_restrictions(self) -> dict[str, Any]:
         return await self._call("silpo_get_my_food_restrictions", {})
 
+    # --- Plan 4 reads (reference §10; argument names read live 2026-09-14) ---
+    async def get_my_promos(self) -> dict[str, Any]:
+        return await self._call("silpo_get_my_promos", {})
+
+    async def get_product_sets(self, context: SearchContext) -> dict[str, Any]:
+        # Declares `branchId` and `deliveryType` only — no slot.
+        return await self._call(
+            "silpo_get_product_sets",
+            {"branchId": context.branch_id, "deliveryType": context.delivery_type},
+        )
+
+    async def get_similar_products(
+        self, slug: str, context: SearchContext, **filters: Any
+    ) -> dict[str, Any]:
+        # Requires the whole slot since 2026-09-14; the August fixture says branch and
+        # slug alone, and a call shaped that way is `-32602` live.
+        return await self._call(
+            "silpo_get_similar_products", {**context.as_tool_args(), "slug": slug, **filters}
+        )
+
+    async def get_my_family(self) -> dict[str, Any]:
+        return await self._call("silpo_get_my_family", {})
+
     async def get_time_slots(
         self,
         *,

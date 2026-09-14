@@ -59,7 +59,9 @@ from komora.db.repo import (
     HabitRepo,
     HistoryImportRepo,
     NotificationRepo,
+    PriceSnapshotRepo,
     PurchaseRepo,
+    ReceiptRepo,
     UserRepo,
 )
 from komora.db.tables import User
@@ -171,6 +173,10 @@ def build(
             imports=HistoryImportRepo(sessions),
             notifications=NotificationRepo(sessions),
             connect_background=connect_background,  # type: ignore[arg-type]
+            # Plan 4: wired as `main.py` wires them, so the after-turn price scan and
+            # the receipt totals run in every habits test that reads a cart.
+            prices=PriceSnapshotRepo(sessions),
+            receipts=ReceiptRepo(sessions),
         )
         if habits
         else None
@@ -689,15 +695,16 @@ class TestReceiptsAfterATurn:
 
         assert isinstance(await on_habits_draft(services, USER), DraftReady)
         later = deferred(services)
-        # Scheduled, not run: the reply is not kept waiting for it.
-        assert len(later.pending) == 1
+        # Scheduled, not run: the reply is not kept waiting for it. Two pieces of
+        # work since Plan 4 — the receipts import and the price scan — one each.
+        assert len(later.pending) == 2
         assert await stores.imports.last_ok(USER, "offline") is None
         # A second turn while the first import waits schedules nothing more.
         await on_habits_draft(services, USER)
-        assert len(later.pending) == 1
+        assert len(later.pending) == 2
 
         silpo.history_calls.clear()
-        assert await later.drain() == 1
+        assert await later.drain() == 2
         assert await stores.imports.last_ok(USER, "offline") is not None
         # Receipts alone, with the turn's context — online orders are the job's.
         assert {source for source, _ in silpo.history_calls} == {"offline"}

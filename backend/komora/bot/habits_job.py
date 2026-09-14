@@ -12,6 +12,10 @@ Each tick, for every linked user:
    the skip is recorded (`history_imports`), not hidden.
 2. **Nudge**, if a habit is due, nudgeable and not muted, outside quiet hours and
    outside the per-product cooldown. One message, offering a draft. Never a cart write.
+3. **Digest**, on a Sunday evening, once a week, to a user who asked for it
+   (`/digest on`) — from stored receipts and purchases, so it needs no cart context
+   (Plan 4 Task 4). The deal scan is *not* here: it needs a live cart context, which
+   a tick rarely holds, so it runs after a turn (`handlers._schedule_prices`).
 
 A failure on one user is logged and never stops the others; a failure on one source
 never blocks the other. Nothing here makes a model request.
@@ -24,7 +28,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 
-from komora.bot.handlers import Services, nudge_for, refresh_history
+from komora.bot.handlers import Services, nudge_for, refresh_history, send_digest_if_due
 from komora.core.mcp.errors import McpError, NotAuthenticated
 from komora.core.mcp.gateway import Busy
 
@@ -93,6 +97,9 @@ async def tick(services: Services, *, now: datetime | None = None) -> list[int]:
             if nudge is not None:
                 await services.notify(telegram_id, nudge)
                 nudged.append(telegram_id)
+            # Stored data only; the coupon section would need a session and is left
+            # out here rather than opening one per subscriber per tick.
+            await send_digest_if_due(services, telegram_id, now=now)
         except Exception:
             # One user's failure is that user's; the loop goes on.
             log.exception("habits tick failed for %s", telegram_id)

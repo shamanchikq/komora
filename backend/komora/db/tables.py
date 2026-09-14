@@ -40,6 +40,9 @@ class User(Base):
     quiet_to: Mapped[int | None] = mapped_column(default=None)
     """Hours (Kyiv) between which a nudge is held back; `None` means the default
     window in `bot/habits_job.py`. A user's evening is not something to guess at."""
+    digest_weekly: Mapped[bool] = mapped_column(default=False)
+    """«/digest on» — the Sunday message (Plan 4 Task 4). Off by default, as spec
+    §12.3 said: a message nobody asked for is the one kind Komora sends least."""
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
@@ -95,6 +98,9 @@ class DraftBasketRow(Base):
     happen in different turns, and the second one must send exactly what the first one
     showed."""
     warnings: Mapped[str] = mapped_column(Text, default="[]")
+    menu: Mapped[str] = mapped_column(Text, default="[]")
+    """`MenuItem` list, JSON-encoded — a meal plan's dishes, redrawn above the draft
+    when it is reopened. Empty for every other intent."""
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
@@ -149,6 +155,12 @@ class DraftItem(Base):
     """Priced per kilogram; a Mini App needs this to show «0,15 кг × 999,00 ₴/кг»."""
     step: Mapped[float | None] = mapped_column(default=None)
     stock: Mapped[float | None] = mapped_column(default=None)
+    display_ratio: Mapped[str | None] = mapped_column(String(32), default=None)
+    """Silpo's pack size («900г»), since 2026-09-14. Null for older rows and for a
+    product Silpo sent none for."""
+    display_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), default=None)
+    special_prices: Mapped[str] = mapped_column(Text, default="[]")
+    """`SpecialPrice` list, JSON-encoded. A note, never a total."""
 
 
 class Purchase(Base):
@@ -248,6 +260,70 @@ class HistoryImport(Base):
     outcome: Mapped[str] = mapped_column(String(8))
     """ok | skipped | failed"""
     detail: Mapped[str] = mapped_column(Text, default="")
+
+
+class PriceSnapshot(Base):
+    """The shelf price of a tracked product on one day at one branch (Plan 4 Task 2).
+
+    Per user, because the scan runs through the user's own session over the user's own
+    tracked habits — a shared table keyed on branch would be a catalogue crawl by
+    another name. Per branch, because prices differ by shop and a household that
+    switches must not read the difference as a drop. `price` is the shelf price
+    (after Silpo's own promotion), `old_price` the pre-promotion one when there is a
+    promotion; `purchases.unit_price` is the *paid* price and is never mixed in.
+    """
+
+    __tablename__ = "price_snapshots"
+    __table_args__ = (
+        UniqueConstraint("user_id", "product_key", "branch_id", "day", name="uq_price_snapshot"),
+        Index("ix_price_snapshots_user_product", "user_id", "product_key"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.telegram_id", ondelete="CASCADE"), index=True
+    )
+    product_key: Mapped[str] = mapped_column(String(64))
+    external_product_id: Mapped[int | None] = mapped_column(BigInteger, default=None)
+    branch_id: Mapped[str] = mapped_column(String(64))
+    day: Mapped[date]
+    """Kyiv day. One row per (product, branch, day), replaced on the same day."""
+    price: Mapped[Decimal] = mapped_column(Numeric(10, 2))
+    old_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), default=None)
+    display_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), default=None)
+    available: Mapped[bool] = mapped_column(default=True)
+    captured_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class Receipt(Base):
+    """One loyalty-card receipt's totals (Plan 4 Task 4).
+
+    `purchases` keeps lines; `sumReg`, `sumDiscount` and the bonuses accrued live on
+    the receipt itself, and a digest's «витрачено» and «заощаджено» come from here —
+    what Silpo actually charged, never a coupon inferred. Nothing personal: the key is
+    the same hash `purchases.receipt_key` uses, and no shop, city or URL is kept.
+    """
+
+    __tablename__ = "receipts"
+    __table_args__ = (
+        UniqueConstraint("user_id", "receipt_key", name="uq_receipt"),
+        Index("ix_receipts_user_bought_at", "user_id", "bought_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.telegram_id", ondelete="CASCADE"), index=True
+    )
+    receipt_key: Mapped[str] = mapped_column(String(80))
+    bought_at: Mapped[datetime]
+    total: Mapped[Decimal] = mapped_column(Numeric(10, 2))
+    """`sumReg` — undocumented; read as the receipt total, checked against the line
+    sums by `core/habits/purchases.receipt_totals` and stored only when they agree
+    within a hryvnia."""
+    discount: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=0)
+    """`sumDiscount`."""
+    bonuses_accrued: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=0)
+    """`accruedBalaBonusesSum` — points, not hryvnias; never added to money."""
 
 
 class Notification(Base):

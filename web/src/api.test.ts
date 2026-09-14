@@ -45,6 +45,16 @@ describe("describeError", () => {
     }
   });
 
+  it("does not call the deals screen a draft either", () => {
+    // Opening «Акції» does read Silpo, but what failed was opening a screen — there is
+    // no draft behind it to promise anything about.
+    for (const error of [new ApiError(0), new ApiError(500)]) {
+      const text = describeError(error, "deals");
+      expect(text).toContain("акції");
+      expect(text).not.toContain("чернетк");
+    }
+  });
+
   it("distinguishes a server answer from no answer", () => {
     expect(describeError(new ApiError(500), "read")).toContain("на сервері");
     expect(describeError(new Error("network"), "read")).toContain("Щось пішло не так");
@@ -88,6 +98,7 @@ describe("staysOnScreen", () => {
     expect(staysOnScreen(spoke(null), "draft")).toBe(false);
     expect(staysOnScreen(spoke(null), "open")).toBe(false);
     expect(staysOnScreen(spoke(null), "usual")).toBe(false);
+    expect(staysOnScreen(spoke(null), "deals")).toBe(false);
     expect(staysOnScreen(spoke(null), "edit")).toBe(false);
   });
 });

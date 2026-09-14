@@ -16,6 +16,13 @@ describe("parseTarget", () => {
     expect(parseTarget("usual_42")).toBeNull();
   });
 
+  it("reads the deals screen, which names nothing either", () => {
+    expect(parseTarget("deals")).toEqual({ kind: "deals" });
+    expect(parseTarget(" deals ")).toEqual({ kind: "deals" });
+    // A value after it is not this kind: the lists are the sender's own.
+    expect(parseTarget("deals_42")).toBeNull();
+  });
+
   it("opens on compose rather than erroring when there is no link", () => {
     // Both of the ordinary launches: the menu button, and a browser during development.
     expect(parseTarget(undefined)).toBeNull();
@@ -26,6 +33,8 @@ describe("parseTarget", () => {
     // A future kind must not be read as this one. Nothing here decides access — the
     // route the id reaches re-derives ownership — but a wrong screen is still wrong.
     for (const param of ["deal_42", "basket", "basket_", "basket_abc", "basket_-1", "42"]) {
+      // `deal_42` above is the near miss that matters: a future per-deal link must not
+      // be read as the whole deals screen.
       expect(parseTarget(param), param).toBeNull();
     }
   });

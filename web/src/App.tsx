@@ -1,6 +1,7 @@
 /** Screen flow: compose → loading → draft review → sync sheet → synced, with prose
  * outcomes as the universal detour. «Звичні покупки» sits beside compose: reached from
- * it or from a `startapp=usual` link, and it leads into the same draft review. The native MainButton carries each screen's
+ * it or from a `startapp=usual` link, and it leads into the same draft review; «Акції»
+ * sits beside it on the same terms. The native MainButton carries each screen's
  * primary action; outside Telegram an in-page fallback bar does the same job. */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -11,6 +12,8 @@ import { launchTarget } from "./deeplink";
 import { telegramHost } from "./telegram";
 import type {
   AlternativesOutcome,
+  BranchDeal,
+  DealsOutcome,
   DraftOutcome,
   Habit,
   HabitsOutcome,
@@ -25,6 +28,7 @@ import { SyncedScreen } from "./screens/SyncedScreen";
 import { AlternativesSheet } from "./screens/AlternativesSheet";
 import { SpokeView } from "./screens/SpokeView";
 import { UsualScreen, canBuild } from "./screens/UsualScreen";
+import { BUILD_DEALS_BUTTON, DealsScreen } from "./screens/DealsScreen";
 import { SEND_BUTTON, noAlternatives } from "./copy";
 
 interface Banner {
@@ -40,6 +44,7 @@ type View =
   | { name: "synced"; outcome: SyncedOutcome }
   | { name: "alternatives"; outcome: AlternativesOutcome }
   | { name: "usual"; outcome: HabitsOutcome }
+  | { name: "deals"; outcome: DealsOutcome }
   | { name: "spoke"; text: string; needsLink: boolean };
 
 const RETRY_BUTTON = "Спробувати ще раз";
@@ -48,7 +53,7 @@ const NOTICE_MS = 2600;
 /** The two attempts with no screen behind them: they replace whatever was there with
  * the loading shell, so a failure has nowhere to stay and lands on compose. Every
  * other attempt is launched from a screen that is still true while it runs. */
-const FROM_NOTHING: readonly Attempt[] = ["draft", "open", "usual"];
+const FROM_NOTHING: readonly Attempt[] = ["draft", "open", "usual", "deals"];
 const BUILD_USUAL = "Зібрати кошик";
 
 export default function App() {
@@ -89,6 +94,16 @@ export default function App() {
         case "habits":
           setView({ name: "usual", outcome });
           flash(outcome.toast);
+          break;
+        case "deals":
+          setView({ name: "deals", outcome });
+          flash(outcome.toast);
+          break;
+        case "deal":
+          // The proactive alert. It is pushed into the chat with its own buttons and
+          // no route this app calls can answer with it — but the union knows it, so
+          // the switch must too, and going nowhere is the honest handling: navigating
+          // to a screen the user did not ask for is what the chat is for.
           break;
         case "preview":
           setView({ name: "preview", outcome });
@@ -227,6 +242,8 @@ export default function App() {
 
   const openUsual = useCallback(() => void run(() => api.habits(), "usual"), [run]);
 
+  const openDeals = useCallback(() => void run(() => api.deals(), "deals"), [run]);
+
   /** Mute or unmute one row. The answer IS the updated list, so the screen stays and
    * the change is announced in a toast — never replaced by a sentence (the lesson
    * learned three times over on the draft). */
@@ -283,6 +300,64 @@ export default function App() {
     [busy, flash, route],
   );
 
+  /** «Зібрати кошик зі знижок» — `buildUsual` one screen over, and for the same
+   * reason: a refusal returns to the deals list with the reason on top, never to
+   * compose. The list is still true and is the only place the build can be retried. */
+  const buildDeals = useCallback(
+    async (from: DealsOutcome) => {
+      if (busy) return;
+      setBusy(true);
+      setBanner(null);
+      setView({ name: "loading" });
+      try {
+        const outcome = await api.dealsDraft();
+        if (outcome.kind === "spoke" && !outcome.needs_link) {
+          setView({ name: "deals", outcome: from });
+          flash(outcome.toast);
+          setBanner({ text: outcome.text, firm: true });
+        } else {
+          route(outcome);
+        }
+      } catch (exc) {
+        setView({ name: "deals", outcome: from });
+        setBanner({ text: describeError(exc, "draft"), firm: true });
+      } finally {
+        setBusy(false);
+      }
+    },
+    [busy, flash, route],
+  );
+
+  /** «Додати» on a branch deal. The answer is a draft — the product appended to the
+   * open one, or a new one titled «Акції» — and that is a destination worth going to.
+   * A refusal is not: «нема в наявності», «невідомий товар», «Сільпо не відповідає»
+   * are all answers about one row of a list that is still on screen, and replacing the
+   * list with a sentence would take every other deal with it (the 2026-08-26 lesson).
+   *
+   * The attempt is `read`: the request reaches Silpo, which re-fetches the product by
+   * article before it is allowed to become a line. */
+  const addDeal = useCallback(
+    async (deal: BranchDeal) => {
+      if (busy) return;
+      setBusy(true);
+      setBanner(null);
+      try {
+        const outcome = await api.addDeal(deal);
+        if (outcome.kind === "spoke" && !outcome.needs_link) {
+          flash(outcome.toast);
+          setBanner({ text: outcome.text, firm: false });
+        } else {
+          route(outcome);
+        }
+      } catch (exc) {
+        setBanner({ text: describeError(exc, "read"), firm: true });
+      } finally {
+        setBusy(false);
+      }
+    },
+    [busy, flash, route],
+  );
+
   const goCompose = useCallback(() => {
     setText("");
     setBanner(null);
@@ -316,6 +391,12 @@ export default function App() {
       case "usual":
         if (!canBuild(view.outcome.habits)) return null;
         return () => void buildUsual(view.outcome);
+      case "deals":
+        // Only the tracked products can be built into a basket: a branch deal is a
+        // product the household has never bought, and «Додати» on its own row is how
+        // one of those gets in.
+        if (view.outcome.mine.length === 0) return null;
+        return () => void buildDeals(view.outcome);
       case "draft":
         if (view.outcome.basket_id === null) return null;
         return () =>
@@ -343,6 +424,8 @@ export default function App() {
         return null;
       case "usual":
         return canBuild(view.outcome.habits) ? BUILD_USUAL : null;
+      case "deals":
+        return view.outcome.mine.length > 0 ? BUILD_DEALS_BUTTON : null;
       case "draft":
         return view.outcome.basket_id === null ? null : SEND_BUTTON;
       case "preview":
@@ -361,6 +444,8 @@ export default function App() {
     opened.current = true;
     if (target.kind === "usual") {
       void run(() => api.habits(), "usual");
+    } else if (target.kind === "deals") {
+      void run(() => api.deals(), "deals");
     } else {
       void run(() => api.open(target.id), "open");
     }
@@ -488,6 +573,7 @@ export default function App() {
           onText={setText}
           onSubmit={(value) => void run(() => api.draft(value), "draft")}
           onUsual={openUsual}
+          onDeals={openDeals}
         />
       )}
 
@@ -573,6 +659,14 @@ export default function App() {
           outcome={view.outcome}
           busy={busy}
           onToggle={(habit) => void toggleMute(habit)}
+        />
+      )}
+
+      {view.name === "deals" && (
+        <DealsScreen
+          outcome={view.outcome}
+          busy={busy}
+          onAdd={(deal) => void addDeal(deal)}
         />
       )}
 

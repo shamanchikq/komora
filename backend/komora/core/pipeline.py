@@ -34,7 +34,9 @@ TIMESLOT_EXPIRED = "timeslot:expired"
 Kept because baskets stored before 2026-09-14 carry it, and both surfaces still draw it."""
 
 MAX_COUPON_DETAILS = 5
-"""Each one is a separate call, and a note nobody reads is not worth a round trip."""
+"""Each one is a separate call, and a note nobody reads is not worth a round trip.
+Since 2026-09-14 the list carries `rewardText` itself (reference §10.1), so the call
+is made only for a coupon whose list entry has none — the August shape."""
 
 log = logging.getLogger(__name__)
 
@@ -220,10 +222,12 @@ async def timeslot_is_offered(mcp: SilpoClient, context: SearchContext) -> bool 
 async def _coupons(mcp: SilpoClient) -> list[dict[str, Any]]:
     """The user's coupons, enriched with the value the list endpoint cannot carry.
 
-    `get_my_coupons` is `additionalProperties: false` without `rewardValue`, so a
-    coupon's own description can be a fragment — the real one on the test account reads
-    just "на онлайн чек". `get_coupon_details` is the only place a number exists, and
-    it costs one call per coupon, hence the cap.
+    On the August shape `get_my_coupons` is `additionalProperties: false` without a
+    value, so a coupon's own description can be a fragment — the real one on the test
+    account reads just "на онлайн чек" — and `get_coupon_details` is the only place a
+    number exists. The live list now carries `rewardText` (reference §10.1), so the
+    per-coupon call is made only for an entry that lacks it: on today's server that is
+    zero calls, on the fixture's shape it is what it always was.
 
     An enrichment failure keeps the plain coupon rather than dropping it.
     """
@@ -236,7 +240,7 @@ async def _coupons(mcp: SilpoClient) -> list[dict[str, Any]]:
         coupon_id = coupon.get("id")
         # Counting `enriched` instead spent the budget on coupons that cost no call at
         # all: five id-less ones ahead of the rest meant nothing was ever enriched.
-        if coupon_id is None or fetched >= MAX_COUPON_DETAILS:
+        if coupon_id is None or fetched >= MAX_COUPON_DETAILS or coupon.get("rewardText"):
             enriched.append(coupon)
             continue
         fetched += 1
@@ -263,7 +267,7 @@ async def _verified(
     right one is the worst outcome available, because the user may simply buy it.
     """
     pairs = [(line.description or "", line.name) for line in cart.lines]
-    mismatches = await find_mismatches(llm, pairs, basket.title)
+    mismatches = await find_mismatches(llm, pairs, purpose_of(basket))
     if mismatches is None:
         return cart, True
     if not mismatches:
@@ -313,6 +317,19 @@ async def _verified(
 
     total = sum((ln.line_total for ln in kept if not ln.unavailable), Decimal("0"))
     return cart.model_copy(update={"lines": kept, "total": total, "warnings": warnings}), False
+
+
+def purpose_of(basket: DraftBasket) -> str:
+    """What the verification pass is told the basket is for.
+
+    The title alone judged a snack salami a fine answer to «салямі»; only «піца»
+    made it wrong. A meal plan's title is «План на тиждень», which says nothing
+    about any line — its dishes do, so they ride along (Plan 4 Task 5).
+    """
+    if not basket.menu:
+        return basket.title
+    dishes = "; ".join(f"{m.day}: {m.dish}" for m in basket.menu[:14])
+    return f"{basket.title} — {dishes}"
 
 
 async def build_cart(

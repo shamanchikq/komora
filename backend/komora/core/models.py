@@ -15,6 +15,9 @@ from pydantic import BaseModel, Field, StringConstraints, computed_field, field_
 ReasonKind = Literal["stated", "habit", "deal", "meal", "sub"]
 """Why a line is in the basket. Surfaced to the user, so it is never optional."""
 
+Intent = Literal["stated", "habits", "mealplan", "event", "deals"]
+"""Which door a basket came in through. Stored, never shown."""
+
 BasketStatus = Literal["draft", "confirmed", "synced", "discarded"]
 
 _MARKUP = re.compile(r"<[^>]*>")
@@ -40,6 +43,34 @@ def clean_prose(value: str) -> str:
 Prose = Annotated[str, StringConstraints(strip_whitespace=True)]
 
 
+class Amount(BaseModel):
+    """A stated need — «1,5 кг», «3 л», «10 шт» — as the model may give it (Plan 4 D8).
+
+    Distinct from `quantity`, which counts packs (or kilograms of a weighted good):
+    the need says how much food, and `resolve` turns it into packs from the product's
+    `displayRatio` when both are known. A line with no `amount` is untouched.
+    """
+
+    value: float
+    unit: Prose
+
+    @field_validator("value")
+    @classmethod
+    def _positive(cls, value: float) -> float:
+        if not (value > 0):
+            raise ValueError("amount must be positive")
+        return value
+
+
+class MenuItem(BaseModel):
+    """One dish on a meal plan: shown above the draft, never a cart line."""
+
+    day: Prose
+    dish: Prose
+
+    _clean = field_validator("day", "dish")(clean_prose)
+
+
 class DraftLine(BaseModel):
     description: Prose
     """What to buy, in the user's terms — "молоко 2,6% ~1 л". Not a SKU."""
@@ -51,6 +82,9 @@ class DraftLine(BaseModel):
     and ignored when it matches nothing.
     """
     quantity: float = 1
+    amount: Amount | None = None
+    """How much is needed, when the model states it — converted to packs by `resolve`
+    from the product's pack size (`core/units.py`); ignored when either is unknown."""
     optional: bool = False
     """Trimmed first when a cart exceeds its budget cap."""
     reason_kind: ReasonKind = "stated"
@@ -65,6 +99,13 @@ class DraftBasket(BaseModel):
     """Shown as the heading and stored as the basket's name."""
     intent: str
     lines: list[DraftLine]
+    menu: list[MenuItem] = Field(default_factory=list)
+    """A meal plan's dishes, one per day (Plan 4 D5). Drawn above the basket on both
+    surfaces and handed to the verification pass as the basket's purpose. Never a
+    line: a dish is not a product."""
+    guests: int | None = None
+    """An event's headcount (J4), echoed in the title. The model scales quantities
+    itself; Komora stores the number and claims nothing from it."""
     removals: list[Prose] = Field(default_factory=list)
     """What the user asked to take back out, in their own words — «ковбаски пепероні».
 
@@ -83,6 +124,28 @@ class DraftBasket(BaseModel):
     @classmethod
     def _clean_removals(cls, value: list[str]) -> list[str]:
         return [cleaned for cleaned in (clean_prose(item) for item in value) if cleaned]
+
+    @field_validator("guests")
+    @classmethod
+    def _sane_guests(cls, value: int | None) -> int | None:
+        # A headcount of zero is no event; past a few hundred it is a typo the model
+        # would otherwise multiply every quantity by.
+        if value is None:
+            return None
+        return value if 0 < value <= MAX_GUESTS else None
+
+
+MAX_GUESTS = 500
+
+
+class SpecialPrice(BaseModel):
+    """Silpo's multi-buy price: `{price, count, type: "from"}` — «from 2 items, each at
+    128.52». Only `from` has been observed (reference §10.3); any other `type` is
+    carried and never interpreted."""
+
+    price: Decimal
+    count: float
+    type: str = "from"
 
 
 class KnownLine(BaseModel):
@@ -185,6 +248,17 @@ class ResolvedLine(BaseModel):
     stock: float | None = None
     """Silpo's remaining stock when the search returned it. The ceiling a quantity
     control must respect; `None` means unknown, not unlimited."""
+    display_ratio: str | None = None
+    """The content of one unit as Silpo writes it — «900г», «0,5л», «10 шт»; «100г»
+    on a weighted good. Since 2026-09-14 on every product shape (reference §10.3);
+    `None` on a product read from the August-shaped fixture or when Silpo sent none.
+    A surface draws it as the pack size; `resolve` turns a stated need into packs."""
+    display_price: Decimal | None = None
+    """Price per `display_ratio`. Equal to `unit_price` on unit goods; per 100 g on
+    weighted ones. Not money the user pays — kept for the deals screen."""
+    special_prices: list[SpecialPrice] = Field(default_factory=list)
+    """Conditional multi-buy prices. A note in the savings pass, never a total: Silpo
+    decides at checkout whether the condition is met."""
     synced: bool = False
     """This line is already in the real Silpo cart, because a push put it there.
 
@@ -209,6 +283,8 @@ class ResolvedLine(BaseModel):
 
 class ResolvedCart(BaseModel):
     lines: list[ResolvedLine]
+    menu: list[MenuItem] = Field(default_factory=list)
+    """Carried from the draft so a stored basket can redraw its meal plan."""
     total: Decimal = Decimal("0")
     estimated_savings: Decimal = Decimal("0")
     """An estimate: Silpo applies coupons at checkout, not through the MCP."""

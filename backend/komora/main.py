@@ -36,7 +36,9 @@ from komora.db.repo import (
     HistoryImportRepo,
     NotificationRepo,
     OAuthClientRepo,
+    PriceSnapshotRepo,
     PurchaseRepo,
+    ReceiptRepo,
     UserRepo,
 )
 
@@ -129,6 +131,8 @@ async def run() -> None:
             imports=HistoryImportRepo(sessions),
             notifications=NotificationRepo(sessions),
             connect_background=gateway.connect_background,
+            prices=PriceSnapshotRepo(sessions),
+            receipts=ReceiptRepo(sessions),
         ),
         notify=notify,
         llm=make_llm(settings.llm_agent, settings),

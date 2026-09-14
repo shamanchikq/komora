@@ -18,6 +18,10 @@ const EMITTED = [
   "degraded:coupons",
   "degraded:replacements",
   "degraded:verification",
+  // Plan 4: the two lists the deals screen can lose, and the meal plan's advisory.
+  "degraded:branch",
+  "degraded:promos",
+  "restrictions:advisory",
   "timeslot:expired",
   "over_budget:120.50",
   "not_found:Ікра (чорна)",
@@ -40,11 +44,33 @@ describe("warning codes", () => {
     expect(noticeText("degraded:verification")).toContain("перевірити");
   });
 
+  it("names the deals screen's degraded lists rather than printing their codes", () => {
+    // Each says which list is missing. An empty list under one of these is not «no
+    // deals», and the screen suppresses its empty sentence accordingly.
+    expect(noticeText("degraded:branch")).toContain("Акції магазину");
+    expect(noticeText("degraded:promos")).toContain("Персональні пропозиції");
+  });
+
+  it("says the meal plan's restrictions were not checked per product", () => {
+    // Plan 4 D6: Silpo reports restrictions as slugs Komora cannot filter a cart on,
+    // so the model is told and the cart is not checked. The sentence has to say both
+    // halves — «враховано» alone would claim a filter that does not exist.
+    const text = noticeText("restrictions:advisory");
+    expect(text).toContain("враховано при складанні меню");
+    expect(text).toContain("не перевірявся");
+    // One wording through either door, as with the timeslot.
+    expect(warningText("restrictions:advisory")).toBe(text);
+  });
+
   it("reads firm only where the user has something to do", () => {
     expect(noticeFirm("degraded:verification")).toBe(true);
     expect(noticeFirm("timeslot:expired")).toBe(true);
+    // The user is the only one who can check the cart against a restriction.
+    expect(noticeFirm("restrictions:advisory")).toBe(true);
     expect(noticeFirm("degraded:coupons")).toBe(false);
     expect(noticeFirm("degraded:replacements")).toBe(false);
+    expect(noticeFirm("degraded:branch")).toBe(false);
+    expect(noticeFirm("degraded:promos")).toBe(false);
   });
 
   it("says the timeslot the same way through either door", () => {
@@ -69,6 +95,8 @@ describe("warning codes", () => {
     expect(isNotice("degraded:coupons")).toBe(true);
     expect(isNotice("timeslot:expired")).toBe(true);
     expect(isNotice("over_budget:10")).toBe(true);
+    // A statement about the whole basket, not a line that could not be resolved.
+    expect(isNotice("restrictions:advisory")).toBe(true);
     expect(isNotice("not_found:хліб")).toBe(false);
   });
 });

@@ -56,6 +56,26 @@ const NOTICE: Record<string, { text: string; firm: boolean }> = {
       "Не вдалося перевірити, чи товари відповідають запиту — перегляньте позиції уважніше.",
     firm: true,
   },
+  // The two the deals screen can degrade on. Quiet: a list Silpo did not answer for is
+  // missing, not wrong, and there is nothing for the user to do about it.
+  "degraded:branch": {
+    text: "Акції магазину зараз недоступні — показано без них.",
+    firm: false,
+  },
+  "degraded:promos": {
+    text: "Персональні пропозиції зараз недоступні — показано без них.",
+    firm: false,
+  },
+  // Plan 4 D6. Firm because it is the one warning that asks the user to do the
+  // checking: Silpo reports restrictions as slugs Komora cannot filter on, so the
+  // model is told about them and the cart is not checked against them. Saying less
+  // than this would be claiming a filter that does not exist.
+  restrictions: {
+    text:
+      "Обмеження в харчуванні з вашого профілю Сільпо враховано при складанні меню, " +
+      "але кожен товар у кошику на них не перевірявся — перегляньте самі.",
+    firm: true,
+  },
   timeslot: {
     text:
       "Час доставки у вашому кошику Сільпо вже недоступний. Кошик зберемо, але " +
@@ -96,7 +116,14 @@ export function budgetShown(warnings: string[], budgetCap: number | null): strin
 /** Warnings that are notices rather than «не знайшлося» entries. */
 export function isNotice(code: string): boolean {
   const [kind] = split(code);
-  return kind === "degraded" || kind === "timeslot" || kind === "over_budget";
+  return (
+    kind === "degraded" ||
+    kind === "timeslot" ||
+    kind === "over_budget" ||
+    // `restrictions:advisory` is a statement about the whole basket, not a line that
+    // could not be resolved — it belongs with the notices, above the rows.
+    kind === "restrictions"
+  );
 }
 
 export function warningText(code: string): string {

@@ -20,14 +20,17 @@ from typing import Any
 
 from komora.core.mcp.protocol import SilpoClient
 from komora.core.models import (
+    Amount,
     DraftBasket,
     KnownLine,
     ReasonKind,
     ResolvedCart,
     ResolvedLine,
     SearchContext,
+    SpecialPrice,
 )
 from komora.core.passes.categories import CategoryIndex
+from komora.core.units import kilograms_for, packs_for, parse_display_ratio, parse_need
 
 MAX_QUERIES_PER_BATCH = 30
 """Silpo's documented ceiling for find_products_batch."""
@@ -206,6 +209,51 @@ def snap_quantity(
     return round(capped, 3)
 
 
+def special_prices_of(product: dict[str, Any]) -> list[SpecialPrice]:
+    """`specialPrices` as Silpo sends it — a list of `{price, count, type}` or null.
+    A malformed entry is skipped rather than failing the line: this is a note, not
+    money the user pays."""
+    out: list[SpecialPrice] = []
+    for entry in product.get("specialPrices") or []:
+        if not isinstance(entry, dict):
+            continue
+        try:
+            out.append(
+                SpecialPrice(
+                    price=Decimal(str(entry.get("price"))),
+                    count=float(entry.get("count") or 0),
+                    type=str(entry.get("type") or "from"),
+                )
+            )
+        except TypeError, ValueError, ArithmeticError:
+            continue
+    return out
+
+
+def quantity_for(wanted: float, amount: Amount | None, product: dict[str, Any]) -> float:
+    """Packs from a stated need, when the pack size is known — else the model's number.
+
+    «1,5 кг картоплі» against a 1 kg bag is two bags; against a weighted good it is
+    1,5 kg; against a product whose `displayRatio` Silpo did not send, or sent in a
+    form `parse_display_ratio` does not read, it is whatever `quantity` the model
+    chose — the pre-2026-09-14 behaviour, unchanged. Every path still goes through
+    `clamp_quantity` for the step and the stock.
+    """
+    if amount is not None:
+        need = parse_need(amount.value, amount.unit)
+        if need is not None:
+            if product.get("weighted"):
+                kilos = kilograms_for(need)
+                if kilos is not None:
+                    return clamp_quantity(kilos, product)
+            else:
+                pack = parse_display_ratio(product.get("displayRatio"))
+                packs = packs_for(need, pack) if pack is not None else None
+                if packs is not None:
+                    return clamp_quantity(packs, product)
+    return clamp_quantity(wanted, product)
+
+
 def _line_from(
     product: dict[str, Any],
     *,
@@ -219,6 +267,8 @@ def _line_from(
     unavailable: bool = False,
 ) -> ResolvedLine:
     old = product.get("oldPrice")
+    display_price = product.get("displayPrice")
+    display_ratio = product.get("displayRatio")
     return ResolvedLine(
         description=description,
         category=category,
@@ -238,6 +288,9 @@ def _line_from(
         weighted=bool(product.get("weighted")),
         step=_maybe_float(product.get("step")),
         stock=_maybe_float(product.get("stock")),
+        display_ratio=str(display_ratio) if isinstance(display_ratio, str) else None,
+        display_price=Decimal(str(display_price)) if display_price is not None else None,
+        special_prices=special_prices_of(product),
     )
 
 
@@ -401,7 +454,7 @@ async def resolve_basket(
                     available,
                     description=draft.description,
                     category=draft.category,
-                    qty=clamp_quantity(draft.quantity, available),
+                    qty=quantity_for(draft.quantity, draft.amount, available),
                     reason_kind=draft.reason_kind,
                     reason_text=draft.reason_text,
                     optional=draft.optional,
@@ -419,7 +472,7 @@ async def resolve_basket(
                     substitute,
                     description=draft.description,
                     category=draft.category,
-                    qty=clamp_quantity(draft.quantity, substitute),
+                    qty=quantity_for(draft.quantity, draft.amount, substitute),
                     reason_kind="sub",
                     reason_text="заміна — оригіналу немає в наявності",
                     optional=draft.optional,
@@ -442,7 +495,7 @@ async def resolve_basket(
             )
 
     total = sum((line.line_total for line in lines if not line.unavailable), Decimal("0"))
-    return ResolvedCart(lines=lines, total=total, warnings=warnings)
+    return ResolvedCart(lines=lines, menu=list(basket.menu), total=total, warnings=warnings)
 
 
 async def resolve_known(

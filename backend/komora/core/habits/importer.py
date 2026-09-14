@@ -25,9 +25,11 @@ from typing import Any, Protocol
 from komora.core.habits.purchases import (
     KYIV,
     PurchaseEvent,
+    ReceiptTotals,
     offline_purchases,
     online_purchases,
     parse_time,
+    receipt_totals,
 )
 from komora.core.models import SearchContext
 
@@ -115,11 +117,19 @@ async def read_online(mcp: HistoryReader, *, stop_before: datetime | None) -> li
     return events
 
 
+@dataclass(frozen=True)
+class OfflineRead:
+    events: list[PurchaseEvent]
+    totals: list[ReceiptTotals]
+    """The same receipts' own totals, for the digest (Plan 4 Task 4)."""
+
+
 async def read_offline(
     mcp: HistoryReader, context: SearchContext, *, since: datetime | None, now: datetime
-) -> list[PurchaseEvent]:
+) -> OfflineRead:
     """Receipts from `since` (or the backfill horizon) to now, ten a page."""
     events: list[PurchaseEvent] = []
+    totals: list[ReceiptTotals] = []
     offset = 0
     start = date_start_for(since, now)
     for _ in range(MAX_PAGES):
@@ -130,14 +140,19 @@ async def read_offline(
         if not orders:
             break
         events.extend(offline_purchases({"orders": orders}))
+        totals.extend(receipt_totals({"orders": orders}))
         offset += len(orders)
         if offset >= _total(payload, offset):
             break
-    return events
+    return OfflineRead(events=events, totals=totals)
 
 
 class PurchaseSink(Protocol):
     async def upsert(self, user_id: int, events: Sequence[PurchaseEvent]) -> int: ...
+
+
+class ReceiptSink(Protocol):
+    async def upsert(self, user_id: int, receipts: Sequence[ReceiptTotals]) -> int: ...
 
 
 async def import_history(
@@ -150,13 +165,15 @@ async def import_history(
     since_offline: datetime | None,
     now: datetime | None = None,
     include_online: bool = True,
+    receipts: ReceiptSink | None = None,
 ) -> ImportReport:
     """Read both sources into `sink`. A failed source is an error, a missing context
     is a skip, and neither stops the other source.
 
     `include_online=False` reads receipts alone — what a turn that already holds a
     fresh cart context does after its reply; online orders need no context and are
-    kept current by the job."""
+    kept current by the job. `receipts` stores each receipt's own totals beside its
+    lines, for the digest; `None` keeps the Plan 3 behaviour."""
     now = now or datetime.now(UTC)
     online: int | None = None
     offline: int | None = None
@@ -173,9 +190,10 @@ async def import_history(
         skipped = "receipts need a cart with a branch and a timeslot"
     else:
         try:
-            offline = await sink.upsert(
-                user_id, await read_offline(mcp, context, since=since_offline, now=now)
-            )
+            read = await read_offline(mcp, context, since=since_offline, now=now)
+            offline = await sink.upsert(user_id, read.events)
+            if receipts is not None:
+                await receipts.upsert(user_id, read.totals)
         except Exception as exc:
             errors.append(f"offline: {type(exc).__name__}: {exc}")
 

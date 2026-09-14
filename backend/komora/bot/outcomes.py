@@ -14,9 +14,11 @@ every sentence would buy nothing today. If the Mini App ever needs to style thes
 differently, that is the moment to give them kinds — not before.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 
+from komora.core.deals.models import Snapshot
+from komora.core.deals.scan import BranchDeal
 from komora.core.habits.engine import Habit
 from komora.core.models import ResolvedCart, ResolvedLine, SyncReport
 from komora.core.sync import SyncPreview
@@ -106,7 +108,58 @@ class Ask:
     no_label: str = "Скасувати"
 
 
-Outcome = DraftReady | PreviewReady | Synced | Spoke | HabitsReady | NudgeReady | Ask
+@dataclass(frozen=True)
+class TrackedDeal:
+    """One of the household's own products, on promotion right now (Plan 4 J6)."""
+
+    habit: Habit
+    snapshot: Snapshot
+    below_usual: int | None = None
+    """Whole percent under the «звичайна ціна» — only once enough shelf snapshots
+    exist (`deals.scan.USUAL_MIN_SNAPSHOTS`); `None` says nothing about it."""
+
+
+@dataclass(frozen=True)
+class DealReady:
+    """The one proactive deal message: a tracked product is cheaper than its own
+    old price. Exact, from `oldPrice − price`; never a coupon. Offers a draft."""
+
+    deals: list[TrackedDeal]
+    today: date
+
+
+@dataclass(frozen=True)
+class DealsReady:
+    """«/deals» and the «Акції» screen: your products, this branch, coupons and promos.
+
+    Every list is computed by Python from reads — no model request — and the branch
+    list is ranked by discount here, never by Silpo's list order. `coupons` and
+    `promos` are prose about the account, not about any product.
+    """
+
+    mine: list[TrackedDeal]
+    branch: list[BranchDeal]
+    coupons: list[str] = field(default_factory=list)
+    promos: list[str] = field(default_factory=list)
+    scanned_at: datetime | None = None
+    """When the tracked products were last re-priced; `None` when never."""
+    warnings: list[str] = field(default_factory=list)
+    """`degraded:branch`, `degraded:coupons`, `degraded:promos` — a part Silpo did not
+    answer, shown as such rather than as an empty list that looks like «no deals»."""
+    toast: str | None = None
+
+
+Outcome = (
+    DraftReady
+    | PreviewReady
+    | Synced
+    | Spoke
+    | HabitsReady
+    | NudgeReady
+    | Ask
+    | DealReady
+    | DealsReady
+)
 
 
 @dataclass(frozen=True)

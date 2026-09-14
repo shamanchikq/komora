@@ -19,9 +19,31 @@ import {
  * no size field), a step-based stepper for weighted goods with Silpo's stock as its
  * ceiling, and ⇄ on every row that can still be sent. */
 
+export const MENU_TITLE = "Меню";
+/** The same bound `render.render_menu` draws to. Nothing on the backend caps `menu`,
+ * so a model that answered with a year of dinners would otherwise push the basket off
+ * the screen on the one surface that cannot scroll back to it. */
+const MAX_MENU_SHOWN = 14;
+
 export function tileCode(name: string): string {
   const word = name.split(/\s+/)[0] ?? "";
   return word.slice(0, 3).toUpperCase();
+}
+
+/** What goes in the row's mono slot as the size of one unit.
+ *
+ * Mirrors `render.line_text`: since 2026-09-14 a search hit carries `displayRatio`
+ * («900г», «0,5л», «10 шт»), which is the pack — `unit` was whatever the old shape
+ * happened to hold and is usually empty. Not on a weighted good, whose «100г» is the
+ * price's denominator and not a pack size; there the row already writes «₴/кг».
+ * Empty means "say nothing", exactly as the bare `unit` was guarded before it. */
+export function packSize(item: {
+  display_ratio: string | null;
+  weighted: boolean;
+  unit?: string;
+}): string {
+  const size = !item.weighted && item.display_ratio ? item.display_ratio : (item.unit ?? "");
+  return size.trim();
 }
 
 export function qtyLabel(line: Line): string {
@@ -46,6 +68,7 @@ function LineRow({ line, busy, onSwap, onSetQty, onRemove }: RowProps) {
   const atCeiling = !excluded && line.stock !== null && line.qty >= line.stock - 1e-9;
   const atFloor = !excluded && (line.weighted ? line.qty <= (line.step ?? 0.1) + 1e-9 : line.qty <= 1);
   const substituted = line.substituted_from !== null;
+  const size = packSize(line);
 
   return (
     <li className={excluded ? "row row-off" : "row"}>
@@ -69,8 +92,8 @@ function LineRow({ line, busy, onSwap, onSetQty, onRemove }: RowProps) {
           <span>
             {line.weighted
               ? `${uah(line.unit_price)}/кг`
-              : line.unit !== ""
-                ? `${line.unit} · ${uah(line.unit_price)}`
+              : size !== ""
+                ? `${size} · ${uah(line.unit_price)}`
                 : uah(line.unit_price)}
             {line.old_price !== null && (
               <s style={{ marginLeft: 6 }}>було {uah(line.old_price)}</s>
@@ -212,6 +235,19 @@ export function DraftScreen({
           {warningText(code)}
         </div>
       ))}
+
+      {cart.menu.length > 0 && (
+        <div className="menu-card">
+          <b>{MENU_TITLE}</b>
+          <ul>
+            {cart.menu.slice(0, MAX_MENU_SHOWN).map((dish, i) => (
+              <li key={i}>
+                {dish.day} — {dish.dish}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {cart.lines.length === 0 && cart.removals.length === 0 && (
         <p className="empty">Нічого не вдалося підібрати.</p>

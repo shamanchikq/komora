@@ -36,7 +36,14 @@ def product(
     step: float = 1,
     old_price: float | None = None,
     ratio: str = "900г",
+    external_id: int | None = None,
+    weighted: bool = False,
+    display_ratio: str | None = None,
+    special_prices: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    """`display_ratio`/`display_price`/`specialPrices` are the 2026-09-14 shape
+    (reference §10.3); a product built without them is the August shape, which the
+    fixture still holds and every reader must keep tolerating."""
     return {
         "id": product_id or f"id-{name}",
         "name": name,
@@ -45,12 +52,18 @@ def product(
         "oldPrice": old_price,
         "stock": stock,
         "available": available,
-        "weighted": False,
+        "weighted": weighted,
         "step": step,
-        "specialPrices": None,
+        "specialPrices": special_prices,
         "companyId": COMPANY,
         "branchId": CONTEXT.branch_id,
         "ratio": ratio,
+        **({"externalProductId": external_id} if external_id is not None else {}),
+        **(
+            {"displayRatio": display_ratio, "displayPrice": price}
+            if display_ratio is not None
+            else {}
+        ),
     }
 
 
@@ -89,6 +102,10 @@ class FakeSilpo:
         fails: set[str] | None = None,
         online_orders: list[dict[str, Any]] | None = None,
         offline_orders: list[dict[str, Any]] | None = None,
+        promotion_products: list[dict[str, Any]] | None = None,
+        promos: list[dict[str, Any]] | None = None,
+        family: dict[str, Any] | None = None,
+        similar: dict[str, list[dict[str, Any]]] | None = None,
     ) -> None:
         self._results = results or {}
         self._replacements = replacements or {}
@@ -109,12 +126,20 @@ class FakeSilpo:
         self._category_products = category_products
         self._categories = categories or []
         self.category_calls: list[str] = []
+        self.coupon_detail_calls: list[int] = []
         self.category_limits: list[int] = []
         self.category_pages: list[tuple[int, int]] = []
         self._slots = slots
         self._fails = fails or set()
         self._online_orders = online_orders or []
         self._offline_orders = offline_orders or []
+        self._promotion_products = promotion_products or []
+        """What `get_products(mustHavePromotion=true)` answers — the branch's discounted
+        range (reference §10.4)."""
+        self._promos = promos or []
+        self._family = family
+        self._similar = similar or {}
+        self.promotion_calls: list[dict[str, Any]] = []
         self.history_calls: list[tuple[str, dict[str, Any]]] = []
         self.add_calls: list[list[dict[str, Any]]] = []
         self.remove_calls: list[list[dict[str, Any]]] = []
@@ -248,7 +273,13 @@ class FakeSilpo:
         if category is not None:
             self.category_calls.append(str(category))
             self.category_limits.append(int(filters.get("limit", 0)))
-        products = self._category_products if self._category_products is not None else []
+        if filters.get("mustHavePromotion") or filters.get("promotionCode"):
+            self.promotion_calls.append(dict(filters))
+            products = self._promotion_products
+            if filters.get("inStock"):
+                products = [p for p in products if p.get("available", True)]
+        else:
+            products = self._category_products if self._category_products is not None else []
         return {
             "success": True,
             "summary": f"Found {len(products)} products",
@@ -296,7 +327,31 @@ class FakeSilpo:
 
     async def get_coupon_details(self, business_coupon_id: int) -> dict[str, Any]:
         self._fail_if_scripted("get_coupon_details")
+        self.coupon_detail_calls.append(int(business_coupon_id))
         return {"success": True, "coupon": self._coupon_details.get(business_coupon_id)}
+
+    # --- Plan 4 reads (reference §10) ---
+    async def get_my_promos(self) -> dict[str, Any]:
+        self._fail_if_scripted("get_my_promos")
+        return {
+            "success": True,
+            "promos": self._promos,
+            "meta": {"minSelect": 1, "maxSelect": 5},
+        }
+
+    async def get_product_sets(self, context: SearchContext) -> dict[str, Any]:
+        return {"success": True, "sets": []}
+
+    async def get_similar_products(
+        self, slug: str, context: SearchContext, **filters: Any
+    ) -> dict[str, Any]:
+        return {"success": True, "products": self._similar.get(slug, [])}
+
+    async def get_my_family(self) -> dict[str, Any]:
+        self._fail_if_scripted("get_my_family")
+        if self._family is not None:
+            return {"success": True, **self._family}
+        return {"success": True, "name": None, "members": [], "children": [], "pets": []}
 
     async def get_time_slots(
         self,

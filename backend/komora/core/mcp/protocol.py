@@ -81,6 +81,29 @@ class SilpoClient(Protocol):
 
     async def get_my_food_restrictions(self) -> dict[str, Any]: ...
 
+    # --- Plan 4 reads (reference §10). ---
+    async def get_my_promos(self) -> dict[str, Any]:
+        """Personal offers «select 1–5 to activate»: `{"promos": [...], "meta"}`. No
+        write tool selects one, so Komora only ever shows them."""
+        ...
+
+    async def get_product_sets(self, context: SearchContext) -> dict[str, Any]:
+        """Curated sets at the branch: `{"sets": [{"slug", "title", "description"}]}`.
+        Needs branch and delivery type; `get_products(set=…)` lists one."""
+        ...
+
+    async def get_similar_products(
+        self, slug: str, context: SearchContext, **filters: Any
+    ) -> dict[str, Any]:
+        """Products like the one at `slug`, excluding it. Requires the full slot since
+        2026-09-14, like search."""
+        ...
+
+    async def get_my_family(self) -> dict[str, Any]:
+        """`{"name", "members", "children": [{"dateOfBirth", …}], "pets"}` — the most
+        personal payload after purchase history. Read at request time, never stored."""
+        ...
+
     async def get_time_slots(
         self,
         *,

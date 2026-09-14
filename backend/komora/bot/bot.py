@@ -27,12 +27,15 @@ from komora.bot.handlers import (
     Services,
     on_budget,
     on_callback,
+    on_deals,
     on_delete,
+    on_digest,
     on_mute_list,
     on_open_active,
     on_quiet,
     on_start,
     on_text,
+    on_unknown_command,
     on_usual,
 )
 from komora.bot.outcomes import Outcome, Spoke, Synced
@@ -209,6 +212,25 @@ def build_router(services: Services, mini_app_url: str | None = None) -> Router:
         """«/quiet 22 8» — when Komora sends nothing unasked."""
         outcome = await on_quiet(services, _sender(message), command.args or "")
         await send(message, outcome, mini_app_url)
+
+    @router.message(Command("deals"))
+    async def deals(message: Message) -> None:
+        """«/deals» — your products on promotion, the branch's deepest discounts,
+        coupons and promos as text. Computed, never proposed by the model."""
+        await send(message, await on_deals(services, _sender(message)), mini_app_url)
+
+    @router.message(Command("digest"))
+    async def digest(message: Message, command: CommandObject) -> None:
+        """«/digest on|off» — the Sunday summary, off by default."""
+        outcome = await on_digest(services, _sender(message), command.args or "")
+        await send(message, outcome, mini_app_url)
+
+    @router.message(F.text.startswith("/"))
+    async def unknown_command(message: Message) -> None:
+        """Anything slash-shaped that no command above claimed: the list, not the
+        model. Declared after every real command and before the free-text handler,
+        because aiogram tries handlers in order."""
+        await send(message, await on_unknown_command(services, _sender(message)), mini_app_url)
 
     @router.message(F.text)
     async def text(message: Message) -> None:

@@ -7,6 +7,7 @@ export function ComposeScreen({
   onText,
   onSubmit,
   onUsual,
+  onDeals,
 }: {
   busy: boolean;
   text: string;
@@ -15,6 +16,10 @@ export function ComposeScreen({
   /** The door to «Звичні покупки». The menu button carries no launch payload, so this
    * is the one way to reach that screen without a link from the chat. */
   onUsual: () => void;
+  /** The same door, one screen over, for «Акції». Both are always here, including for
+   * an account with nothing tracked and a branch with nothing discounted: those screens
+   * say so honestly, which beats a door that appears and disappears. */
+  onDeals: () => void;
 }) {
   const canSend = text.trim().length > 0 && !busy;
 
@@ -41,9 +46,17 @@ export function ComposeScreen({
       />
       <div className="hint">Наприклад: молоко, хліб і щось до чаю</div>
 
-      <button type="button" className="usual-link" disabled={busy} onClick={onUsual}>
-        Звичні покупки <span aria-hidden>→</span>
-      </button>
+      {/* Two quiet outlined buttons, wrapping rather than shrinking: at 375 px they
+          sit side by side, and a longer label drops to its own line instead of
+          squeezing the other one's text. */}
+      <div className="doors">
+        <button type="button" className="usual-link" disabled={busy} onClick={onUsual}>
+          Звичні покупки <span aria-hidden>→</span>
+        </button>
+        <button type="button" className="usual-link" disabled={busy} onClick={onDeals}>
+          Акції <span aria-hidden>→</span>
+        </button>
+      </div>
 
       <footer className="trust">
         Чернетка живе в Коморі, поки ви не підтвердите — у кошику Сільпо нічого не
