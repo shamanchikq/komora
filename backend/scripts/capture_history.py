@@ -32,16 +32,24 @@ it. That is not hypothetical; it is how 2026-09-13 began.
 USAGE
     uv run python scripts/capture_history.py
     uv run python scripts/capture_history.py --write-fixtures --keep-tokens
+    uv run python scripts/capture_history.py --user <id> --full --since 2024-01-01 --measure
+
+The last form is Task 0 re-run: it reads as an account already linked to the bot, pages
+through the whole history with `dateStart` pushed back, and prints the habits measure
+(`_habits_measure.py`) as counts — no product is named.
 """
 
 import argparse
 import asyncio
 import contextlib
+import json
 import os
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 import uvicorn
+from _habits_measure import summary
 from _report import INFO, check, dump, summarise
 from dotenv import load_dotenv
 
@@ -55,14 +63,17 @@ from komora.core.mcp.auth import (
 )
 from komora.core.mcp.client import open_session
 from komora.core.mcp.payload import error_of, unwrap
+from komora.core.mcp.sanitize import sanitize
 from komora.db.base import Base, make_engine, make_session_factory
 from komora.db.repo import OAuthClientRepo, UserRepo
 
 LOCAL_USER = 1  # this script serves a single operator, as verify_mcp.py does
 
 OFFLINE_MAX_LIMIT = 10
+ONLINE_MAX_LIMIT = 50
 """`silpo_get_my_offline_orders` declares `max: 10` and enforces it with -32602.
-The online tool takes 100. Reading the schema would have saved a round trip."""
+The online tool says 100 in the August fixture and enforces **50** live (reference §9).
+Reading the schema would have saved a round trip."""
 
 CATEGORY_HINTS = ("categor",)
 """Matched inside a key's last segment. `section` and `group` were here once, and `group`
@@ -194,7 +205,56 @@ def date_format(value: Any) -> str:
     return type(value).__name__
 
 
-async def main(write_fixtures: bool, keep_tokens: bool, port: int) -> int:
+async def fetch_all(call: Any, tool: str, args: dict[str, Any], *, page: int) -> dict[str, Any]:
+    """Page through a history tool until `meta.total` is reached.
+
+    Both tools page by `offset`; the online one caps a page at 50 live (100 in the
+    August fixture), the offline one at 10. The merged payload keeps the envelope of
+    the first page so the same code reads a full history and a single page alike.
+    """
+    first = await call(tool, {**args, "limit": page, "offset": 0})
+    if not isinstance(first, dict):
+        return {"orders": []}
+    items = list(first.get("orders") or [])
+    total = int((first.get("meta") or {}).get("total") or len(items))
+    offset = len(items)
+    while offset < total and items:
+        more = await call(tool, {**args, "limit": page, "offset": offset})
+        got = list((more or {}).get("orders") or []) if isinstance(more, dict) else []
+        if not got:
+            break
+        items.extend(got)
+        offset += len(got)
+    return {**first, "orders": items, "meta": {**(first.get("meta") or {}), "fetched": len(items)}}
+
+
+def pick_removed(online: dict[str, Any]) -> dict[str, Any] | None:
+    """The delivered order with the fewest lines that still has a `removed: true` one.
+
+    The committed online fixture has no removed line, so Task 1's rule for them would be
+    tested against an invented one. This finds a real one to trim into the fixture.
+    """
+    candidates = [
+        o
+        for o in online.get("orders") or []
+        if isinstance(o, dict)
+        and any(isinstance(p, dict) and p.get("removed") for p in o.get("products") or [])
+    ]
+    return min(candidates, key=lambda o: len(o.get("products") or []), default=None)
+
+
+async def main(
+    write_fixtures: bool,
+    keep_tokens: bool,
+    port: int,
+    user: int | None,
+    full: bool,
+    since: str | None,
+    measure: bool,
+    pick_removed_to: str | None,
+    dump_raw: str | None,
+    auth_timeout: float,
+) -> int:
     key = os.environ.get("KOMORA_TOKEN_ENCRYPTION_KEY")
     if not key:
         print("KOMORA_TOKEN_ENCRYPTION_KEY is not set — see backend/.env.example.")
@@ -208,7 +268,7 @@ async def main(write_fixtures: bool, keep_tokens: bool, port: int) -> int:
     sessions = make_session_factory(engine)
     users = UserRepo(sessions)
 
-    bridge = AuthorizationBridge()
+    bridge = AuthorizationBridge(timeout_seconds=auth_timeout)
     server = uvicorn.Server(
         uvicorn.Config(create_app(bridge), host="127.0.0.1", port=port, log_level="error")
     )
@@ -224,16 +284,27 @@ async def main(write_fixtures: bool, keep_tokens: bool, port: int) -> int:
         print(url)
         print("=" * 70 + "\n")
 
-    redirect_handler, callback_handler = bridge.handlers(LOCAL_USER, show_url)
+    async def refuse(_: int, __: str) -> None:
+        raise RuntimeError(f"user {user} holds no usable Silpo tokens; this mode never logs in")
+
+    # `--user` reads as an account already linked to the bot, the way `gateway.connect`
+    # does: no registration, no login, and the tokens are never forgotten because they
+    # are not this script's to forget.
+    operator = user if user is not None else LOCAL_USER
+    redirect_handler, callback_handler = bridge.handlers(
+        operator, refuse if user is not None else show_url
+    )
     provider = PersistentOAuthClientProvider(
         server_url=server_url,
         client_metadata=build_client_metadata(base_url),
         storage=DBTokenStorage(
-            telegram_id=LOCAL_USER,
+            telegram_id=operator,
             users=users,
             clients=OAuthClientRepo(sessions),
             cipher=TokenCipher(key),
-            redirect_uri=f"{base_url.rstrip('/')}/auth/silpo/callback",
+            redirect_uri=None
+            if user is not None
+            else f"{base_url.rstrip('/')}/auth/silpo/callback",
         ),
         redirect_handler=redirect_handler,
         callback_handler=callback_handler,
@@ -245,10 +316,14 @@ async def main(write_fixtures: bool, keep_tokens: bool, port: int) -> int:
             async def call(tool: str, args: dict[str, Any]) -> Any:
                 payload = unwrap(await session.call_tool(tool, args))
                 problem = error_of(payload)
-                check(f"{tool} answered", problem is None, problem or "")
+                check(f"{tool} answered ({args.get('offset', 0)})", problem is None, problem or "")
                 return payload
 
-            online = await call("silpo_get_my_online_orders", {"limit": 10})
+            online = (
+                await fetch_all(call, "silpo_get_my_online_orders", {}, page=ONLINE_MAX_LIMIT)
+                if full
+                else await call("silpo_get_my_online_orders", {"limit": 10})
+            )
             describe("online orders", online)
             if write_fixtures:
                 dump("my_online_orders", online)
@@ -268,8 +343,21 @@ async def main(write_fixtures: bool, keep_tokens: bool, port: int) -> int:
                 return summarise()
             assert context is not None
 
-            offline = await call(
-                "silpo_get_my_offline_orders", {**context, "limit": OFFLINE_MAX_LIMIT}
+            # `dateStart` defaults to six months ago on the server. Without it, "how far
+            # back do receipts go" measures the default window, not the history.
+            window = {"dateStart": f"{since}T00:00:00"} if since else {}
+            offline = (
+                await fetch_all(
+                    call,
+                    "silpo_get_my_offline_orders",
+                    {**context, **window},
+                    page=OFFLINE_MAX_LIMIT,
+                )
+                if full
+                else await call(
+                    "silpo_get_my_offline_orders",
+                    {**context, **window, "limit": OFFLINE_MAX_LIMIT},
+                )
             )
             describe("offline orders", offline)
             if write_fixtures:
@@ -282,9 +370,39 @@ async def main(write_fixtures: bool, keep_tokens: bool, port: int) -> int:
             if write_fixtures:
                 dump("my_favorites", favourites)
 
+            if measure:
+                print("\n" + "-" * 70 + "\nTask 0 measure (counts only):")
+                print(summary(online, offline))
+
+            if dump_raw:
+                # Sanitised, but still a person's whole shopping record: a scratch
+                # directory for one analysis session, deleted afterwards — never a
+                # fixture and never committed.
+                raw = Path(dump_raw)
+                await asyncio.to_thread(raw.mkdir, parents=True, exist_ok=True)
+                for name, payload in (
+                    ("online", online),
+                    ("offline", offline),
+                    ("favourites", favourites),
+                ):
+                    text = json.dumps(sanitize(payload), ensure_ascii=False, indent=1) + "\n"
+                    await asyncio.to_thread(
+                        (raw / f"{name}.json").write_text, text, encoding="utf-8"
+                    )
+                print(f"{INFO} raw (sanitised) payloads in {raw} — delete when done")
+
+            if pick_removed_to:
+                order = pick_removed(online)
+                if check("an order with a removed line exists", order is not None):
+                    text = json.dumps(sanitize(order), ensure_ascii=False, indent=2) + "\n"
+                    await asyncio.to_thread(
+                        Path(pick_removed_to).write_text, text, encoding="utf-8"
+                    )
+                    print(f"{INFO} wrote {pick_removed_to} — trim into my_online_orders.json")
+
         return summarise()
     finally:
-        if not keep_tokens:
+        if user is None and not keep_tokens:
             await users.clear_tokens(LOCAL_USER)
             print(f"{INFO} tokens forgotten — pass --keep-tokens to stay linked")
         server.should_exit = True
@@ -305,4 +423,32 @@ if __name__ == "__main__":
         "--keep-tokens", action="store_true", help="stay linked after the run (default: forget)"
     )
     parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument(
+        "--user",
+        type=int,
+        default=None,
+        help="read as this already-linked bot user (telegram id); no login, tokens kept",
+    )
+    parser.add_argument("--full", action="store_true", help="page through the whole history")
+    parser.add_argument(
+        "--since", default=None, help="offline dateStart, YYYY-MM-DD (server default: 6 months)"
+    )
+    parser.add_argument(
+        "--measure", action="store_true", help="print the Task 0 habits measure (counts only)"
+    )
+    parser.add_argument(
+        "--dump-raw", default=None, help="write sanitised full payloads to this scratch dir"
+    )
+    parser.add_argument(
+        "--auth-timeout",
+        type=float,
+        default=600.0,
+        help="seconds to wait for the account owner to sign in (default: 600)",
+    )
+    parser.add_argument(
+        "--pick-removed",
+        dest="pick_removed_to",
+        default=None,
+        help="write the smallest order carrying a removed line, sanitized, to this path",
+    )
     raise SystemExit(asyncio.run(main(**vars(parser.parse_args()))))

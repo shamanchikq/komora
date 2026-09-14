@@ -45,7 +45,7 @@ default menu button still is not set. The checklist is in
 All from `backend/`.
 
 ```bash
-uv run pytest              # 916 tests
+uv run pytest              # 996 tests
 uv run ruff check .        # lint
 uv run ruff format .       # format
 uv run mypy komora         # strict
@@ -91,7 +91,9 @@ komora/
 │   ├── llm/       LLMClient protocol; gemini/, openrouter/ and ollama/ clients
 │   ├── agent/     the loop: read tools only, propose_basket, guardrails
 │   │              + recap.py (what the model is told it did last turn)
-│   ├── passes/    resolve -> verify -> savings -> budget
+│   ├── habits/    purchases (history -> events) -> engine (events -> habits, or nothing)
+│   │              -> draft (due habits -> KnownLines); importer pages both history tools
+│   ├── passes/    resolve -> verify -> savings -> budget; resolve_known for known products
 │   │              + categories.py (Silpo's taxonomy, beats free-text search)
 │   │              + removals.py («прибери ковбаски» -> a product Komora synced)
 │   ├── alternatives.py  «інший варіант» — same rule as resolve (`narrow`)
@@ -101,6 +103,7 @@ komora/
 ├── api/           FastAPI — OAuth callback + the Mini App API (initData -> JSON outcomes)
 │                    + serves web/dist at / when built
 ├── bot/           handlers.py (Outcome objects) + render.py (to_reply)
+│                  + habits_job.py (refresh + nudge, one task beside the poller)
 │                  + bot.py (the only aiogram file)
 ├── web/           the Mini App frontend: Vite+React, talks to api/ with initData
 └── main.py        uvicorn + polling under one asyncio.gather
@@ -279,8 +282,20 @@ asked for it, so «Сільпо зараз не відповідає» threw awa
 took the retry with it. That last one is the 2026-08-26 ⇄ lesson for a third time: on a
 surface with no scrollback, an answer is not a destination.
 
-Only the "stated basket" intent exists — meal plan, budget-week, deals and event
-handlers are Plan 4; habits are Plan 3.
+**Plan 3 (habits) is code-complete for Tasks 1–5, 2026-09-14.** The engine and
+`resolve_known` ran over one real shopping history the same day (3 habits; both due
+ones resolved live to their exact products); the Telegram side is unwalked.
+`/start` backfills both history sources and names the rhythm once; a job in the same
+process refreshes twice a day and nudges when a habit is due; `/usual`, `/mute` and
+`/delete` exist; a habits draft is built with no model request through
+`resolve_known`, pinned to the stored product id and searched by article number. The
+key is the catalog product id — the spec's leaf category does not exist in the API.
+Thresholds (tracked CV ≤ 1.0, nudged ≤ 0.75) come from one household. The Mini App
+routes exist; the screen waits on a design pass. The checklist is in
+[backend/README.md](backend/README.md#manual-checklist--habits).
+
+Only the "stated basket" and "habits" intents exist — meal plan, budget-week, deals and
+event handlers are Plan 4.
 
 Known gaps, all deliberate — the current list lives in
 [backend/README.md](backend/README.md#known-issues).

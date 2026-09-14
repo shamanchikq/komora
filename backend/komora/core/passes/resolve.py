@@ -12,6 +12,7 @@ Three facts confirmed against the live server (spec 3.1) shape it:
 * Quantities must respect `stock` and the per-product `step`.
 """
 
+import contextlib
 import math
 import re
 from decimal import Decimal
@@ -20,6 +21,7 @@ from typing import Any
 from komora.core.mcp.protocol import SilpoClient
 from komora.core.models import (
     DraftBasket,
+    KnownLine,
     ReasonKind,
     ResolvedCart,
     ResolvedLine,
@@ -436,6 +438,94 @@ async def resolve_basket(
 
     total = sum((line.line_total for line in lines if not line.unavailable), Decimal("0"))
     return ResolvedCart(lines=lines, total=total, warnings=warnings)
+
+
+async def resolve_known(
+    lines: list[KnownLine],
+    mcp: SilpoClient,
+    context: SearchContext,
+) -> tuple[ResolvedCart, dict[str, int]]:
+    """Price and stock for products already decided — the habits draft's way in.
+
+    `resolve_basket` cannot do this: it searches by description and takes what
+    `narrow` picks, which for a known product means a different product or none (a
+    full-name search misses seven times in twelve, reference §9). Here the search
+    term is the numeric article when stored — exact, per the tool's own description —
+    and the name otherwise, and the hit is **pinned to the stored id**: whatever Silpo
+    ranks first is not the answer.
+
+    Returns the cart and what was learned: a name search that did find the stored id
+    yields its `externalProductId`, so the caller can store it and the next draft
+    searches exactly.
+    """
+    terms = {
+        line.product_id: (
+            str(line.external_product_id) if line.external_product_id is not None else line.name
+        )
+        for line in lines
+    }
+    grouped = await _search(mcp, list(dict.fromkeys(terms.values())), context)
+
+    resolved: list[ResolvedLine] = []
+    warnings: list[str] = []
+    learned: dict[str, int] = {}
+    for line in lines:
+        hits = grouped.get(terms[line.product_id], [])
+        pinned = next((p for p in hits if str(p.get("id")) == line.product_id), None)
+        if pinned is None:
+            warnings.append(f"{NOT_FOUND}:{line.name}")
+            continue
+        article = pinned.get("externalProductId")
+        if line.external_product_id is None and article is not None:
+            with contextlib.suppress(TypeError, ValueError):
+                learned[line.product_id] = int(article)
+
+        if in_stock(pinned):
+            resolved.append(
+                _line_from(
+                    pinned,
+                    description=line.name,
+                    category=None,
+                    qty=clamp_quantity(line.quantity, pinned),
+                    reason_kind=line.reason_kind,
+                    reason_text=line.reason_text,
+                    optional=line.optional,
+                )
+            )
+            continue
+
+        substitute, degraded = await _find_substitute(mcp, pinned, context)
+        if degraded:
+            warnings.append(DEGRADED_REPLACEMENTS)
+        if substitute is not None:
+            resolved.append(
+                _line_from(
+                    substitute,
+                    description=line.name,
+                    category=None,
+                    qty=clamp_quantity(line.quantity, substitute),
+                    reason_kind="sub",
+                    reason_text="заміна — оригіналу немає в наявності",
+                    optional=line.optional,
+                    substituted_from=str(pinned.get("name", "")),
+                )
+            )
+        else:
+            resolved.append(
+                _line_from(
+                    pinned,
+                    description=line.name,
+                    category=None,
+                    qty=line.quantity,
+                    reason_kind=line.reason_kind,
+                    reason_text="немає в наявності",
+                    optional=line.optional,
+                    unavailable=True,
+                )
+            )
+
+    total = sum((ln.line_total for ln in resolved if not ln.unavailable), Decimal("0"))
+    return ResolvedCart(lines=resolved, total=total, warnings=warnings), learned
 
 
 async def _find_substitute(

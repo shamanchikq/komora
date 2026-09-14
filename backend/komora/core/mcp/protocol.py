@@ -122,4 +122,21 @@ class SilpoClient(Protocol):
     ) -> dict[str, Any]: ...
 
     # --- Introspection, for building tool declarations. ---
+    async def get_my_online_orders(self, *, limit: int = 50, offset: int = 0) -> dict[str, Any]:
+        """Delivery orders, newest first, with product lines. No context needed."""
+        ...
+
+    async def get_my_offline_orders(
+        self,
+        context: SearchContext,
+        *,
+        limit: int = 10,
+        offset: int = 0,
+        date_start: str | None = None,
+        date_end: str | None = None,
+    ) -> dict[str, Any]:
+        """Loyalty-card receipts. Needs the cart's context (reference §9) and pages ten
+        at a time; `date_start` defaults to six months ago on the server."""
+        ...
+
     async def list_tools(self) -> list[dict[str, Any]]: ...

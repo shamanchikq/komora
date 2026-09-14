@@ -18,11 +18,23 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from html import escape
 
-from komora.bot.outcomes import DraftReady, Outcome, PreviewReady, Spoke, Synced
+from komora.bot.outcomes import (
+    Ask,
+    DraftReady,
+    HabitsReady,
+    NudgeReady,
+    Outcome,
+    PreviewReady,
+    Spoke,
+    Synced,
+)
+from komora.core.habits.engine import Habit
+from komora.core.habits.purchases import KYIV
 from komora.core.models import ResolvedCart, ResolvedLine, SyncReport
 from komora.core.money import CURRENCY, uah
 from komora.core.passes.budget import OVER_BUDGET, optional_lines_total
 from komora.core.sync import SyncPreview
+from komora.core.text import pl
 
 money = uah
 """Re-exported: the same rule the savings notes are written with."""
@@ -32,17 +44,9 @@ def esc(value: object) -> str:
     return escape(str(value), quote=False)
 
 
-def pl(n: float, one: str, few: str, many: str) -> str:
-    """Ukrainian plural: 1 позиція, 2 позиції, 5 позицій, 11 позицій, 21 позиція."""
-    count = abs(int(n))
-    if count % 100 in range(11, 15):
-        return many
-    last = count % 10
-    if last == 1:
-        return one
-    if last in (2, 3, 4):
-        return few
-    return many
+__all__ = ["pl"]
+"""`pl` moved to `core/text.py` so the engine can build a sentence without importing
+the bot; it is re-exported here because this is where every caller learned it."""
 
 
 def items(n: int) -> str:
@@ -382,6 +386,64 @@ def render_sync_report(report: SyncReport) -> str:
     return "\n".join(blocks)
 
 
+NO_HABITS = (
+    "Поки що нема чого відстежувати: серед ваших покупок ще не видно повторюваних. "
+    "Комора говорить про звички лише тоді, коли чеки це підтверджують."
+)
+"""Said whenever nothing passes the engine's threshold. Honest, not hedged — no
+«можливо, вам сподобається»."""
+
+HABITS_HEADING = "Звичні покупки"
+MUTED_MARK = "🔇"
+FRESH_NEVER = "Історію покупок ще не читали."
+
+
+def render_habits(outcome: HabitsReady) -> str:
+    if not outcome.habits:
+        return NO_HABITS
+    blocks = [f"<b>{HABITS_HEADING}</b>", ""]
+    for i, habit in enumerate(outcome.habits, start=1):
+        mark = f" {MUTED_MARK}" if habit.muted else ""
+        due = " · вже пора" if habit.is_due(outcome.today) and not habit.muted else ""
+        blocks.append(f"{i}. <b>{esc(habit.name)}</b>{mark}{due}")
+        blocks.append(f"   — {esc(habit.sentence(outcome.today))}")
+        if not habit.reorderable:
+            blocks.append("   (з прилавка — у кошик Сільпо не додається)")
+    if outcome.fresh_at is not None:
+        blocks += ["", f"Історія оновлена {outcome.fresh_at.astimezone(KYIV):%d.%m %H:%M}"]
+    else:
+        blocks += ["", FRESH_NEVER]
+    return "\n".join(blocks)
+
+
+def render_nudge(outcome: NudgeReady) -> str:
+    names = ", ".join(esc(h.name) for h in outcome.habits)
+    return f"Схоже, закінчуються: {names}.\nЗібрати кошик?"
+
+
+BUILD_HABITS_BUTTON = "Зібрати кошик"
+NOT_NOW_BUTTON = "Не зараз"
+MAX_HABIT_BUTTONS = 8
+
+
+def habit_buttons(habits: list[Habit], *, offer_draft: bool) -> tuple[Button, ...]:
+    """«🔇 N» / «🔊 N» per row matching the numbers in the text, then the draft action.
+
+    The product key rides in the callback data; the handler looks it up for the
+    *authenticated* sender only, so a guessed key can mute nothing of anyone else's.
+    """
+    toggles = tuple(
+        Button(
+            f"{'🔊' if habit.muted else MUTED_MARK} {i}",
+            data=f"{'unmute' if habit.muted else 'mute'}:{habit.product_key}",
+            same_row=i > 1,
+        )
+        for i, habit in enumerate(habits[:MAX_HABIT_BUTTONS], start=1)
+    )
+    build = (Button(BUILD_HABITS_BUTTON, data="habits:build"),) if offer_draft else ()
+    return (*toggles, *build)
+
+
 # --- Telegram shape -------------------------------------------------------------
 #
 # `Reply` and `Button` live here rather than with the handlers because they are
@@ -501,3 +563,34 @@ def to_reply(outcome: Outcome, mini_app_url: str | None = None) -> Reply:
         case Spoke():
             offer = (Button(LINK_BUTTON, data="link"),) if outcome.needs_link else ()
             return Reply(outcome.text, buttons=offer, toast=outcome.toast)
+
+        case HabitsReady():
+            usable = [h for h in outcome.habits if h.reorderable and not h.muted]
+            return Reply(
+                render_habits(outcome),
+                buttons=habit_buttons(outcome.habits, offer_draft=bool(usable)),
+                toast=outcome.toast,
+            )
+
+        case NudgeReady():
+            mutes = tuple(
+                Button(f"{MUTED_MARK} {i}", data=f"mute:{h.product_key}", same_row=i > 1)
+                for i, h in enumerate(outcome.habits[:MAX_HABIT_BUTTONS], start=1)
+            )
+            return Reply(
+                render_nudge(outcome),
+                buttons=(
+                    Button(BUILD_HABITS_BUTTON, data="habits:build"),
+                    Button(NOT_NOW_BUTTON, data="dismiss"),
+                    *mutes,
+                ),
+            )
+
+        case Ask():
+            return Reply(
+                outcome.text,
+                buttons=(
+                    Button(outcome.yes_label, data=outcome.yes),
+                    Button(outcome.no_label, data="dismiss"),
+                ),
+            )

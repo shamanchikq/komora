@@ -85,6 +85,28 @@ class DraftBasket(BaseModel):
         return [cleaned for cleaned in (clean_prose(item) for item in value) if cleaned]
 
 
+class KnownLine(BaseModel):
+    """A line whose product is already decided — a habit, not a description.
+
+    `resolve_basket` turns words into products; this is for the case where the product
+    is known and only its current price, stock and availability are in question. The
+    search is pinned to `product_id`: whatever Silpo ranks first for the name is not
+    the answer, the stored id is. `external_product_id` makes that search exact (the
+    tool's own description: prefer the numeric article over the name), and is absent
+    for a product only ever seen in an online order, which carries none.
+    """
+
+    product_id: str
+    name: Prose
+    quantity: float = 1
+    external_product_id: int | None = None
+    reason_kind: ReasonKind = "habit"
+    reason_text: Prose
+    optional: bool = False
+
+    _clean = field_validator("name", "reason_text")(clean_prose)
+
+
 class CartRemoval(BaseModel):
     """One product to take out of the user's real Silpo cart.
 

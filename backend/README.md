@@ -93,6 +93,42 @@ then plain text builds a basket — «купи молоко, хліб і щос�
 sets a weekly cap. Nothing reaches the Silpo cart until «Надіслати в Сільпо» and then
 «Додати в кошик» — two explicit taps, with a preview of the existing cart in between.
 
+`/usual` lists what Komora tracks from the receipts, `/mute` what it was told to stop
+tracking, `/delete` wipes everything Komora holds about you — see [Habits](#habits).
+
+## Habits
+
+Plan 3. After `/start` links an account, Komora reads its purchase history — online
+orders and loyalty-card receipts — and says, once, what it found: «Відстежую 3 позиції:
+Молоко Галичина — кожні ~7 днів …». With nothing above threshold it says nothing about
+habits at all. From then on:
+
+- **A job in the same process** (`bot/habits_job.py`) refreshes each linked user's
+  history twice a day and, when a tracked product is due, sends **one** message —
+  «Схоже, закінчуються: … Зібрати кошик?» — outside quiet hours (22–08 Kyiv by default)
+  and never twice about the same product inside three days. A tap builds a draft from
+  those products **without a model request** (`core/habits/draft.py` →
+  `passes/resolve.resolve_known`), which is then previewed and confirmed exactly like a
+  typed one. The job never touches the Silpo cart.
+- **Receipts need the cart's context** — a branch and an unexpired timeslot — so with
+  none they are skipped and the skip is recorded (`history_imports`); online orders
+  are read regardless. `/usual` shows when history was last read.
+- **The rules** are `core/habits/purchases.py` (what counts as a purchase, from the
+  2026-09-13 capture) and `core/habits/engine.py` (≥ 4 events, median gap, tracked at
+  CV ≤ 1.0, nudged at CV ≤ 0.75 — thresholds set on one household and expected to move).
+  The sentence «Ви купуєте X кожні ~N днів, минуло M» is built there and is always about
+  receipts, never the fridge.
+- **`/mute`** stops one product for good (until unmuted); a muted product never appears
+  in a nudge or a habits draft. **`/delete`** asks once, then removes the user row and
+  everything under it — tokens, purchases, habits, drafts. The Silpo cart is untouched.
+- **Mini App:** `GET /api/habits`, `POST /api/habits/{key}/mute` and `/unmute`,
+  `POST /api/habits/draft` serve the same outcomes. The screen itself waits on a design
+  pass (there is no way to reach it from the approved design yet).
+
+`uv run alembic upgrade head` first: five tables and two columns arrived with this
+(`e3460e4eec92`). The engine and the resolve path have run over one real history; the
+Telegram side has not — the checklist is below.
+
 ## Mini App API
 
 Same process, same handlers, second face. Every route requires
@@ -353,9 +389,48 @@ The login link opens on **the machine running the bot**. `KOMORA_PUBLIC_BASE_URL
 as a `native` client per RFC 8252), so no tunnel is needed — but `localhost` on a phone
 is the phone. Testing from another device is the one case that needs `cloudflared`.
 
+### Manual checklist — habits
+
+Needs a Silpo account that actually shops; the development accounts have no history.
+Unwalked as of 2026-09-14.
+
+- [ ] `/start` on a shopping account → «Готово — акаунт підключено», then, a moment
+      later, the payoff naming the rhythm. On an account with no history: no second
+      message at all.
+- [ ] `/usual` → the list, each row with its sentence, «🔇 N» per row, «Зібрати кошик».
+- [ ] «🔇 2» → the list stays, the row is marked, the toast says «Більше не відстежую».
+      `/mute` → that row with «🔊 1»; tapping it brings it back.
+- [ ] «Зібрати кошик» → an ordinary draft: every line `reason_kind = habit` with the
+      sentence under it, searched by article number (check the log), previewed and
+      pushed like any other. **The items appear in the real Silpo cart.**
+- [ ] With the Silpo cart's timeslot removed, `/usual` still answers and the next
+      refresh records `skipped` for receipts, `ok` for online.
+- [ ] A nudge arrives when a habit is due, in the daytime, and not again within three
+      days. «Не зараз» clears its keyboard.
+- [ ] `/delete` → the question → «Так, видалити все» → «Готово …»; `/start` afterwards
+      is the welcome for a stranger.
+
 ### Known issues
 
 Found by the live runs on 2026-08-11/12, and left open deliberately.
+
+- **Habits are unwalked in Telegram.** The normaliser, the engine and `resolve_known`
+  ran over one real shopping history on 2026-09-14 (reference §9): 3 habits tracked,
+  both due ones resolved live to their exact products by article number, and the
+  «every ~146 days» artefact the plan predicted appeared and was removed by making
+  observed coverage the engine's default. The bot side — payoff, `/usual`, mute, nudge,
+  draft, `/delete` — has run only against the fake; the checklist above is unchecked.
+  Still open: whether an online delivery also appears as a receipt (the two sources on
+  the one account seen never overlap), and no order in that history carries
+  `removed: true`, so that rule is tested on a doctored real line.
+- **An online line's weight is a guess.** Online orders carry no `weighted` and no unit;
+  a fractional quantity is read as kilograms and a whole one as pieces. A whole number
+  of kilograms therefore counts as pieces — never scaled by a pack size it does not
+  have, which is the safe direction, but a habit built from online orders alone can
+  suggest «2» of something sold by weight.
+- **The thresholds are one household's.** Tracked at CV ≤ 1.0, nudged at CV ≤ 0.75,
+  chosen so that the only history measured yields a few habits rather than none. A
+  second household may move them; `engine.py` says so beside the constants.
 
 - **There is no dietary-restriction filtering.** The pass was removed rather than
   shipped wrong. It matched restriction terms as substrings, which fails in the

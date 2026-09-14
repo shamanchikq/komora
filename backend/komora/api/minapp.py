@@ -21,25 +21,32 @@ from komora.bot.handlers import (
     Services,
     on_cancel,
     on_choose_alternative,
+    on_habits_draft,
     on_list_alternatives,
     on_open_active,
     on_open_basket,
     on_preview,
     on_push,
     on_remove_line,
+    on_set_mute,
     on_set_qty,
     on_swap,
     on_text,
     on_trim_optional,
+    on_usual,
 )
 from komora.bot.outcomes import (
     AlternativesReady,
+    Ask,
     DraftReady,
+    HabitsReady,
+    NudgeReady,
     Outcome,
     PreviewReady,
     Spoke,
     Synced,
 )
+from komora.core.habits.engine import Habit
 from komora.core.initdata import InitDataRejected, verify_init_data
 
 
@@ -87,7 +94,45 @@ def serialise(outcome: Outcome | AlternativesReady) -> dict[str, Any]:
                 "needs_link": outcome.needs_link,
                 "toast": outcome.toast,
             }
+        case HabitsReady():
+            return {
+                "kind": "habits",
+                "habits": [_habit_json(h, outcome.today) for h in outcome.habits],
+                "fresh_at": outcome.fresh_at.isoformat() if outcome.fresh_at else None,
+                "toast": outcome.toast,
+            }
+        case NudgeReady():
+            return {
+                "kind": "nudge",
+                "habits": [_habit_json(h, outcome.today) for h in outcome.habits],
+            }
+        case Ask():
+            return {
+                "kind": "ask",
+                "text": outcome.text,
+                "yes": outcome.yes,
+                "yes_label": outcome.yes_label,
+                "no_label": outcome.no_label,
+            }
     raise TypeError(f"unhandled outcome {type(outcome).__name__}")
+
+
+def _habit_json(habit: Habit, today: Any) -> dict[str, Any]:
+    """The sentence arrives as text — the frontend restates no rule."""
+    return {
+        "product_key": habit.product_key,
+        "name": habit.name,
+        "sentence": habit.sentence(today),
+        "due": habit.is_due(today),
+        "due_on": habit.due_on.isoformat(),
+        "last_bought": habit.last_bought.isoformat(),
+        "median_gap_days": habit.median_gap_days,
+        "events": habit.events,
+        "muted": habit.muted,
+        "reorderable": habit.reorderable,
+        "weighted": habit.weighted,
+        "unit": habit.unit,
+    }
 
 
 def _authenticator(bot_token: str) -> Callable[[str | None], int]:
@@ -208,5 +253,25 @@ def minapp_router(services: Services, bot_token: str) -> APIRouter:
     @router.post("/baskets/{basket_id}/cancel")
     async def cancel(basket_id: int, user_id: User) -> dict[str, Any]:
         return serialise(await on_cancel(services, user_id, basket_id))
+
+    # --- habits (Plan 3) ---
+    # The product key arrives from the client; the handler looks it up for the
+    # authenticated user only, never for a user id the client sends.
+
+    @router.get("/habits")
+    async def habits(user_id: User) -> dict[str, Any]:
+        return serialise(await on_usual(services, user_id))
+
+    @router.post("/habits/draft")
+    async def habits_draft(user_id: User) -> dict[str, Any]:
+        return serialise(await on_habits_draft(services, user_id))
+
+    @router.post("/habits/{product_key}/mute")
+    async def mute(product_key: str, user_id: User) -> dict[str, Any]:
+        return serialise(await on_set_mute(services, user_id, product_key, muted=True))
+
+    @router.post("/habits/{product_key}/unmute")
+    async def unmute(product_key: str, user_id: User) -> dict[str, Any]:
+        return serialise(await on_set_mute(services, user_id, product_key, muted=False))
 
     return router

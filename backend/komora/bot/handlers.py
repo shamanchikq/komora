@@ -17,16 +17,21 @@ Two rules are enforced here rather than trusted:
   client, so a user could otherwise sync somebody else's cart by guessing a number.
 """
 
+import logging
 import math
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Protocol
 
 from komora.bot.outcomes import (
     AlternativesReady,
+    Ask,
     DraftReady,
+    HabitsReady,
+    NudgeReady,
     Outcome,
     PreviewReady,
     Spoke,
@@ -36,6 +41,10 @@ from komora.core.agent.loop import ForbiddenToolCall, run_agent
 from komora.core.agent.recap import draft_recap, sync_recap
 from komora.core.agent.tools import ToolSource
 from komora.core.alternatives import list_alternatives, next_alternative
+from komora.core.habits.draft import HABITS_INTENT, HABITS_TITLE, habit_lines
+from komora.core.habits.engine import Habit, compute_habits, due
+from komora.core.habits.importer import ImportReport, import_history
+from komora.core.habits.purchases import KYIV
 from komora.core.llm.protocol import LLMClient, LLMUnavailable, Message
 from komora.core.mcp.errors import McpError, NotAuthenticated
 from komora.core.mcp.protocol import SilpoClient
@@ -48,12 +57,24 @@ from komora.core.pipeline import (
     CartContextMissing,
     SilpoCache,
     build_cart,
+    build_known_cart,
     categories_for,
     load_context,
 )
 from komora.core.sync import cart_product_ids, execute_sync, preview_sync
-from komora.db.repo import BasketRepo, ConversationRepo, UserRepo
-from komora.db.tables import DraftBasketRow
+from komora.core.text import days, pl
+from komora.db.repo import (
+    BasketRepo,
+    ConversationRepo,
+    HabitRepo,
+    HistoryImportRepo,
+    NotificationRepo,
+    PurchaseRepo,
+    UserRepo,
+)
+from komora.db.tables import DraftBasketRow, User
+
+log = logging.getLogger(__name__)
 
 HISTORY_TURNS = 20
 
@@ -123,10 +144,60 @@ NOTHING_LEFT = (
     "У кошику Сільпо вже нема чого міняти — те, що ця чернетка мала прибрати, "
     "звідти вже зникло. Нічого надсилати не будемо."
 )
+HABITS_OFF = "Звички ще не увімкнено на цьому сервері."
+NO_HABITS_TO_BUILD = (
+    "Нема з чого зібрати: серед ваших покупок ще не видно повторюваних, або все, що "
+    "видно, ви попросили не відстежувати."
+)
+NOTHING_MUTED = "Ви нічого не вимикали — Комора відстежує все, що бачить у чеках."
+UNKNOWN_HABIT = "Такої позиції серед ваших звичок нема."
+MUTED_TOAST = "Більше не відстежую"
+UNMUTED_TOAST = "Знову відстежую"
+DISMISSED = "Добре. Нагадаю, коли знову буде пора."
+DELETE_ASK = (
+    "Видалити все, що Комора знає про вас: доступ до Сільпо, історію покупок, звички "
+    "та чернетки? Кошик у Сільпо це не зачепить. Скасувати це буде неможливо."
+)
+DELETE_YES = "Так, видалити все"
+DELETED = "Готово. Комора більше нічого про вас не зберігає. /start — якщо захочете повернутись."
+NOTHING_TO_DELETE = "Комора й так нічого про вас не зберігає."
+PAYOFF_INTRO = "Ваші покупки за останні {months} вже в Коморі. Відстежую {items}:"
+PAYOFF_INTRO_SHORT = "Ваші покупки вже в Коморі. Відстежую {items}:"
+PAYOFF_OUTRO = "«/usual» — подивитися, «/mute» — вимкнути щось; коли буде пора, нагадаю."
+
+NUDGE_KIND = "habit_due"
+NUDGE_COOLDOWN = timedelta(days=3)
+"""No second nudge about the same product inside this window — a nudge ignored is an
+answer, and asking again sooner would be nagging."""
+MAX_NUDGE_ITEMS = 5
+MAX_PRODUCT_KEY = 64
+"""`purchases.product_key` is a `String(64)`; a longer key from a client cannot match
+anything and is refused before the query, like an oversized basket id."""
 
 
 async def _unlinked(telegram_id: int) -> None:
     raise NotImplementedError("Services.start_linking was not provided")
+
+
+async def _no_notify(telegram_id: int, outcome: Outcome) -> None:
+    raise NotImplementedError("Services.notify was not provided")
+
+
+class Notify(Protocol):
+    def __call__(self, telegram_id: int, outcome: Outcome) -> Awaitable[None]: ...
+
+
+@dataclass(frozen=True)
+class HabitServices:
+    """The Plan 3 stores, bundled so `Services` grows one optional field, not four."""
+
+    purchases: PurchaseRepo
+    habits: HabitRepo
+    imports: HistoryImportRepo
+    notifications: NotificationRepo
+    connect_background: SilpoConnect | None = None
+    """A session that yields to a user's turn instead of queueing behind it —
+    `SilpoGateway.connect_background`. Falls back to `Services.connect` when unset."""
 
 
 class SilpoConnect(Protocol):
@@ -164,6 +235,12 @@ class Services:
     start_linking: Callable[[int], Awaitable[None]] = _unlinked
     """Kicks off account linking. Returns immediately — the authorization URL arrives
     as its own message, because the OAuth round-trip can take minutes."""
+    habits: HabitServices | None = None
+    """Plan 3. `None` keeps every habits route answering `HABITS_OFF` rather than
+    crashing — the callback-only tests build a `Services` without it."""
+    notify: Notify = _no_notify
+    """Say an outcome to a user nobody is replying to — the learning payoff after a
+    link, a nudge. Built in `main.py` over the same `render.to_reply` a reply uses."""
 
 
 def _needs_link(text: str) -> Spoke:
@@ -286,6 +363,14 @@ async def on_callback(services: Services, telegram_id: int, data: str) -> Outcom
     if action == "link":
         await services.start_linking(telegram_id)
         return Spoke(LINK_SENT)
+    if action == "dismiss":
+        return Spoke(DISMISSED, toast="Добре")
+    if action in ("mute", "unmute"):
+        return await on_set_mute(services, telegram_id, raw_id, muted=action == "mute")
+    if action == "habits" and raw_id == "build":
+        return await on_habits_draft(services, telegram_id)
+    if action == "delete" and raw_id == "confirm":
+        return await on_delete_confirm(services, telegram_id)
 
     basket_id, _, raw_position = raw_id.partition(":")
     try:
@@ -722,3 +807,272 @@ async def _push(services: Services, telegram_id: int, basket_id: int) -> Outcome
     await services.conversations.append(telegram_id, "assistant", sync_recap(report))
 
     return Synced(basket_id=basket_id, report=report)
+
+
+# --- Habits (Plan 3) ------------------------------------------------------------
+
+
+def today_in_kyiv(now: datetime | None = None) -> date:
+    return (now or datetime.now(UTC)).astimezone(KYIV).date()
+
+
+def _habits_or_off(services: Services) -> HabitServices | Spoke:
+    return services.habits if services.habits is not None else Spoke(HABITS_OFF)
+
+
+async def _fresh_at(stores: HabitServices, telegram_id: int) -> datetime | None:
+    stamps = [
+        await stores.imports.last_ok(telegram_id, "online"),
+        await stores.imports.last_ok(telegram_id, "offline"),
+    ]
+    known = [t for t in stamps if t is not None]
+    return max(known) if known else None
+
+
+async def refresh_history(
+    services: Services, telegram_id: int, mcp: SilpoClient, *, now: datetime | None = None
+) -> ImportReport:
+    """Read what is new from both sources, record each outcome, recompute habits.
+
+    Receipts need the cart's context; with none they are *skipped* and the skip is a
+    row in `history_imports`, not a log line. A failed source is recorded the same
+    way. Habits are recomputed from every stored purchase — never edited in place.
+    """
+    stores = services.habits
+    if stores is None:
+        raise RuntimeError("habits are not configured")
+    now = now or datetime.now(UTC)
+
+    context = None
+    try:
+        _, context = await load_context(mcp)
+    except Exception as exc:
+        # A cart that cannot be read is a cart with no context: receipts are skipped
+        # and the online source is still read. The reason is recorded with the skip.
+        log.info("no cart context for %s: %s", telegram_id, exc)
+
+    report = await import_history(
+        mcp,
+        stores.purchases,
+        telegram_id,
+        context=context,
+        since_online=await stores.imports.last_ok(telegram_id, "online"),
+        since_offline=await stores.imports.last_ok(telegram_id, "offline"),
+        now=now,
+    )
+    failed = {e.partition(":")[0] for e in report.errors}
+    await stores.imports.record(
+        telegram_id,
+        "online",
+        "failed" if "online" in failed else "ok",
+        next((e for e in report.errors if e.startswith("online")), ""),
+        at=now,
+    )
+    if report.skipped is not None:
+        await stores.imports.record(telegram_id, "offline", "skipped", report.skipped, at=now)
+    else:
+        await stores.imports.record(
+            telegram_id,
+            "offline",
+            "failed" if "offline" in failed else "ok",
+            next((e for e in report.errors if e.startswith("offline")), ""),
+            at=now,
+        )
+
+    habits = compute_habits(await stores.purchases.events(telegram_id))
+    await stores.habits.replace(telegram_id, habits)
+    return report
+
+
+async def on_linked(services: Services, telegram_id: int) -> Outcome | None:
+    """J2's learning payoff, after the account is linked: a backfill, then one message
+    naming the shopping rhythm — or **nothing**, when nothing passes the threshold.
+
+    `None` means say nothing. Not «поки що нема звичок»: a person who just linked has
+    been promised a grocery agent, not an analysis of their loyalty card.
+    """
+    stores = _habits_or_off(services)
+    if isinstance(stores, Spoke):
+        return None
+    try:
+        async with services.connect(telegram_id) as mcp:
+            await refresh_history(services, telegram_id, mcp)
+    except NotAuthenticated, CartContextMissing, McpError:
+        log.info("backfill after link failed for %s", telegram_id, exc_info=True)
+        return None
+    habits = [h for h in await stores.habits.list(telegram_id) if h.reorderable]
+    if not habits:
+        return None
+    return Spoke(payoff_text(habits, today_in_kyiv(), await _history_span(stores, telegram_id)))
+
+
+async def _history_span(stores: HabitServices, telegram_id: int) -> int | None:
+    events = await stores.purchases.events(telegram_id)
+    if not events:
+        return None
+    first = min(e.bought_at for e in events)
+    return max(1, round((datetime.now(UTC) - first).days / 30))
+
+
+def payoff_text(habits: list[Habit], today: date, months: int | None) -> str:
+    """«Відстежую 3 позиції» reads well at three and is never sent at zero."""
+    count = f"{len(habits)} {pl(len(habits), 'позицію', 'позиції', 'позицій')}"
+    intro = (
+        PAYOFF_INTRO.format(
+            months=f"{months} {pl(months, 'місяць', 'місяці', 'місяців')}", items=count
+        )
+        if months
+        else PAYOFF_INTRO_SHORT.format(items=count)
+    )
+    named = [
+        f"• {h.name} — кожні ~{days(round(h.median_gap_days))}" for h in habits[:MAX_NUDGE_ITEMS]
+    ]
+    return "\n".join([intro, *named, "", PAYOFF_OUTRO])
+
+
+async def on_usual(services: Services, telegram_id: int) -> Outcome:
+    """«/usual» — what Komora tracks, sentences from the engine, mute toggles."""
+    stores = _habits_or_off(services)
+    if isinstance(stores, Spoke):
+        return stores
+    await services.users.ensure(telegram_id)
+    blob, _ = await services.users.get_token_blob(telegram_id)
+    if not blob:
+        return _needs_link(WELCOME)
+    habits = await stores.habits.list(telegram_id)
+    return HabitsReady(
+        habits=habits, today=today_in_kyiv(), fresh_at=await _fresh_at(stores, telegram_id)
+    )
+
+
+async def on_mute_list(services: Services, telegram_id: int) -> Outcome:
+    """«/mute» — what is muted, with the way back on."""
+    stores = _habits_or_off(services)
+    if isinstance(stores, Spoke):
+        return stores
+    muted = [h for h in await stores.habits.list(telegram_id) if h.muted]
+    if not muted:
+        return Spoke(NOTHING_MUTED)
+    return HabitsReady(
+        habits=muted, today=today_in_kyiv(), fresh_at=await _fresh_at(stores, telegram_id)
+    )
+
+
+async def on_set_mute(
+    services: Services, telegram_id: int, product_key: str, *, muted: bool
+) -> Outcome:
+    """Mute or unmute one habit. The key comes from the client; it is looked up for the
+    authenticated sender only, so a guessed key mutes nothing of anyone else's."""
+    stores = _habits_or_off(services)
+    if isinstance(stores, Spoke):
+        return stores
+    key = product_key.strip()
+    if not key or len(key) > MAX_PRODUCT_KEY:
+        return Spoke(UNKNOWN_HABIT, toast=UNKNOWN_HABIT)
+    if not await stores.habits.set_muted(telegram_id, key, muted):
+        return Spoke(UNKNOWN_HABIT, toast=UNKNOWN_HABIT)
+    return HabitsReady(
+        habits=await stores.habits.list(telegram_id),
+        today=today_in_kyiv(),
+        fresh_at=await _fresh_at(stores, telegram_id),
+        toast=MUTED_TOAST if muted else UNMUTED_TOAST,
+    )
+
+
+async def on_habits_draft(services: Services, telegram_id: int) -> Outcome:
+    """A basket from due habits — no model request — through the known-product resolve
+    path and the ordinary pipeline, then confirmed like any other draft.
+
+    Due habits first; with none due, everything tracked: the user asked for it, and
+    «нема з чого» is the only honest refusal.
+    """
+    stores = _habits_or_off(services)
+    if isinstance(stores, Spoke):
+        return stores
+    await services.users.ensure(telegram_id)
+    today = today_in_kyiv()
+    tracked = await stores.habits.list(telegram_id)
+    chosen = due(tracked, today) or [h for h in tracked if h.reorderable and not h.muted]
+    lines = habit_lines(chosen, today)
+    if not lines:
+        return Spoke(NO_HABITS_TO_BUILD)
+
+    user = await services.users.get(telegram_id)
+    budget_cap = user.budget_weekly if user else None
+    try:
+        async with services.connect(telegram_id) as mcp:
+            _, context = await load_context(mcp)
+            cart, learned = await build_known_cart(lines, mcp, context, budget_cap=budget_cap)
+    except NotAuthenticated:
+        return _needs_link(NEED_AUTH)
+    except CartContextMissing:
+        return Spoke(NO_CONTEXT)
+    except McpError:
+        return Spoke(SILPO_DOWN)
+
+    for product_key, article in learned.items():
+        await stores.purchases.learn_external_id(telegram_id, product_key, article)
+
+    await services.conversations.append(telegram_id, "assistant", draft_recap(HABITS_TITLE, cart))
+    if not cart.lines:
+        return DraftReady(title=HABITS_TITLE, cart=cart, budget_cap=budget_cap)
+    basket_id = await services.baskets.create_from_cart(
+        telegram_id, HABITS_TITLE, HABITS_INTENT, cart
+    )
+    return await _draft_ready(services, telegram_id, basket_id, HABITS_TITLE, cart)
+
+
+async def on_delete(services: Services, telegram_id: int) -> Outcome:
+    """«/delete» asks first. The wipe is one tap away and cannot be undone."""
+    if await services.users.get(telegram_id) is None:
+        return Spoke(NOTHING_TO_DELETE)
+    return Ask(DELETE_ASK, yes="delete:confirm", yes_label=DELETE_YES)
+
+
+async def on_delete_confirm(services: Services, telegram_id: int) -> Outcome:
+    if not await services.users.delete(telegram_id):
+        return Spoke(NOTHING_TO_DELETE, toast="Нічого видаляти")
+    return Spoke(DELETED, toast="Видалено")
+
+
+DEFAULT_QUIET_HOURS = (22, 8)
+"""Kyiv hours between which nothing is sent unasked, unless the user set their own."""
+
+
+def in_quiet_hours(user: User | None, now: datetime) -> bool:
+    start, end = DEFAULT_QUIET_HOURS
+    if user is not None and user.quiet_from is not None and user.quiet_to is not None:
+        start, end = user.quiet_from, user.quiet_to
+    hour = now.astimezone(KYIV).hour
+    if start == end:
+        return False
+    if start < end:
+        return start <= hour < end
+    return hour >= start or hour < end
+
+
+async def nudge_for(
+    services: Services, telegram_id: int, *, now: datetime | None = None
+) -> NudgeReady | None:
+    """The proactive message, or nothing: due, nudgeable, not muted, not nudged about
+    inside the cooldown, and not during quiet hours. Records what it is about to say."""
+    stores = services.habits
+    if stores is None:
+        return None
+    now = now or datetime.now(UTC)
+    if in_quiet_hours(await services.users.get(telegram_id), now):
+        return None
+    today = now.astimezone(KYIV).date()
+    candidates = due(await stores.habits.list(telegram_id), today)
+    fresh: list[Habit] = []
+    for habit in candidates:
+        last = await stores.notifications.last_sent(telegram_id, NUDGE_KIND, habit.product_key)
+        if last is None or now - last >= NUDGE_COOLDOWN:
+            fresh.append(habit)
+    if not fresh:
+        return None
+    chosen = fresh[:MAX_NUDGE_ITEMS]
+    await stores.notifications.record(
+        telegram_id, NUDGE_KIND, [h.product_key for h in chosen], at=now
+    )
+    return NudgeReady(habits=chosen, today=today)
