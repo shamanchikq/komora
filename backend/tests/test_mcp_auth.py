@@ -64,10 +64,16 @@ class TestDBTokenStorage:
         assert loaded.refresh_token == "rt"
 
     async def test_tokens_are_encrypted_at_rest(self, sessions: async_sessionmaker) -> None:
-        await storage_for(sessions).set_tokens(a_token())
+        # Long tokens: a short one like "at" turns up in random ciphertext by chance.
+        access, refresh = "Kq7vXz2pLm9TwR4sHn8YbC3jFd6GeA5u", "Pw3nVt8rQz6LkX2mHs9YcJ4bFg7DeT5a"
+        await storage_for(sessions).set_tokens(a_token(access_token=access, refresh_token=refresh))
         blob, _ = await UserRepo(sessions).get_token_blob(USER)
         assert blob is not None
-        assert b"at" not in blob and b"rt" not in blob
+        assert access.encode() not in blob and refresh.encode() not in blob
+
+        loaded = await storage_for(sessions).get_tokens()  # a fresh storage reads the blob
+        assert loaded is not None
+        assert (loaded.access_token, loaded.refresh_token) == (access, refresh)
 
     async def test_tokens_are_bound_to_their_owner(self, sessions: async_sessionmaker) -> None:
         """A blob copied into another user's row must not decrypt into their session."""
