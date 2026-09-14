@@ -45,7 +45,7 @@ default menu button still is not set. The checklist is in
 All from `backend/`.
 
 ```bash
-uv run pytest              # 1011 tests
+uv run pytest              # 1021 tests
 uv run ruff check .        # lint
 uv run ruff format .       # format
 uv run mypy komora         # strict
@@ -313,6 +313,14 @@ claimed a span only online orders covered; the next nudge would have named produ
 Komora had just pushed (`draft_items.synced_at`); and a menu button stored with Telegram
 still pointed at a dead tunnel. The checklist is in
 [backend/README.md](backend/README.md#manual-checklist--habits).
+
+Loose ends closed the same evening: `/quiet` sets the quiet hours; the job backs off a
+dead login instead of writing a `failed` row every hour; every `/usual` row gets a
+toggle; the process sets the default menu button on start. Walking Plan 2's Mini App
+checklist further in a browser (`scripts/dev_miniapp_url.py`, live Silpo, no push) found
+two more: **«Скасувати» did not reach the model** — the history still ended on the
+cancelled draft, so the next message resurrected it (`recap.CANCELLED_TAG`) — and a
+weighted tie rounded down on a float (`0.3 / 0.2 = 1.4999…`), so «сир 300 г» became 0,2 кг.
 
 Only the "stated basket" and "habits" intents exist — meal plan, budget-week, deals and
 event handlers are Plan 4.

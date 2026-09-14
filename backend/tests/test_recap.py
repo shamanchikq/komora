@@ -7,7 +7,15 @@ nobody had mentioned.
 
 from decimal import Decimal
 
-from komora.core.agent.recap import MAX_ITEMS, SYNCED_TAG, draft_recap, sync_recap
+from komora.core.agent import prompts
+from komora.core.agent.recap import (
+    CANCELLED_TAG,
+    MAX_ITEMS,
+    SYNCED_TAG,
+    cancel_recap,
+    draft_recap,
+    sync_recap,
+)
 from komora.core.models import ResolvedCart, ResolvedLine, SyncReport
 
 
@@ -92,3 +100,16 @@ class TestSyncRecap:
 
     def test_nothing_happening_is_said_plainly(self) -> None:
         assert "нічого не змінилося" in sync_recap(SyncReport(ok=True))
+
+
+class TestCancelRecap:
+    def test_a_cancelled_draft_is_recorded_as_gone(self) -> None:
+        """Without it the history ended on the draft, and the next message was read as
+        an edit of a basket the user had thrown away."""
+        text = cancel_recap("Кошик з продуктами")
+        assert text.startswith(CANCELLED_TAG)
+        assert "Кошик з продуктами" in text and "нічого не змінилося" in text
+
+    def test_the_prompt_tells_the_model_what_the_tag_means(self) -> None:
+        said = [v for v in vars(prompts).values() if isinstance(v, str) and CANCELLED_TAG in v]
+        assert said, "a tag the prompt never explains is just noise in the history"

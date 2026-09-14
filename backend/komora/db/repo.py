@@ -779,6 +779,22 @@ class HistoryImportRepo:
                 )
             )
 
+    async def last_failed(self, user_id: int, source: str) -> datetime | None:
+        """When this source last failed — what the job backs off on."""
+        async with self._sessions() as session:
+            result = await session.execute(
+                select(HistoryImport.at)
+                .where(
+                    HistoryImport.user_id == user_id,
+                    HistoryImport.source == source,
+                    HistoryImport.outcome == "failed",
+                )
+                .order_by(HistoryImport.at.desc())
+                .limit(1)
+            )
+            at: datetime | None = result.scalar_one_or_none()
+            return at
+
     async def last_ok(self, user_id: int, source: str) -> datetime | None:
         """Freshness: when this source was last read successfully."""
         async with self._sessions() as session:

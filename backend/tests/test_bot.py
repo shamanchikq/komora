@@ -105,3 +105,43 @@ class TestWhichTapsSpendTheirKeyboard:
 
     def test_a_swap_never_does(self) -> None:
         assert not should_clear_keyboard("swap", Spoke(SILPO_DOWN))
+
+
+class TestMenuButton:
+    """The button's URL is stored with Telegram, so it has to follow the tunnel."""
+
+    class Recorder:
+        def __init__(self, fail: bool = False) -> None:
+            self.calls: list[dict] = []
+            self.fail = fail
+
+        async def set_chat_menu_button(self, **kwargs: object) -> bool:
+            if self.fail:
+                from aiogram.exceptions import TelegramAPIError
+
+                raise TelegramAPIError(method=None, message="Bad Request")  # type: ignore[arg-type]
+            self.calls.append(kwargs)
+            return True
+
+    async def test_set_from_the_url_this_process_serves(self) -> None:
+        from komora.bot.bot import sync_menu_button
+
+        bot = self.Recorder()
+        url = await sync_menu_button(bot, "https://x.trycloudflare.com", "https://t.me/b/app")  # type: ignore[arg-type]
+        assert url == "https://x.trycloudflare.com/"
+        (call,) = bot.calls
+        assert call["menu_button"].web_app.url == url
+
+    async def test_left_alone_without_a_mini_app_or_https(self) -> None:
+        from komora.bot.bot import sync_menu_button
+
+        bot = self.Recorder()
+        assert await sync_menu_button(bot, "https://x.example", None) is None  # type: ignore[arg-type]
+        assert await sync_menu_button(bot, "http://localhost:8000", "https://t.me/b/app") is None  # type: ignore[arg-type]
+        assert bot.calls == []
+
+    async def test_a_refusal_does_not_stop_the_start(self) -> None:
+        from komora.bot.bot import sync_menu_button
+
+        bot = self.Recorder(fail=True)
+        assert await sync_menu_button(bot, "https://x.example", "https://t.me/b/app") is None  # type: ignore[arg-type]

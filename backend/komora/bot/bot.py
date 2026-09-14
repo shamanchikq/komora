@@ -17,7 +17,9 @@ from aiogram.types import (
     ErrorEvent,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    MenuButtonWebApp,
     Message,
+    WebAppInfo,
 )
 
 from komora.bot.handlers import (
@@ -28,6 +30,7 @@ from komora.bot.handlers import (
     on_delete,
     on_mute_list,
     on_open_active,
+    on_quiet,
     on_start,
     on_text,
     on_usual,
@@ -80,6 +83,35 @@ async def answer_quietly(query: CallbackQuery, toast: str | None) -> None:
         await query.answer(toast or "")
     except TelegramAPIError:
         log.debug("callback answered too late for Telegram; sending the reply anyway")
+
+
+MENU_BUTTON = "Комора"
+
+
+async def sync_menu_button(bot: Bot, public_base_url: str, mini_app_url: str | None) -> str | None:
+    """Point the default «Комора» menu button at the Mini App this process serves.
+
+    The button's URL is stored with Telegram, not here, and BotFather's Web App URL
+    does not change it. So when a quick tunnel restarted under a new host, the button
+    went on naming the dead one and opened a blank page — while message buttons, which
+    go through the `t.me` link, worked (found on the habits walk, 2026-09-14). Set on
+    every start instead, from the URL this process actually serves.
+
+    Only with a Mini App configured and an https base: Telegram refuses anything else,
+    and a local-only run has no Mini App to open. A per-chat button set by hand
+    overrides the default and is not touched here. Returns the URL set, or `None`.
+    """
+    if not mini_app_url or not public_base_url.startswith("https://"):
+        return None
+    url = public_base_url.rstrip("/") + "/"
+    try:
+        await bot.set_chat_menu_button(
+            menu_button=MenuButtonWebApp(text=MENU_BUTTON, web_app=WebAppInfo(url=url))
+        )
+    except TelegramAPIError:
+        log.warning("could not set the menu button to %s", url, exc_info=True)
+        return None
+    return url
 
 
 def make_bot(token: str) -> Bot:
@@ -171,6 +203,12 @@ def build_router(services: Services, mini_app_url: str | None = None) -> Router:
     @router.message(Command("delete"))
     async def delete(message: Message) -> None:
         await send(message, await on_delete(services, _sender(message)), mini_app_url)
+
+    @router.message(Command("quiet"))
+    async def quiet(message: Message, command: CommandObject) -> None:
+        """«/quiet 22 8» — when Komora sends nothing unasked."""
+        outcome = await on_quiet(services, _sender(message), command.args or "")
+        await send(message, outcome, mini_app_url)
 
     @router.message(F.text)
     async def text(message: Message) -> None:

@@ -33,6 +33,7 @@ from komora.bot.handlers import (
 )
 from komora.bot.outcomes import DraftReady, PreviewReady, Spoke, Synced
 from komora.bot.render import to_reply
+from komora.core.agent.recap import CANCELLED_TAG
 from komora.core.agent.tools import PROPOSE_BASKET
 from komora.core.llm.protocol import LLMResponse, ToolCall
 from komora.core.mcp.errors import McpUnavailable, NotAuthenticated
@@ -272,6 +273,9 @@ class TestConfirmation:
         assert "у кошику Сільпо нічого не змінилося" in reply.text
         assert await services.baskets.get_status(basket_id) == "discarded"
         assert silpo.add_calls == []
+        # The model's next turn starts from «скасовано», not from the draft.
+        (last,) = await services.conversations.last_n(USER, 1)
+        assert last.role == "assistant" and last.content.startswith(CANCELLED_TAG)
 
     async def test_a_stale_draft_cannot_be_synced_twice(self, sessions) -> None:
         services, silpo, basket_id = await self._draft(sessions)

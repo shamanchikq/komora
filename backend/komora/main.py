@@ -16,7 +16,7 @@ import uvicorn
 from dotenv import load_dotenv
 
 from komora.api.app import create_app
-from komora.bot.bot import build_dispatcher, make_bot, send_to
+from komora.bot.bot import build_dispatcher, make_bot, send_to, sync_menu_button
 from komora.bot.habits_job import run_habits_job
 from komora.bot.handlers import HabitServices, Services, on_linked
 from komora.bot.outcomes import Outcome
@@ -165,6 +165,9 @@ async def run() -> None:
         )
     )
 
+    menu_url = await sync_menu_button(bot, settings.public_base_url, mini_app_url)
+    if menu_url is not None:
+        log.info("menu button opens %s", menu_url)
     log.info("Komora is up: callback on :%s, bot polling, habits job", settings.http_port)
 
     # The habits job runs in-process on purpose (the bridge and the poller are both

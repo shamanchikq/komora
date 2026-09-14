@@ -51,6 +51,13 @@ async def refresh_if_stale(services: Services, telegram_id: int, now: datetime) 
     ]
     if freshest and now - max(freshest) < REFRESH_EVERY:
         return False
+    # A failure waits a full interval too. A user whose tokens stopped working is still
+    # "linked" — the row holds tokens — so the job tried every hour and wrote a `failed`
+    # row each time, for ever. Twice a day is what a healthy user costs; a broken one
+    # should cost no more.
+    failed = await stores.imports.last_failed(telegram_id, "online")
+    if failed is not None and now - failed < REFRESH_EVERY:
+        return False
 
     connect = stores.connect_background or services.connect
     try:
@@ -58,14 +65,18 @@ async def refresh_if_stale(services: Services, telegram_id: int, now: datetime) 
             await refresh_history(services, telegram_id, mcp, now=now)
             return True
     except Busy:
-        await stores.imports.record(telegram_id, "online", "skipped", "a turn was in flight")
+        await stores.imports.record(
+            telegram_id, "online", "skipped", "a turn was in flight", at=now
+        )
         return False
     except NotAuthenticated:
         # Tokens are gone or unusable; nothing to read until the user links again.
-        await stores.imports.record(telegram_id, "online", "failed", "not authenticated")
+        await stores.imports.record(telegram_id, "online", "failed", "not authenticated", at=now)
         return False
     except McpError as exc:
-        await stores.imports.record(telegram_id, "online", "failed", f"{type(exc).__name__}: {exc}")
+        await stores.imports.record(
+            telegram_id, "online", "failed", f"{type(exc).__name__}: {exc}", at=now
+        )
         return False
 
 

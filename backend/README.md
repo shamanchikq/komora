@@ -94,7 +94,9 @@ sets a weekly cap. Nothing reaches the Silpo cart until «Надіслати в 
 «Додати в кошик» — two explicit taps, with a preview of the existing cart in between.
 
 `/usual` lists what Komora tracks from the receipts, `/mute` what it was told to stop
-tracking, `/delete` wipes everything Komora holds about you — see [Habits](#habits).
+tracking, `/quiet 22 8` sets the hours in which nothing is sent unasked (Kyiv time;
+`/quiet off` for none), `/delete` wipes everything Komora holds about you — see
+[Habits](#habits).
 
 ## Habits
 
@@ -106,7 +108,8 @@ habits at all. From then on:
 - **A job in the same process** (`bot/habits_job.py`) refreshes each linked user's
   history twice a day and, when a tracked product is due, sends **one** message —
   «Схоже, закінчуються: … Зібрати кошик?» — outside quiet hours (22–08 Kyiv by default)
-  and never twice about the same product inside three days. A tap builds a draft from
+  and never twice about the same product inside three days. A user whose Silpo login
+  stopped working is retried twice a day, like everyone else, not every hour. A tap builds a draft from
   those products **without a model request** (`core/habits/draft.py` →
   `passes/resolve.resolve_known`), which is then previewed and confirmed exactly like a
   typed one. The job never touches the Silpo cart.
@@ -243,6 +246,24 @@ passing one. Everything below needs a physical device and a published Mini App;
 nothing in it can be verified from a test suite, which is exactly why it is written
 down rather than assumed.
 
+**Walked further 2026-09-14** in a desktop browser through `scripts/dev_miniapp_url.py`,
+against live Silpo, without a push: a weighted stepper stopping at stock, ✕, the ⇄
+picker, a launch reopening the open draft, «Скасувати» on the draft and on the sync
+sheet, the removals panel, both refusals of a deep link, and the self-hosted fonts in
+the dark palette. It found two defects, both fixed on `plan3/loose-ends`: a cancelled
+draft came back in the next message (the history still ended on it), and «сир 300 г»
+at a 0,2 kg step became 0,2 kg (a float tie rounded down). Still unwalked: everything
+that needs a push or a device — partial push, both checkout buttons, aeroplane mode,
+the MainButton overlap, the light palette — and ⇄ on a line with no alternative.
+
+**And on a phone the same day** (Android Telegram): «Відкрити в Коморі» on a draft message
+opens that basket; ✕ and a push sends one line fewer; the basket pushed from the Mini App
+answers «Ця чернетка вже неактуальна» from its chat card; the light palette; and the
+summary bar sits fully above the native MainButton. Aeroplane mode was tried on the
+*draft* — «Надіслати в Сільпо» there is a read, and it correctly kept the draft under
+«Сільпо не відповідає. Чернетка на місці» — so the item below, which is about the
+**push** on the sync sheet, is still open.
+
 **Environment first.** Three things will waste the session if they are not done before
 BotFather, all found by audit on 2026-08-26 rather than by reasoning:
 
@@ -269,7 +290,9 @@ Then, in BotFather:
 
 - [x] `/newapp` on the bot → a **short name** and the Web App URL
       (`KOMORA_PUBLIC_BASE_URL`, which serves `web/dist` at `/`).
-- [ ] `/setmenubutton` → the same URL, so the chat has a door. **Still open:**
+- [x] `/setmenubutton` → the same URL, so the chat has a door. **Done 2026-09-14 through
+      the Bot API** — `getChatMenuButton` at the default scope now reports the web_app;
+      the process sets it on every start (`bot.sync_menu_button`). The earlier note:
       `setChatMenuButton` at the default scope answers `ok: true` and does not take
       (verified twice, 2026-09-08); the per-chat call does. Needs BotFather.
 - [x] `KOMORA_TELEGRAM_MINI_APP_URL` set to the `t.me/<bot>/<app>` link BotFather
@@ -301,13 +324,15 @@ The URL is a **credential**: it grants that user's access for 24 hours. Developm
 
 The app itself:
 
-- [ ] Menu button opens the Mini App; initData accepted (no 401). **Half done
+- [x] Menu button opens the Mini App; initData accepted (no 401). **Done 2026-09-14**
+      once the button's stored URL was the live tunnel (it had named a dead one, which
+      is a blank page — not a 401). The earlier note, **half done
       2026-09-13:** the app opens and `initData` is accepted — no 401 — but the
       *default* menu button is still `{"type": "commands"}`; only this operator's
       own chat has the web_app button, set through the Bot API.
 - [x] Compose → loading skeleton → draft with reasons on every line. **2026-09-13.**
-- [ ] Stepper on a weighted good moves by its step and stops at stock.
-- [ ] ✕ removes a row from the draft; push then sends one line fewer.
+- [x] Stepper on a weighted good moves by its step and stops at stock.
+- [x] ✕ removes a row from the draft; push then sends one line fewer.
 - [x] ⇄ opens the picker: up to five other products, the current one marked «зараз».
       **2026-09-13** — the swap itself works; the «зараз» marking and the returned
       quantity/reason were not checked line by line.
@@ -315,20 +340,20 @@ The app itself:
       same reason, and a toast naming it.
 - [ ] ⇄ on a line Silpo has no alternative for keeps the basket on screen and says so
       in a quiet banner — it must NOT become a screen of its own.
-- [ ] The menu button (no deep link) opens on the draft you already have, not compose;
+- [x] The menu button (no deep link) opens on the draft you already have, not compose;
       `/basket` in the chat does the same.
 - [ ] After a **partial** push, reopening the basket marks the lines that landed with
       «✓ вже в кошику Сільпо» and drops the «нічого не зміниться» promise. Hard to
       stage on a device — `swallow=` in `tests/fakes.py` is how it is exercised.
-- [ ] «Скасувати» on the draft and on the sync sheet discards it; the Silpo cart is
+- [x] «Скасувати» on the draft and on the sync sheet discards it; the Silpo cart is
       untouched.
 - [ ] Preview sheet names removals in the inverted panel; confirm label says
       «Прибрати N позицій» when nothing is added.
 - [ ] Push lands in the real Silpo cart; both checkout buttons work. **Half done
       2026-09-13:** the push lands; neither checkout button was followed.
-- [ ] Onest and IBM Plex Mono render (they are served from `/assets`, not Google) and
+- [x] Onest and IBM Plex Mono render (they are served from `/assets`, not Google) and
       the palette follows the client's light/dark setting.
-- [ ] **Nothing hides under the native MainButton.** The sticky summary bar is
+- [x] **Nothing hides under the native MainButton.** The sticky summary bar is
       `position: fixed` against the *viewport*, while the page sizes itself against
       `viewportStableHeight` — whether Telegram shrinks the webview for the button or
       draws over it decides whether the two agree, and no test can answer that. A
@@ -338,16 +363,16 @@ The app itself:
 
 Deep links (Task 3):
 
-- [ ] The draft message in chat carries «Відкрити в Коморі»; tapping it opens the Mini
+- [x] The draft message in chat carries «Відкрити в Коморі»; tapping it opens the Mini
       App **on that basket**, not on compose.
-- [ ] The same link after the basket was sent, or cancelled, says
+- [x] The same link after the basket was sent, or cancelled, says
       «Чернетка вже неактуальна» rather than opening it. The two refusals share one
       sentence and differ only in the toast, which the app dropped until 2026-08-26 —
       so check the toast, not just the page.
-- [ ] A link edited to another id — `?startapp=basket_<someone else's>` — says
+- [x] A link edited to another id — `?startapp=basket_<someone else's>` — says
       «Ця чернетка недоступна». This one is worth doing by hand: it is the only check
       that the launch payload buys no authority, and the whole surface rests on it.
-- [ ] Launching from the menu button (no payload) still opens on compose.
+- [x] Launching from the menu button (no payload) still opens on compose.
 
 The error paths, which are the ones a happy-path run never touches:
 
@@ -407,46 +432,52 @@ is the phone. Testing from another device is the one case that needs `cloudflare
 ### Manual checklist — habits
 
 Needs a Silpo account that actually shops; the development accounts have no history.
-Unwalked as of 2026-09-14.
+**Walked 2026-09-14** on the shopper's account (@moya_komora_bot, a phone, the Mini App
+through a quick tunnel). What that walk could not reach is still open below.
 
-- [ ] `/start` on a shopping account → «Готово — акаунт підключено», then, a moment
-      later, the payoff naming the rhythm. On an account with no history: no second
-      message at all.
-- [ ] `/usual` → the list, each row with its sentence, «🔇 N» per row, «Зібрати кошик».
-- [ ] «🔇 2» → the list stays, the row is marked, the toast says «Більше не відстежую».
+- [x] `/start` on a shopping account → «Готово — акаунт підключено», then, a moment
+      later, the payoff naming the rhythm. **2026-09-14:** three habits named, sent
+      within four seconds of the link.
+- [ ] On an account with no history: `/start` sends no payoff at all.
+- [x] `/usual` → the list, each row with its sentence, «🔇 N» per row, «Зібрати кошик».
+- [x] «🔇 2» → the list stays, the row is marked, the toast says «Більше не відстежую».
       `/mute` → that row with «🔊 1»; tapping it brings it back.
-- [ ] «Зібрати кошик» → an ordinary draft: every line `reason_kind = habit` with the
-      sentence under it, searched by article number (check the log), previewed and
-      pushed like any other. **The items appear in the real Silpo cart.**
+- [x] «Зібрати кошик» → an ordinary draft: every line `reason_kind = habit` with the
+      sentence under it, previewed and pushed like any other. **The items appear in the
+      real Silpo cart.** 2026-09-14: the two due habits, resolved to their products at a
+      fresh slot and pushed from the Mini App; the not-due one correctly left out.
 - [ ] With the Silpo cart's timeslot removed, `/usual` still answers and the next
       refresh records `skipped` for receipts, `ok` for online.
 - [ ] A message that builds a basket (any text, with a live timeslot) → a minute later
       `history_imports` has an `offline ok` row. If `/start` ran without a timeslot, the
       payoff arrives now instead, once.
-- [ ] A nudge arrives when a habit is due, in the daytime, numbered, and not again for
-      the same purchase. «Не зараз» clears its keyboard. «Зібрати кошик» under it builds
-      exactly the products it named. It does not name a product just pushed to the cart.
+- [x] A nudge arrives when a habit is due, in the daytime, numbered. «Не зараз» clears
+      its keyboard and answers «Добре. Нагадаю, коли знову буде пора.» (2026-09-14)
+- [ ] …and not again for the same purchase; «Зібрати кошик» under it builds exactly the
+      products it named; it does not name a product just pushed to the cart. (The
+      2026-09-14 nudge did name the pushed ones — the fix landed in #6 after it was sent.)
 - [ ] With the Silpo slot passed, «Зібрати кошик» answers «Час доставки … вже минув»
       instead of a draft of «Не знайшлося».
-- [ ] `/delete` → «Скасувати» → «Добре, нічого не видаляю.» Then `/delete` → «Так,
+- [x] `/delete` → «Скасувати» → «Добре, нічого не видаляю.» Then `/delete` → «Так,
       видалити все» → «Готово …»; `/start` afterwards is the welcome for a stranger.
+      (2026-09-14, both buttons.)
 
 Mini App — «Звичні покупки»:
 
-- [ ] Compose shows «Звичні покупки →»; it opens the list with the freshness line and
-      rows grouped «Вже пора» / «Решта» / «Не відстежую».
-- [ ] «Відкрити в Коморі» under `/usual` opens the same screen, not compose.
-- [ ] «Не відстежувати» moves the row to «Не відстежую» and toasts; the list stays.
-- [ ] «Зібрати кошик» (MainButton) → loading → the habits draft; send it like any other.
+- [x] Compose shows «Звичні покупки →»; it opens the list with the freshness line and
+      rows grouped «Вже пора» / «Решта» / «Не відстежую». (2026-09-14)
+- [x] «Відкрити в Коморі» under `/usual` opens the same screen, not compose.
+- [x] «Не відстежувати» moves the row to «Не відстежую» and toasts; the list stays.
+- [x] «Зібрати кошик» (MainButton) → loading → the habits draft; send it like any other.
 - [ ] With the Silpo timeslot removed, «Зібрати кошик» returns to the list with the
       reason in a banner — not to compose.
-- [ ] Long names wrap beside the toggle on a phone; nothing hides under the MainButton.
+- [x] Long names wrap beside the toggle on a phone; nothing hides under the MainButton.
 
 ### Known issues
 
 Found by the live runs on 2026-08-11/12, and left open deliberately.
 
-- **Habits are unwalked in Telegram and in the Mini App.** The normaliser, the engine and `resolve_known`
+- **Habits were walked once, on one account (2026-09-14)** — see the checklist for what that walk could not reach. The normaliser, the engine and `resolve_known`
   ran over one real shopping history on 2026-09-14 (reference §9): 3 habits tracked,
   both due ones resolved live to their exact products by article number, and the
   «every ~146 days» artefact the plan predicted appeared and was removed by making
@@ -464,15 +495,16 @@ Found by the live runs on 2026-08-11/12, and left open deliberately.
   chosen so that the only history measured yields a few habits rather than none. A
   second household may move them; `engine.py` says so beside the constants. The lapse
   window (two intervals) is a judgement, not a measurement.
-- **The menu button goes stale with the tunnel.** Its web_app URL is stored with
-  Telegram, per chat and as the default, and BotFather's Web App URL does not update it.
-  After a quick-tunnel restart it opens a blank page until reset with
-  `setChatMenuButton`; message buttons (the `t.me` link) are unaffected. A named tunnel,
-  or setting it on startup from `KOMORA_PUBLIC_BASE_URL`, would end this.
-- **Habits loose ends.** Quiet hours can only be set in the database; a user whose
-  tokens stopped working gets a `failed` import row every hour; the chat's `/usual`
-  has toggles for the first eight rows; «Аналізую ваші покупки…» is not sent before the
-  backfill.
+- **A per-chat menu button is not managed.** The process sets the *default* «Комора»
+  button from `KOMORA_PUBLIC_BASE_URL` on every start (`bot.sync_menu_button`), because
+  its URL lives with Telegram and went stale with every tunnel restart. A button set for
+  one chat by hand overrides the default and is left alone — reset it with
+  `setChatMenuButton` and `{"type": "default"}` (done for the operator's chat
+  2026-09-14).
+- **«Аналізую ваші покупки…» is not sent**, deliberately. J2 puts it before the
+  backfill, but the payoff after it is often held back — receipts need a cart context,
+  and an account below threshold says nothing — so the message would promise a result
+  and deliver silence. The payoff itself arrives within seconds of the link.
 
 - **There is no dietary-restriction filtering.** The pass was removed rather than
   shipped wrong. It matched restriction terms as substrings, which fails in the
