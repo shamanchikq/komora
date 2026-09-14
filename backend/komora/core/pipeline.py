@@ -16,11 +16,17 @@ from typing import Any
 from komora.core.llm.protocol import LLMClient
 from komora.core.mcp.errors import McpError
 from komora.core.mcp.protocol import SilpoClient
-from komora.core.models import DraftBasket, ResolvedCart, ResolvedLine, SearchContext
+from komora.core.models import (
+    DraftBasket,
+    KnownLine,
+    ResolvedCart,
+    ResolvedLine,
+    SearchContext,
+)
 from komora.core.passes.budget import apply_budget
 from komora.core.passes.categories import CategoryIndex, fetch_categories
 from komora.core.passes.promos import DEGRADED_COUPONS, apply_savings, describe_coupons
-from komora.core.passes.resolve import NOT_FOUND, resolve_basket
+from komora.core.passes.resolve import NOT_FOUND, resolve_basket, resolve_known
 from komora.core.passes.verify import DEGRADED_VERIFY, find_mismatches
 
 TIMESLOT_EXPIRED = "timeslot:expired"
@@ -301,6 +307,37 @@ async def build_cart(
         cart, degraded = await _verified(cart, basket, mcp, context, llm, cache)
         if degraded:
             warnings.append(DEGRADED_VERIFY)
+    return await _finish(cart, mcp, context, warnings, budget_cap, already_spent)
+
+
+async def build_known_cart(
+    lines: list[KnownLine],
+    mcp: SilpoClient,
+    context: SearchContext,
+    *,
+    budget_cap: int | None = None,
+    already_spent: Decimal | None = None,
+) -> tuple[ResolvedCart, dict[str, int]]:
+    """The pipeline for products already decided — a habits draft.
+
+    No model is involved, so there is no verification pass: there is nothing to verify
+    when the product was chosen by the user's own receipts. Everything after resolve
+    is the same as for a typed basket. Returns the article numbers learned on the way
+    (`resolve_known`) so the caller can store them.
+    """
+    cart, learned = await resolve_known(lines, mcp, context)
+    return await _finish(cart, mcp, context, [], budget_cap, already_spent), learned
+
+
+async def _finish(
+    cart: ResolvedCart,
+    mcp: SilpoClient,
+    context: SearchContext,
+    warnings: list[str],
+    budget_cap: int | None,
+    already_spent: Decimal | None,
+) -> ResolvedCart:
+    """Savings, coupons, the timeslot check and the budget — shared by both entries."""
     cart = apply_savings(cart)
 
     try:

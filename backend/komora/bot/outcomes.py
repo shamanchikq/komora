@@ -15,7 +15,9 @@ differently, that is the moment to give them kinds — not before.
 """
 
 from dataclasses import dataclass
+from datetime import date, datetime
 
+from komora.core.habits.engine import Habit
 from komora.core.models import ResolvedCart, ResolvedLine, SyncReport
 from komora.core.sync import SyncPreview
 
@@ -62,7 +64,45 @@ class Spoke:
     toast: str | None = None
 
 
-Outcome = DraftReady | PreviewReady | Synced | Spoke
+@dataclass(frozen=True)
+class HabitsReady:
+    """«Your usual»: what the engine tracks for this user, sentences included.
+
+    The cadence sentence is built by the engine and carried here as text, so no
+    surface restates a rule — the defect class every frontend review has found.
+    Muted habits are included with their flag: a list that hid them would have no
+    way to offer «стежити знову».
+    """
+
+    habits: list[Habit]
+    today: date
+    fresh_at: datetime | None = None
+    """When history was last read successfully; `None` if never."""
+    toast: str | None = None
+    """Set after a mute or an unmute, so the list stays on screen and the change is
+    still announced — a sentence replacing the screen is the lesson learned thrice."""
+
+
+@dataclass(frozen=True)
+class NudgeReady:
+    """The one proactive message: due habits, offered as a draft. Never a cart write."""
+
+    habits: list[Habit]
+    today: date
+
+
+@dataclass(frozen=True)
+class Ask:
+    """A yes-or-no before something that cannot be undone. `yes` is the action's
+    callback payload; the surface draws the two buttons."""
+
+    text: str
+    yes: str
+    yes_label: str
+    no_label: str = "Скасувати"
+
+
+Outcome = DraftReady | PreviewReady | Synced | Spoke | HabitsReady | NudgeReady | Ask
 
 
 @dataclass(frozen=True)

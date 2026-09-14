@@ -25,9 +25,12 @@ from komora.bot.handlers import (
     Services,
     on_budget,
     on_callback,
+    on_delete,
+    on_mute_list,
     on_open_active,
     on_start,
     on_text,
+    on_usual,
 )
 from komora.bot.outcomes import Outcome, Spoke, Synced
 from komora.bot.render import Reply, to_reply
@@ -37,7 +40,7 @@ log = logging.getLogger(__name__)
 MAX_MESSAGE = 3900
 """Telegram's hard limit is 4096; the margin covers entity overhead."""
 
-TERMINAL_ACTIONS = ("push", "cancel")
+TERMINAL_ACTIONS = ("push", "cancel", "delete", "dismiss")
 """After these the original keyboard is removed, so a stale tap cannot be repeated.
 
 «swap» is deliberately absent: it replaces the draft with a new message carrying its
@@ -155,6 +158,19 @@ def build_router(services: Services, mini_app_url: str | None = None) -> Router:
         needed `GET /api/baskets/active`.
         """
         await send(message, await on_open_active(services, _sender(message)), mini_app_url)
+
+    @router.message(Command("usual"))
+    async def usual(message: Message) -> None:
+        """«/usual» — what Komora tracks from the receipts, with mute toggles."""
+        await send(message, await on_usual(services, _sender(message)), mini_app_url)
+
+    @router.message(Command("mute"))
+    async def mute(message: Message) -> None:
+        await send(message, await on_mute_list(services, _sender(message)), mini_app_url)
+
+    @router.message(Command("delete"))
+    async def delete(message: Message) -> None:
+        await send(message, await on_delete(services, _sender(message)), mini_app_url)
 
     @router.message(F.text)
     async def text(message: Message) -> None:

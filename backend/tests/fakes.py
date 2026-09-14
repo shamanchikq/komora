@@ -87,6 +87,8 @@ class FakeSilpo:
         categories: list[dict[str, Any]] | None = None,
         slots: list[dict[str, Any]] | None = None,
         fails: set[str] | None = None,
+        online_orders: list[dict[str, Any]] | None = None,
+        offline_orders: list[dict[str, Any]] | None = None,
     ) -> None:
         self._results = results or {}
         self._replacements = replacements or {}
@@ -111,6 +113,9 @@ class FakeSilpo:
         self.category_pages: list[tuple[int, int]] = []
         self._slots = slots
         self._fails = fails or set()
+        self._online_orders = online_orders or []
+        self._offline_orders = offline_orders or []
+        self.history_calls: list[tuple[str, dict[str, Any]]] = []
         self.add_calls: list[list[dict[str, Any]]] = []
         self.remove_calls: list[list[dict[str, Any]]] = []
         self.write_order: list[str] = []
@@ -337,6 +342,51 @@ class FakeSilpo:
                 "deliveryType": CONTEXT.delivery_type,
             },
         ]
+
+    # --- history (reference §9) ---
+    async def get_my_online_orders(self, *, limit: int = 50, offset: int = 0) -> dict[str, Any]:
+        """Envelope captured live: `{"success", "summary", "orders", "meta"}`, newest
+        first, `limit` capped at 50 with `-32602` above it."""
+        self._fail_if_scripted("get_my_online_orders")
+        if limit > 50:
+            raise RuntimeError("-32602 too_big: limit must be <= 50")
+        self.history_calls.append(("online", {"limit": limit, "offset": offset}))
+        page = self._online_orders[offset : offset + limit]
+        return {
+            "success": True,
+            "summary": f"Found {len(page)} orders",
+            "orders": page,
+            "meta": {"limit": limit, "offset": offset, "total": len(self._online_orders)},
+        }
+
+    async def get_my_offline_orders(
+        self,
+        context: SearchContext,
+        *,
+        limit: int = 10,
+        offset: int = 0,
+        date_start: str | None = None,
+        date_end: str | None = None,
+    ) -> dict[str, Any]:
+        """Ten a page, `dateStart` honoured against `createdAt` (naive Kyiv time)."""
+        self._fail_if_scripted("get_my_offline_orders")
+        if limit > 10:
+            raise RuntimeError("-32602 too_big: limit must be <= 10")
+        self.history_calls.append(
+            ("offline", {"limit": limit, "offset": offset, "dateStart": date_start})
+        )
+        receipts = [
+            r
+            for r in self._offline_orders
+            if date_start is None or str(r.get("createdAt", "")) >= date_start
+        ]
+        page = receipts[offset : offset + limit]
+        return {
+            "success": True,
+            "summary": f"Found {len(page)} offline orders",
+            "orders": page,
+            "meta": {"limit": limit, "offset": offset, "total": len(receipts)},
+        }
 
     async def list_tools(self) -> list[dict[str, Any]]:
         return []

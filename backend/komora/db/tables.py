@@ -4,10 +4,19 @@ Only Postgres-compatible types are used: SQLite is the v1 store, but nothing her
 should have to change to move.
 """
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import BigInteger, ForeignKey, Index, LargeBinary, Numeric, String, Text
+from sqlalchemy import (
+    BigInteger,
+    ForeignKey,
+    Index,
+    LargeBinary,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from komora.db.base import Base, utcnow
@@ -27,6 +36,10 @@ class User(Base):
 
     branch_id: Mapped[str | None] = mapped_column(String(64), default=None)
     budget_weekly: Mapped[int | None] = mapped_column(default=None)
+    quiet_from: Mapped[int | None] = mapped_column(default=None)
+    quiet_to: Mapped[int | None] = mapped_column(default=None)
+    """Hours (Kyiv) between which a nudge is held back; `None` means the default
+    window in `bot/habits_job.py`. A user's evening is not something to guess at."""
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
@@ -132,3 +145,119 @@ class DraftItem(Base):
     """Priced per kilogram; a Mini App needs this to show «0,15 кг × 999,00 ₴/кг»."""
     step: Mapped[float | None] = mapped_column(default=None)
     stock: Mapped[float | None] = mapped_column(default=None)
+
+
+class Purchase(Base):
+    """One product on one receipt or online order — the habits input.
+
+    Kept as the normaliser produced it (`core/habits/purchases.py`): netted per
+    receipt, bags and removed lines gone, times aware. `product_habits` is recomputed
+    from here, never edited in place, so a rule change is a recompute and not a data
+    migration. Nothing personal: no address, shop, city or receipt URL — the receipt is
+    a hash of its token.
+    """
+
+    __tablename__ = "purchases"
+    __table_args__ = (
+        UniqueConstraint("user_id", "source", "receipt_key", "product_key", name="uq_purchase"),
+        Index("ix_purchases_user_id_bought_at", "user_id", "bought_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.telegram_id", ondelete="CASCADE"), index=True
+    )
+    source: Mapped[str] = mapped_column(String(8))
+    """online | offline"""
+    receipt_key: Mapped[str] = mapped_column(String(80))
+    product_key: Mapped[str] = mapped_column(String(64))
+    """Catalog product id, or `lager:<id>` for a receipt line with no catalog product."""
+    external_product_id: Mapped[int | None] = mapped_column(BigInteger, default=None)
+    """Silpo's numeric article — receipt `lagerId`, search hit `externalProductId`.
+    Stored whenever it is learned: it is the one exact search key, and an online
+    order never carries it."""
+    name: Mapped[str] = mapped_column(Text)
+    qty: Mapped[float]
+    unit: Mapped[str] = mapped_column(String(64), default="")
+    """«кг», or the pack size («400г») — the only thing that tells two sizes apart."""
+    unit_price: Mapped[Decimal] = mapped_column(Numeric(10, 2))
+    weighted: Mapped[bool] = mapped_column(default=False)
+    reorderable: Mapped[bool] = mapped_column(default=True)
+    bought_at: Mapped[datetime]
+
+
+class ProductHabit(Base):
+    """The engine's output for one user, replaced wholesale on every recompute."""
+
+    __tablename__ = "product_habits"
+    __table_args__ = (UniqueConstraint("user_id", "product_key", name="uq_product_habit"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.telegram_id", ondelete="CASCADE"), index=True
+    )
+    product_key: Mapped[str] = mapped_column(String(64))
+    group_key: Mapped[str | None] = mapped_column(String(64), default=None)
+    """Reserved for grouping variants of one habit (Plan 3, option C). Unused: the
+    only grouping measured did not group."""
+    name: Mapped[str] = mapped_column(Text)
+    external_product_id: Mapped[int | None] = mapped_column(BigInteger, default=None)
+    unit: Mapped[str] = mapped_column(String(64), default="")
+    weighted: Mapped[bool] = mapped_column(default=False)
+    reorderable: Mapped[bool] = mapped_column(default=True)
+    events: Mapped[int]
+    median_gap_days: Mapped[float]
+    cv: Mapped[float]
+    confidence: Mapped[float]
+    last_bought_on: Mapped[date]
+    last_qty: Mapped[float]
+    median_qty: Mapped[float]
+    due_on: Mapped[date]
+    computed_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class HabitMute(Base):
+    """«Не стежити» — user state, so it survives every recompute of `product_habits`."""
+
+    __tablename__ = "habit_mutes"
+
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.telegram_id", ondelete="CASCADE"), primary_key=True
+    )
+    product_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    muted_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class HistoryImport(Base):
+    """One row per import attempt per source: freshness is the last `ok`, and a skip is
+    a row rather than a log line nobody reads."""
+
+    __tablename__ = "history_imports"
+    __table_args__ = (Index("ix_history_imports_user_source_at", "user_id", "source", "at"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.telegram_id", ondelete="CASCADE"), index=True
+    )
+    source: Mapped[str] = mapped_column(String(8))
+    at: Mapped[datetime] = mapped_column(default=utcnow)
+    outcome: Mapped[str] = mapped_column(String(8))
+    """ok | skipped | failed"""
+    detail: Mapped[str] = mapped_column(Text, default="")
+
+
+class Notification(Base):
+    """What Komora said unasked, so it does not say it again inside the cooldown."""
+
+    __tablename__ = "notifications"
+    __table_args__ = (
+        Index("ix_notifications_user_kind_subject", "user_id", "kind", "subject_key"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.telegram_id", ondelete="CASCADE"), index=True
+    )
+    kind: Mapped[str] = mapped_column(String(32))
+    subject_key: Mapped[str] = mapped_column(String(64))
+    sent_at: Mapped[datetime] = mapped_column(default=utcnow)

@@ -456,6 +456,15 @@ design constraint, not an implementation detail.
 **`limit` really is capped at 10** for the offline tool (`"max: 10"` in its own schema),
 against 100 for the online one. Sending 20 returns `-32602 too_big`. Read the schema.
 
+**The offline tool also takes `dateStart` and `dateEnd`** — «Period start in ISO format
+(default: 6 months ago)», «Period end … (default: now)». Missed until 2026-09-14 because
+the table above was written from the *required* list. Two things follow: every receipt
+count so far was measured inside a six-month window nobody chose, and an incremental
+import is one call with `dateStart` set, not a crawl of ten-per-page. The server accepted
+`dateStart: "2024-01-01T00:00:00"` on 2026-09-14 (against an account with no receipts,
+so what it *returns* for an older period is still unseen). The online tool has no such
+parameters — it pages by `offset` only, 50 per page live.
+
 ### What is still unknown, and it is the important half
 
 A populated response has **never been seen** — same standing as
@@ -620,3 +629,39 @@ collapsed.
 *start* with «Пакет»; the other 3 are cottage cheese sold in one («Сир кисломолочний Ферма
 5 % пакет»). The substring rule §5 used to state — and `passes/resolve.py` applied —
 rejected that cheese as a bag; the rule is now the name's first word.
+
+**The measure is reproducible since 2026-09-14.** The numbers above came from code that
+was not kept. `scripts/_habits_measure.py` now applies the same rules and prints the
+same counts (no names), `tests/test_habits_measure.py` pins each rule against the trimmed
+fixtures, and `capture_history.py --full --since 2024-01-01 --measure` re-runs the whole
+thing against a linked account — `--user <telegram_id>` reads as an account already
+linked to the bot, without a login. Run that way against both bot-linked accounts on
+2026-09-14: `total: 0` on all three tools for each. They are the development accounts.
+
+**Re-run on the shopper's account, 2026-09-14** (she signed in once more; tokens
+forgotten afterwards, raw payloads deleted). The measure reproduced the 2026-09-13
+numbers exactly — 202 products, 162 bought once, 6 habits over all history and 4 inside
+the receipts' span, none at CV ≤ 0.5 — and closed three of the open questions:
+
+- **Receipts reach no further back than the card's use.** With `dateStart` set to
+  2024-01-01 the tool still answered 21 receipts, 2026-06-24 → 09-13. The six-month
+  default was never the limit; the card was.
+- **No order in the whole history carries `removed: true`** (97 orders, 0 hits), so
+  the fixture cannot get a real one from this account. The rule stays tested on a
+  doctored real line.
+- **Sources still do not overlap** — 0 (product, day) pairs seen from both — so the
+  delivery-as-receipt question remains open; the engine collapses across sources by
+  day either way.
+
+The same run put Plan 3's code, not the measure, over the real history:
+`core/habits/purchases.py` produced 25 online and 248 receipt events (38 of them
+counter goods with no catalog product); `engine.compute_habits` tracked **3**
+products, all nudgeable, 2 of them due on the day — and, before the observed-coverage
+rule was made the default, a fourth: «every ~146 days» for a cottage cheese, five
+purchases across a year in which 93 orders carry no lines. Measured from the first
+receipt it disappears, which is what Task 0 said would happen. Then, live, the two due
+habits went through `resolve_known` and both came back as **their own stored ids**,
+searched by `lagerId`; searched by *name* alone, one of two — the receipt calls it
+«Сир ЛТ Мукко Витриманий фасований 50,2%», the catalog «Сир «Лавка Традицій» «Мукко»
+витриманий …», and no search bridges that. The name path did learn the bread's
+article number on the way, as designed.

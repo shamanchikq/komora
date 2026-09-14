@@ -29,6 +29,10 @@ from komora.core.mcp.silpo import SilpoSession
 from komora.db.repo import OAuthClientRepo, UserRepo
 
 
+class Busy(McpError):
+    """A background session was refused because the user has a turn in flight."""
+
+
 class SilpoGateway:
     def __init__(
         self,
@@ -52,6 +56,11 @@ class SilpoGateway:
         self._clients = clients
         self._cipher = cipher
         self._bridge = bridge
+        self._locks: dict[int, asyncio.Lock] = {}
+        """One lock per user around a session — see `connect` and `connect_background`."""
+
+    def _lock(self, telegram_id: int) -> asyncio.Lock:
+        return self._locks.setdefault(telegram_id, asyncio.Lock())
 
     def _provider(
         self, telegram_id: int, send_url: SendUrl, *, may_register: bool
@@ -91,13 +100,45 @@ class SilpoGateway:
 
     @asynccontextmanager
     async def connect(self, telegram_id: int) -> AsyncIterator[SilpoSession]:
-        """A session for ordinary work. Raises `NotAuthenticated` if unlinked."""
+        """A session for ordinary work. Raises `NotAuthenticated` if unlinked.
+
+        Held under the user's lock. Two sessions for one user refresh an expired
+        token independently, and two refreshes racing a rotating refresh token can
+        leave the database holding the older pair — the next turn then reads
+        «підключіть наново» for an account whose tokens were fine a minute earlier.
+        A turn waits for a background import to finish (seconds); an import never
+        starts while a turn is open (`connect_background`).
+        """
 
         async def refuse(_: int, __: str) -> None:
             raise NotAuthenticated(f"user {telegram_id} has no usable Silpo tokens")
 
-        async with self._session(telegram_id, refuse, may_register=False) as session:
+        async with (
+            self._lock(telegram_id),
+            self._session(telegram_id, refuse, may_register=False) as session,
+        ):
             yield session
+
+    @asynccontextmanager
+    async def connect_background(
+        self, telegram_id: int, *, wait_seconds: float = 2.0
+    ) -> AsyncIterator[SilpoSession]:
+        """A session for work nobody is waiting on. Raises `Busy` rather than queueing
+        behind a turn: imports yield to turns, never the other way round."""
+        lock = self._lock(telegram_id)
+        try:
+            await asyncio.wait_for(lock.acquire(), timeout=wait_seconds)
+        except TimeoutError as exc:
+            raise Busy(f"user {telegram_id} has a session open") from exc
+        try:
+
+            async def refuse(_: int, __: str) -> None:
+                raise NotAuthenticated(f"user {telegram_id} has no usable Silpo tokens")
+
+            async with self._session(telegram_id, refuse, may_register=False) as session:
+                yield session
+        finally:
+            lock.release()
 
     async def link(self, telegram_id: int, send_url: SendUrl) -> None:
         """Run account linking to completion.

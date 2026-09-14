@@ -16,8 +16,11 @@ import uvicorn
 from dotenv import load_dotenv
 
 from komora.api.app import create_app
-from komora.bot.bot import build_dispatcher, make_bot
-from komora.bot.handlers import Services
+from komora.bot.bot import build_dispatcher, make_bot, send_to
+from komora.bot.habits_job import run_habits_job
+from komora.bot.handlers import HabitServices, Services, on_linked
+from komora.bot.outcomes import Outcome
+from komora.bot.render import to_reply
 from komora.config import Settings
 from komora.core.agent.tools import CachedTools
 from komora.core.crypto import TokenCipher
@@ -26,7 +29,16 @@ from komora.core.mcp.auth import AuthorizationBridge
 from komora.core.mcp.gateway import SilpoGateway
 from komora.db.base import make_engine, make_session_factory
 from komora.db.migrate import SchemaOutOfDate, assert_current
-from komora.db.repo import BasketRepo, ConversationRepo, OAuthClientRepo, UserRepo
+from komora.db.repo import (
+    BasketRepo,
+    ConversationRepo,
+    HabitRepo,
+    HistoryImportRepo,
+    NotificationRepo,
+    OAuthClientRepo,
+    PurchaseRepo,
+    UserRepo,
+)
 
 log = logging.getLogger("komora")
 
@@ -87,15 +99,38 @@ async def run() -> None:
             except Exception:
                 log.exception("linking failed for %s", telegram_id)
                 await bot.send_message(telegram_id, LINK_FAILED)
+                return
             finally:
                 linking.pop(telegram_id, None)
+            # J2's learning payoff: a backfill, then one message — or none. After
+            # LINK_DONE, so a slow history read never delays «підключено».
+            try:
+                payoff = await on_linked(services, telegram_id)
+                if payoff is not None:
+                    await notify(telegram_id, payoff)
+            except Exception:
+                log.exception("learning payoff failed for %s", telegram_id)
 
         linking[telegram_id] = asyncio.create_task(flow())
+
+    mini_app_url = settings.telegram_mini_app_url or None
+
+    async def notify(telegram_id: int, outcome: Outcome) -> None:
+        """A message nobody is waiting for, rendered exactly like a reply."""
+        await send_to(bot, telegram_id, to_reply(outcome, mini_app_url))
 
     services = Services(
         users=users,
         conversations=ConversationRepo(sessions),
         baskets=BasketRepo(sessions),
+        habits=HabitServices(
+            purchases=PurchaseRepo(sessions),
+            habits=HabitRepo(sessions),
+            imports=HistoryImportRepo(sessions),
+            notifications=NotificationRepo(sessions),
+            connect_background=gateway.connect_background,
+        ),
+        notify=notify,
         llm=make_llm(settings.llm_agent, settings),
         # This second client was configured and validated from the start and then never
         # built, so both requests in a basket went to one model and drained one daily
@@ -107,7 +142,7 @@ async def run() -> None:
         start_linking=link,
     )
 
-    dispatcher = build_dispatcher(services, settings.telegram_mini_app_url or None)
+    dispatcher = build_dispatcher(services, mini_app_url)
     # ONE process, deliberately — not merely the default.
     #
     # `AuthorizationBridge` keeps pending OAuth flows in a dict in this process, and the
@@ -130,9 +165,14 @@ async def run() -> None:
         )
     )
 
-    log.info("Komora is up: callback on :%s, bot polling", settings.http_port)
+    log.info("Komora is up: callback on :%s, bot polling, habits job", settings.http_port)
     try:
-        await asyncio.gather(server.serve(), dispatcher.start_polling(bot))
+        # The habits job joins the same gather: in-process on purpose (the bridge and
+        # the poller are both single-process), and a worker of its own would need the
+        # bot handle this process already holds.
+        await asyncio.gather(
+            server.serve(), dispatcher.start_polling(bot), run_habits_job(services)
+        )
     finally:
         server.should_exit = True
         for task in linking.values():

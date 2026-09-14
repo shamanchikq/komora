@@ -4,19 +4,28 @@ Each method opens its own session, so callers never manage transactions.
 """
 
 import json
+from collections.abc import Sequence
 from datetime import datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from komora.core.habits.engine import Habit
+from komora.core.habits.purchases import PurchaseEvent, Source
 from komora.core.models import BasketStatus, CartRemoval, ResolvedCart, ResolvedLine
+from komora.db.base import utcnow
 from komora.db.tables import (
     ConversationMessage,
     DraftBasketRow,
     DraftItem,
+    HabitMute,
+    HistoryImport,
+    Notification,
     OAuthClientRegistration,
+    ProductHabit,
+    Purchase,
     User,
 )
 
@@ -84,6 +93,53 @@ class UserRepo:
                 update(User)
                 .where(User.telegram_id == telegram_id)
                 .values(budget_weekly=budget_weekly)
+            )
+
+    async def linked(self) -> list[int]:
+        """Everyone holding Silpo tokens — what a background import iterates."""
+        async with self._sessions() as session:
+            result = await session.execute(
+                select(User.telegram_id).where(User.silpo_tokens.is_not(None))
+            )
+            return [int(row) for row in result.scalars()]
+
+    async def delete(self, telegram_id: int) -> bool:
+        """«/delete» — the user row and everything hanging off it, in one statement.
+
+        Every other table cascades on `users.telegram_id`, which is what makes this a
+        wipe rather than a list of tables to remember. SQLite only honours the cascade
+        with foreign keys switched on, so the children are deleted explicitly first.
+        """
+        async with self._sessions() as session, session.begin():
+            if await session.get(User, telegram_id) is None:
+                return False
+            for table in (
+                Notification,
+                HistoryImport,
+                HabitMute,
+                ProductHabit,
+                Purchase,
+                ConversationMessage,
+            ):
+                await session.execute(delete(table).where(table.user_id == telegram_id))
+            baskets = (
+                select(DraftBasketRow.id)
+                .where(DraftBasketRow.user_id == telegram_id)
+                .scalar_subquery()
+            )
+            await session.execute(delete(DraftItem).where(DraftItem.basket_id.in_(baskets)))
+            await session.execute(
+                delete(DraftBasketRow).where(DraftBasketRow.user_id == telegram_id)
+            )
+            await session.execute(delete(User).where(User.telegram_id == telegram_id))
+            return True
+
+    async def set_quiet_hours(self, telegram_id: int, start: int | None, end: int | None) -> None:
+        async with self._sessions() as session, session.begin():
+            await session.execute(
+                update(User)
+                .where(User.telegram_id == telegram_id)
+                .values(quiet_from=start, quiet_to=end)
             )
 
     async def set_branch(self, telegram_id: int, branch_id: str) -> None:
@@ -487,3 +543,266 @@ class BasketRepo:
         async with self._sessions() as session:
             basket = await session.get(DraftBasketRow, basket_id)
             return basket.status if basket else None
+
+
+# --- Habits ----------------------------------------------------------------------
+
+
+class PurchaseRepo:
+    """The habits input. Idempotent by construction: re-importing changes nothing."""
+
+    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+        self._sessions = sessions
+
+    async def upsert(self, user_id: int, events: Sequence[PurchaseEvent]) -> int:
+        """Insert new events, refresh existing ones; returns how many rows were touched.
+
+        The unique key is `(user, source, receipt, product)`. A receipt that lists a
+        product twice was already netted into one event, so a collision is the same
+        event seen again — replaced, never summed.
+        """
+        if not events:
+            return 0
+        async with self._sessions() as session, session.begin():
+            keys = {(e.source, e.receipt_key, e.product_key) for e in events}
+            result = await session.execute(
+                select(Purchase).where(
+                    Purchase.user_id == user_id,
+                    Purchase.receipt_key.in_({k[1] for k in keys}),
+                )
+            )
+            existing = {
+                (row.source, row.receipt_key, row.product_key): row for row in result.scalars()
+            }
+            touched = 0
+            for event in events:
+                row = existing.get((event.source, event.receipt_key, event.product_key))
+                if row is None:
+                    row = Purchase(
+                        user_id=user_id,
+                        source=event.source,
+                        receipt_key=event.receipt_key,
+                        product_key=event.product_key,
+                    )
+                    session.add(row)
+                    existing[(event.source, event.receipt_key, event.product_key)] = row
+                row.name = event.name
+                row.qty = event.qty
+                row.unit = event.unit
+                row.unit_price = event.unit_price
+                row.weighted = event.weighted
+                row.reorderable = event.reorderable
+                row.bought_at = event.bought_at
+                if event.external_product_id is not None:
+                    row.external_product_id = event.external_product_id
+                touched += 1
+            return touched
+
+    async def events(self, user_id: int) -> list[PurchaseEvent]:
+        async with self._sessions() as session:
+            result = await session.execute(
+                select(Purchase).where(Purchase.user_id == user_id).order_by(Purchase.bought_at)
+            )
+            return [_event_of(row) for row in result.scalars()]
+
+    async def learn_external_id(self, user_id: int, product_key: str, external_id: int) -> None:
+        """A search that found the stored id teaches the article number back, so the
+        next draft searches exactly rather than by name."""
+        async with self._sessions() as session, session.begin():
+            await session.execute(
+                update(Purchase)
+                .where(
+                    Purchase.user_id == user_id,
+                    Purchase.product_key == product_key,
+                    Purchase.external_product_id.is_(None),
+                )
+                .values(external_product_id=external_id)
+            )
+            await session.execute(
+                update(ProductHabit)
+                .where(
+                    ProductHabit.user_id == user_id,
+                    ProductHabit.product_key == product_key,
+                    ProductHabit.external_product_id.is_(None),
+                )
+                .values(external_product_id=external_id)
+            )
+
+
+def _event_of(row: Purchase) -> PurchaseEvent:
+    source: Source = "online" if row.source == "online" else "offline"
+    return PurchaseEvent(
+        source=source,
+        receipt_key=row.receipt_key,
+        product_key=row.product_key,
+        name=row.name,
+        qty=row.qty,
+        unit=row.unit,
+        unit_price=Decimal(str(row.unit_price)),
+        weighted=row.weighted,
+        reorderable=row.reorderable,
+        bought_at=row.bought_at,
+        external_product_id=row.external_product_id,
+    )
+
+
+class HabitRepo:
+    """`product_habits` is replaced on every recompute; `habit_mutes` is user state and
+    survives it — which is why the two are separate tables."""
+
+    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+        self._sessions = sessions
+
+    async def replace(self, user_id: int, habits: Sequence[Habit]) -> None:
+        async with self._sessions() as session, session.begin():
+            await session.execute(delete(ProductHabit).where(ProductHabit.user_id == user_id))
+            now = utcnow()
+            for habit in habits:
+                session.add(
+                    ProductHabit(
+                        user_id=user_id,
+                        product_key=habit.product_key,
+                        name=habit.name,
+                        external_product_id=habit.external_product_id,
+                        unit=habit.unit,
+                        weighted=habit.weighted,
+                        reorderable=habit.reorderable,
+                        events=habit.events,
+                        median_gap_days=habit.median_gap_days,
+                        cv=habit.cv,
+                        confidence=habit.confidence,
+                        last_bought_on=habit.last_bought,
+                        last_qty=habit.last_qty,
+                        median_qty=habit.median_qty,
+                        due_on=habit.due_on,
+                        computed_at=now,
+                    )
+                )
+
+    async def list(self, user_id: int) -> list[Habit]:
+        """Every tracked habit with its mute flag joined in, most confident first."""
+        async with self._sessions() as session:
+            muted = {
+                key
+                for key in (
+                    await session.execute(
+                        select(HabitMute.product_key).where(HabitMute.user_id == user_id)
+                    )
+                ).scalars()
+            }
+            result = await session.execute(
+                select(ProductHabit)
+                .where(ProductHabit.user_id == user_id)
+                .order_by(ProductHabit.confidence.desc(), ProductHabit.due_on)
+            )
+            return [
+                Habit(
+                    product_key=row.product_key,
+                    name=row.name,
+                    events=row.events,
+                    median_gap_days=row.median_gap_days,
+                    cv=row.cv,
+                    confidence=row.confidence,
+                    last_bought=row.last_bought_on,
+                    last_qty=row.last_qty,
+                    median_qty=row.median_qty,
+                    due_on=row.due_on,
+                    unit=row.unit,
+                    weighted=row.weighted,
+                    reorderable=row.reorderable,
+                    external_product_id=row.external_product_id,
+                    muted=row.product_key in muted,
+                )
+                for row in result.scalars()
+            ]
+
+    async def set_muted(self, user_id: int, product_key: str, muted: bool) -> bool:
+        """Returns False when the user has no such habit — a key from the client is
+        no more proof of anything than a basket id was."""
+        async with self._sessions() as session, session.begin():
+            known = await session.execute(
+                select(ProductHabit.id).where(
+                    ProductHabit.user_id == user_id, ProductHabit.product_key == product_key
+                )
+            )
+            if known.first() is None:
+                return False
+            await session.execute(
+                delete(HabitMute).where(
+                    HabitMute.user_id == user_id, HabitMute.product_key == product_key
+                )
+            )
+            if muted:
+                session.add(HabitMute(user_id=user_id, product_key=product_key))
+            return True
+
+
+ImportOutcome = Literal["ok", "skipped", "failed"]
+
+
+class HistoryImportRepo:
+    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+        self._sessions = sessions
+
+    async def record(
+        self,
+        user_id: int,
+        source: str,
+        outcome: ImportOutcome,
+        detail: str = "",
+        at: datetime | None = None,
+    ) -> None:
+        async with self._sessions() as session, session.begin():
+            session.add(
+                HistoryImport(
+                    user_id=user_id,
+                    source=source,
+                    outcome=outcome,
+                    detail=detail,
+                    at=at or utcnow(),
+                )
+            )
+
+    async def last_ok(self, user_id: int, source: str) -> datetime | None:
+        """Freshness: when this source was last read successfully."""
+        async with self._sessions() as session:
+            result = await session.execute(
+                select(HistoryImport.at)
+                .where(
+                    HistoryImport.user_id == user_id,
+                    HistoryImport.source == source,
+                    HistoryImport.outcome == "ok",
+                )
+                .order_by(HistoryImport.at.desc())
+                .limit(1)
+            )
+            at: datetime | None = result.scalar_one_or_none()
+            return at
+
+
+class NotificationRepo:
+    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+        self._sessions = sessions
+
+    async def last_sent(self, user_id: int, kind: str, subject_key: str) -> datetime | None:
+        async with self._sessions() as session:
+            result = await session.execute(
+                select(Notification.sent_at)
+                .where(
+                    Notification.user_id == user_id,
+                    Notification.kind == kind,
+                    Notification.subject_key == subject_key,
+                )
+                .order_by(Notification.sent_at.desc())
+                .limit(1)
+            )
+            at: datetime | None = result.scalar_one_or_none()
+            return at
+
+    async def record(
+        self, user_id: int, kind: str, subject_keys: Sequence[str], at: datetime | None = None
+    ) -> None:
+        async with self._sessions() as session, session.begin():
+            now = at or utcnow()
+            for key in subject_keys:
+                session.add(Notification(user_id=user_id, kind=kind, subject_key=key, sent_at=now))

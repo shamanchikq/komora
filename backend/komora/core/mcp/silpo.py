@@ -161,6 +161,33 @@ class SilpoSession:
             },
         )
 
+    # --- History (reference §9) ---
+    async def get_my_online_orders(self, *, limit: int = 50, offset: int = 0) -> dict[str, Any]:
+        return await self._call(
+            "silpo_get_my_online_orders",
+            {"limit": min(int(limit), ONLINE_PAGE), "offset": int(offset)},
+        )
+
+    async def get_my_offline_orders(
+        self,
+        context: SearchContext,
+        *,
+        limit: int = 10,
+        offset: int = 0,
+        date_start: str | None = None,
+        date_end: str | None = None,
+    ) -> dict[str, Any]:
+        args: dict[str, Any] = {
+            **context.as_tool_args(),
+            "limit": min(int(limit), OFFLINE_PAGE),
+            "offset": int(offset),
+        }
+        if date_start:
+            args["dateStart"] = date_start
+        if date_end:
+            args["dateEnd"] = date_end
+        return await self._call("silpo_get_my_offline_orders", args)
+
     # --- Introspection ---
     async def list_tools(self) -> list[dict[str, Any]]:
         """Declarations for `build_tool_decls`. Attributes are snake_case in the SDK."""
@@ -174,6 +201,12 @@ class SilpoSession:
             for tool in result.tools
         ]
 
+
+ONLINE_PAGE = 50
+"""The live ceiling for `silpo_get_my_online_orders` (`-32602 too_big` above it); the
+August fixture still says 100. Reference §9."""
+OFFLINE_PAGE = 10
+"""`silpo_get_my_offline_orders` declares `max: 10` and enforces it."""
 
 _CART_ITEM_FIELDS = ("productId", "companyId", "branchId", "quantity")
 _REMOVE_ITEM_FIELDS = ("productId",)
