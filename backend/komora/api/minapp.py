@@ -19,8 +19,10 @@ from pydantic import BaseModel
 
 from komora.bot.handlers import (
     Services,
+    on_add_deal,
     on_cancel,
     on_choose_alternative,
+    on_deals,
     on_habits_draft,
     on_list_alternatives,
     on_open_active,
@@ -38,6 +40,8 @@ from komora.bot.handlers import (
 from komora.bot.outcomes import (
     AlternativesReady,
     Ask,
+    DealReady,
+    DealsReady,
     DraftReady,
     HabitsReady,
     NudgeReady,
@@ -45,8 +49,19 @@ from komora.bot.outcomes import (
     PreviewReady,
     Spoke,
     Synced,
+    TrackedDeal,
 )
-from komora.bot.render import NO_HABITS, freshness_text
+from komora.bot.render import (
+    DEALS_TRUST,
+    NO_DEALS_BRANCH,
+    NO_DEALS_MINE,
+    NO_HABITS,
+    PROMOS_NOTE,
+    deal_sentence,
+    freshness_text,
+    prices_checked_text,
+)
+from komora.core.deals.scan import BranchDeal
 from komora.core.habits.engine import Habit
 from komora.core.initdata import InitDataRejected, verify_init_data
 
@@ -120,7 +135,58 @@ def serialise(outcome: Outcome | AlternativesReady) -> dict[str, Any]:
                 "no": outcome.no,
                 "no_label": outcome.no_label,
             }
+        case DealReady():
+            return {
+                "kind": "deal",
+                "deals": [_tracked_deal_json(d, outcome.today) for d in outcome.deals],
+            }
+        case DealsReady():
+            return {
+                "kind": "deals",
+                "mine": [_tracked_deal_json(d, None) for d in outcome.mine],
+                "branch": [_branch_deal_json(d) for d in outcome.branch],
+                "coupons": outcome.coupons,
+                "promos": outcome.promos,
+                "scanned_at": outcome.scanned_at.isoformat() if outcome.scanned_at else None,
+                "scanned_text": prices_checked_text(outcome.scanned_at),
+                "warnings": outcome.warnings,
+                # Every sentence the screen needs, as text — it restates no rule.
+                "empty_mine_text": NO_DEALS_MINE,
+                "empty_branch_text": NO_DEALS_BRANCH,
+                "promos_note": PROMOS_NOTE,
+                "trust_text": DEALS_TRUST,
+                "toast": outcome.toast,
+            }
     raise TypeError(f"unhandled outcome {type(outcome).__name__}")
+
+
+def _tracked_deal_json(deal: TrackedDeal, today: Any) -> dict[str, Any]:
+    snap = deal.snapshot
+    return {
+        "product_key": deal.habit.product_key,
+        "name": deal.habit.name,
+        "price": str(snap.price),
+        "old_price": str(snap.old_price) if snap.old_price is not None else None,
+        "percent_off": snap.percent_off,
+        "below_usual": deal.below_usual,
+        # The chat's sentence, verbatim — the comparison rule lives in one place.
+        "sentence": deal_sentence(deal),
+        "weighted": deal.habit.weighted,
+        "unit": deal.habit.unit,
+    }
+
+
+def _branch_deal_json(deal: BranchDeal) -> dict[str, Any]:
+    return {
+        "product_id": deal.product_id,
+        "name": deal.name,
+        "price": str(deal.price),
+        "old_price": str(deal.old_price),
+        "percent_off": deal.percent_off,
+        "weighted": deal.weighted,
+        "display_ratio": deal.display_ratio,
+        "external_product_id": deal.external_product_id,
+    }
 
 
 def _habit_json(habit: Habit, today: Any) -> dict[str, Any]:
@@ -173,6 +239,15 @@ class ChooseIn(BaseModel):
     product_id: str
     """Checked against a freshly built candidate list, never trusted — see
     `handlers.on_choose_alternative`."""
+
+
+class AddDealIn(BaseModel):
+    """What the deals screen drew for a row. None of it is trusted: the handler
+    re-fetches the product by article and pins the hit to the id."""
+
+    product_id: str
+    name: str
+    external_product_id: int | None = None
 
 
 class QtyIn(BaseModel):
@@ -280,5 +355,27 @@ def minapp_router(services: Services, bot_token: str) -> APIRouter:
     @router.post("/habits/{product_key}/unmute")
     async def unmute(product_key: str, user_id: User) -> dict[str, Any]:
         return serialise(await on_set_mute(services, user_id, product_key, muted=False))
+
+    # --- deals (Plan 4) ---
+
+    @router.get("/deals")
+    async def deals(user_id: User) -> dict[str, Any]:
+        """«Акції»: the sender's own tracked products on promotion, the branch's
+        deepest discounts, coupons and promos as text. Reads only."""
+        return serialise(await on_deals(services, user_id))
+
+    @router.post("/deals/draft")
+    async def deals_draft(user_id: User) -> dict[str, Any]:
+        """A basket from the tracked products currently discounted — no model request."""
+        return serialise(await on_habits_draft(services, user_id, discounted_only=True))
+
+    @router.post("/deals/add")
+    async def add_deal(body: AddDealIn, user_id: User) -> dict[str, Any]:
+        """«Додати» on a branch deal — into the open draft, or a new «Акції» draft."""
+        return serialise(
+            await on_add_deal(
+                services, user_id, body.product_id, body.name, body.external_product_id
+            )
+        )
 
     return router

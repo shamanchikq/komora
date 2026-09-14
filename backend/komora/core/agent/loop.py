@@ -19,6 +19,7 @@ import json
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Any
 
 from pydantic import ValidationError
 
@@ -26,6 +27,7 @@ from komora.core.agent.prompts import SYSTEM_PROMPT
 from komora.core.agent.tools import (
     CONTEXT_TOOLS,
     INJECTED_PARAMS,
+    MAX_LISTED_PRODUCTS,
     PROPOSE_BASKET,
     READ_TOOLS,
 )
@@ -83,7 +85,7 @@ async def run_agent(
 
         if call.name == PROPOSE_BASKET:
             try:
-                basket = DraftBasket.model_validate({**call.args, "intent": "stated"})
+                basket = DraftBasket.model_validate({**call.args, "intent": intent_of(call.args)})
             except ValidationError as exc:
                 basket_failures += 1
                 if basket_failures > MAX_BASKET_RETRIES:
@@ -119,6 +121,21 @@ async def run_agent(
     return AgentOutcome(reply=_TOO_LONG)
 
 
+def intent_of(args: dict[str, Any]) -> str:
+    """What kind of basket the model proposed, from the fields it filled.
+
+    One `propose_basket` serves every intent (Plan 4 D5/D7): a menu makes it a meal
+    plan, a headcount makes it an event, and neither makes it the stated basket Plan 1
+    shipped. The intent is stored with the draft and shown nowhere; it exists so a
+    later reader can tell the three apart.
+    """
+    if args.get("guests"):
+        return "event"
+    if args.get("menu"):
+        return "mealplan"
+    return "stated"
+
+
 def _assistant_turn(call: ToolCall) -> Message:
     return Message("assistant", tool_calls=(call,))
 
@@ -147,11 +164,29 @@ async def _dispatch(mcp: SilpoClient, call: ToolCall, context: SearchContext) ->
     if call.name == "silpo_find_products_batch":
         queries = args.pop("products", None) or args.pop("queries", None) or []
         result = await method(queries, context)
-    elif call.name == "silpo_get_product_details":
-        result = await method(slug=str(args.get("slug", "")), context=context)
+    elif call.name in ("silpo_get_product_details", "silpo_get_similar_products"):
+        slug = str(args.pop("slug", ""))
+        result = await method(slug, context, **args) if args else await method(slug, context)
     elif call.name in CONTEXT_TOOLS:
         result = await method(context, **args)
     else:
         result = await method(**args)
 
-    return json.dumps(result, ensure_ascii=False, default=str)[:8000]
+    return json.dumps(clip_products(result), ensure_ascii=False, default=str)[:8000]
+
+
+def clip_products(result: Any, limit: int = MAX_LISTED_PRODUCTS) -> Any:
+    """Shorten a product list before it is serialised, and say so.
+
+    A browse of a hundred products is ~55 000 characters; the 8 000-character cut
+    below used to fall mid-object, so the model read half a product and a broken
+    string. The first `limit` products stay whole and `omitted` counts the rest —
+    the model can ask for a narrower filter, and it never sees a product it cannot
+    read.
+    """
+    if not isinstance(result, dict):
+        return result
+    products = result.get("products")
+    if not isinstance(products, list) or len(products) <= limit:
+        return result
+    return {**result, "products": products[:limit], "omitted": len(products) - limit}

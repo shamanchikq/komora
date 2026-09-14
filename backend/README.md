@@ -147,6 +147,64 @@ habits at all. From then on:
 (`e3460e4eec92`). The engine and the resolve path have run over one real history; the
 Telegram side has not — the checklist is below.
 
+## Deals, price memory, the digest, plans and events
+
+Plan 4, built 2026-09-14 against a live read of the Silpo tools it leans on
+([reference §10](../docs/silpo-mcp-reference.md#10-what-plan-4-leans-on--read-live-2026-09-14))
+and **not yet walked on a device**. Everything in it is computed by Python from reads;
+the model is spent only on a plan or an event, and there exactly as on a stated basket.
+
+- **A deal is `oldPrice > price` on a product id** — never a coupon, never a promotion
+  title. Coupons and personal offers are shown as text about the account; no write tool
+  activates a promo, and the screen says so.
+- **Price memory** (`core/deals/scan.py`, `price_snapshots`): every turn that holds a
+  live cart context re-prices the tracked habits **after its reply**, at most daily —
+  one `find_products_batch` call over their article numbers, matched by
+  `externalProductId`, never by name (`handlers._schedule_prices`). A product the
+  search did not return is recorded as unknown, not as «no deal». Not on the hourly
+  job: a catalogue read needs a live slot, which a job rarely holds — the same reason
+  receipts are read after a turn.
+- **A deal alert** (`handlers.deal_for`) goes out after such a scan when a *nudgeable*
+  habit is on promotion: «Ваш звичний товар зараз дешевший: … 39,99 ₴ замість
+  60,99 ₴ (−34 %). Зібрати кошик?» — one message per product per week, outside quiet
+  hours, never about a product Komora just pushed. «На N % нижче за звичайну» is added
+  only once four days of shelf prices exist at that branch (`deals.scan.usual_price`);
+  paid prices from receipts are never mixed into that baseline.
+- **`/deals`** and the Mini App's «Акції»: your discounted products, the branch's ten
+  deepest discounts (`get_products(mustHavePromotion)` **ranked here** — Silpo's
+  `sortBy: price` orders on `displayPrice` and mixes per-100 g with per-piece prices),
+  coupons and promos as text. Each part degrades alone and says so. «Додати» on a
+  branch deal re-fetches the product by article and pins it to the id
+  (`resolve_known`), then appends it to the open draft or opens one titled «Акції».
+- **The digest** (`/digest on`, off by default; `core/digest.py`): Sunday 18:00 Kyiv
+  from stored data — receipts' own `sumReg`/`sumDiscount`/bonuses (`receipts` table,
+  filled by the same importer), delivered orders' lines, the budget, the habits due in
+  the next week, coupons expiring within it. Receipts and online orders are **two
+  lines**, never one sum, until it is known whether a delivery also appears as a
+  receipt. A week Komora saw nothing of gets no message.
+- **Meal plans and events** («склади план на тиждень», «шашлик на 10 людей») are one
+  `propose_basket` with a `menu` and `guests`; a line may state a **need** («1,5 кг»)
+  which `resolve` turns into packs from Silpo's `displayRatio` (`core/units.py`) when
+  it can read one, and leaves alone otherwise. The dishes ride into the verification
+  pass as the basket's purpose and are drawn above the draft. Nutrition is not scored.
+- **Restrictions are advisory** (Plan 4 D6): on a plan-shaped message the account's
+  food restrictions and children's ages are read, given to the model as text for the
+  *menu*, and never stored; the draft carries «…кожен товар у кошику на них не
+  перевірявся». No cart line is filtered — the substring filter Plan 1 removed is not
+  back, and will not be until a populated restrictions payload has been captured.
+- **What the model is shown of a tool** is now decided, not accidental:
+  `agent/tools.describe` keeps Silpo's descriptions paragraph by paragraph, drops the
+  ones Komora's prompt contradicts («BUDGET: ALWAYS fill the cart…»), and a test fails
+  if a kept description ever carries one of those phrases. Three more reads are open to
+  it: personal promos, product sets, similar products.
+- **An unknown slash command** answers with the command list instead of spending a
+  model request.
+
+`uv run alembic upgrade head`: two tables and five columns (`a1f4c2d9e7b3`). Task 0's
+live half — re-capturing `tools.json`, the four probes, the sanitised fixtures — is
+still to do; the code reads the 2026-09-14 fields wherever the fixture's August shape
+allows and tolerates their absence everywhere.
+
 ## Mini App API
 
 Same process, same handlers, second face. Every route requires
@@ -170,6 +228,9 @@ as strings.
 | `POST /api/baskets/{id}/lines/{p}/remove` | `on_remove_line` | ✕ — edits the draft, never the Silpo cart directly |
 | `POST /api/baskets/{id}/trim` | `on_trim_optional` | drop every optional line in one action |
 | `POST /api/baskets/{id}/cancel` | `on_cancel` | discard the draft |
+| `GET /api/deals` | `on_deals` | «Акції»: your discounted products, the branch's top ten, coupons and promos |
+| `POST /api/deals/draft` | `on_habits_draft(discounted_only)` | a basket from the tracked products on promotion |
+| `POST /api/deals/add` `{product_id, name, external_product_id}` | `on_add_deal` | one branch deal into the open draft — re-fetched by article, pinned to the id |
 
 ### The alternatives picker
 
@@ -473,9 +534,61 @@ Mini App — «Звичні покупки»:
       reason in a banner — not to compose.
 - [x] Long names wrap beside the toggle on a phone; nothing hides under the MainButton.
 
+### Manual checklist — Plan 4
+
+Needs a shopping account with tracked habits and a live timeslot. Nothing below has
+been walked; the suite covers the rules, not Telegram or a phone.
+
+- [ ] Any message that builds a basket → within a minute `history_imports` has a
+      `prices ok` row naming the tracked products, and `price_snapshots` has one row
+      per product for today at the cart's branch.
+- [ ] With a tracked, nudgeable product on promotion: the deal alert arrives once,
+      daytime, with «замість» and the percentage; «Зібрати кошик» builds exactly that
+      product; «🔇 1» mutes it; the same promotion is not announced again that week.
+- [ ] `/deals` → three sections; the branch list is ordered by percentage; with the
+      Mini App configured, «Відкрити в Коморі» opens «Акції».
+- [ ] «Акції» in the Mini App: «Додати» on a branch deal lands on the draft with the
+      product and «зі знижкою у Сільпо — … замість …» as its reason; a second «Додати»
+      appends to the same draft; the draft pushes to the real cart.
+- [ ] `/digest on`, then on a Sunday after 18:00 Kyiv: one message; the receipts total
+      matches the Silpo app's; `/digest off` stops it.
+- [ ] «Склади план на тиждень на 2 особи» → the menu above the basket, one product per
+      line, dishes named in the reasons, the verification pass judging against the
+      dishes; «шашлик на 10 людей у суботу» → dessert and drinks optional, «Прибрати
+      необовʼязкові» trims them.
+- [ ] On an account with a food restriction set: the plan's draft carries the advisory
+      sentence; on one without, it does not.
+- [ ] A line whose product has a `displayRatio` shows the pack size in the chat and in
+      the Mini App row; a stated need («3 л молока») becomes the right number of packs.
+- [ ] `/help` (or any unknown command) answers with the command list, and the day's
+      model quota is untouched.
+
 ### Known issues
 
 Found by the live runs on 2026-08-11/12, and left open deliberately.
+
+- **Plan 4 is unwalked, and its Task 0 is half done.** The code reads
+  `displayRatio`, `displayPrice`, `specialPrices` and the coupon list's value fields as
+  the 2026-09-14 live read measured them, but `tests/fixtures/mcp/tools.json` is still
+  the August capture: no sanitised fixture carries the new fields, the four §10.8
+  probes the plan's Task 0 lists (a promotion read against a passed slot, `promoId` on
+  a paid-out reward, `all-food`, delivery-as-receipt) are unanswered, and
+  `get_similar_products` is declared to the model from a schema that predates its
+  three new required parameters — the loop injects them regardless. Re-capture with
+  `scripts/verify_mcp.py` and expect `test_agent_loop`, `test_schema_map` and
+  `test_silpo_client` to need attention.
+- **The digest's coupon section only exists when a session is open.** The job tick
+  sends the digest from stored data without opening a Silpo session per subscriber,
+  so «Купон згорає» appears only when `digest_for` is given a client — today, nowhere
+  in production. Opening one background session per subscriber on Sunday evening is
+  the cheap fix; it waits on knowing how many subscribers there are.
+- **Online savings are not claimed.** An online order line carries no `oldPrice`, so
+  the digest's «заощаджено» is receipts only, and says so.
+- **`describe` drops by denylist, not by allowlist.** The plan asked for a per-tool
+  list of kept headings. Without the live descriptions to hand (the fixture is
+  August's), an allowlist would silently drop any heading it did not know; the
+  denylist keeps everything but the instructions Komora contradicts, and the test that
+  guards it is the same either way. Revisit with the re-captured fixture.
 
 - **Habits were walked once, on one account (2026-09-14)** — see the checklist for what that walk could not reach. The normaliser, the engine and `resolve_known`
   ran over one real shopping history on 2026-09-14 (reference §9): 3 habits tracked,
@@ -671,7 +784,11 @@ komora/
 │   ├── mcp/   Silpo MCP client: typed wrappers, retry, per-user OAuth
 │   ├── llm/   provider-agnostic LLM client (Gemini implementation)
 │   ├── agent/ the agent loop; read-only tool access
-│   └── passes/ deterministic pipeline: resolve, promos, budget
+│   ├── passes/ deterministic pipeline: resolve, promos, budget
+│   ├── habits/ purchases → engine → habits draft
+│   ├── deals/  price snapshots, the deal scan, branch deals ranked
+│   ├── digest.py  the Sunday message from stored data
+│   └── units.py   pack sizes: displayRatio parsed, a need turned into packs
 ├── db/        SQLAlchemy models and repositories
 ├── api/       FastAPI — OAuth callback + Mini App API (initData → JSON outcomes)
 │                + serves ../web/dist at / when built

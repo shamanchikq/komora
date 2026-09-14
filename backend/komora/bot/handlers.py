@@ -21,7 +21,7 @@ import asyncio
 import logging
 import math
 import re
-from collections.abc import Awaitable, Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
@@ -31,6 +31,8 @@ from typing import Any, Protocol
 from komora.bot.outcomes import (
     AlternativesReady,
     Ask,
+    DealReady,
+    DealsReady,
     DraftReady,
     HabitsReady,
     NudgeReady,
@@ -38,11 +40,23 @@ from komora.bot.outcomes import (
     PreviewReady,
     Spoke,
     Synced,
+    TrackedDeal,
 )
 from komora.core.agent.loop import ForbiddenToolCall, run_agent
 from komora.core.agent.recap import cancel_recap, draft_recap, sync_recap
 from komora.core.agent.tools import ToolSource
 from komora.core.alternatives import list_alternatives, next_alternative
+from komora.core.deals.models import Snapshot
+from komora.core.deals.scan import (
+    USUAL_WINDOW_DAYS,
+    deals_among,
+    percent_below,
+    promo_texts,
+    rank_branch_deals,
+    snapshot_tracked,
+    usual_price,
+)
+from komora.core.digest import DigestInput, ExpiringCoupon, digest_text
 from komora.core.habits.draft import HABITS_INTENT, HABITS_TITLE, habit_lines
 from komora.core.habits.engine import Habit, compute_habits, due, due_to_buy
 from komora.core.habits.importer import ImportReport, import_history
@@ -51,15 +65,18 @@ from komora.core.llm.protocol import LLMClient, LLMUnavailable, Message
 from komora.core.mcp.errors import McpError, NotAuthenticated
 from komora.core.mcp.gateway import Busy
 from komora.core.mcp.protocol import SilpoClient
-from komora.core.models import ResolvedCart, SearchContext
+from komora.core.models import KnownLine, ResolvedCart, SearchContext
+from komora.core.money import uah
 from komora.core.passes.budget import OVER_BUDGET, apply_budget
-from komora.core.passes.promos import apply_savings
+from komora.core.passes.promos import apply_savings, coupon_usable, describe_coupons
 from komora.core.passes.removals import match_removals
 from komora.core.passes.resolve import snap_quantity
 from komora.core.pipeline import (
     CartContextMissing,
     SilpoCache,
     TimeslotExpired,
+    _coupons,
+    _listed,
     build_cart,
     build_known_cart,
     categories_for,
@@ -74,7 +91,9 @@ from komora.db.repo import (
     HabitRepo,
     HistoryImportRepo,
     NotificationRepo,
+    PriceSnapshotRepo,
     PurchaseRepo,
+    ReceiptRepo,
     UserRepo,
 )
 from komora.db.tables import DraftBasketRow, User
@@ -177,6 +196,27 @@ DELETED = "Готово. Комора більше нічого про вас н
 NOTHING_TO_DELETE = "Комора й так нічого про вас не зберігає."
 PAYOFF_INTRO = "Ваші покупки вже в Коморі. Відстежую {items}:"
 PAYOFF_OUTRO = "«/usual» — подивитися, «/mute» — вимкнути щось; коли буде пора, нагадаю."
+DIGEST_HELP = (
+    "Підсумок тижня — одне повідомлення в неділю ввечері: скільки витрачено за чеками, "
+    "скільки заощаджено, що, схоже, знадобиться наступного тижня.\n"
+    "«/digest on» — увімкнути, «/digest off» — вимкнути."
+)
+DIGEST_ON = "Підсумок тижня увімкнено — прийде в неділю ввечері. «/digest off» — вимкнути."
+DIGEST_OFF = "Підсумок тижня вимкнено."
+DEALS_TITLE = "Акції"
+DEAL_REASON = "зі знижкою у Сільпо — {price} замість {old}"
+DEAL_ADDED_REASON = "додано з акцій"
+NOT_A_DEAL = "Цього товару вже нема в акціях або в наявності — нічого не додано."
+UNKNOWN_COMMAND = (
+    "Такої команди в Комори нема. Ось що вона вміє:\n"
+    "/start — підключити Сільпо · /basket — відкрита чернетка · /usual — звичні покупки\n"
+    "/deals — акції · /budget — тижневий бюджет · /digest — підсумок тижня\n"
+    "/mute — що не відстежувати · /quiet — тихі години · /delete — видалити все\n\n"
+    "А щоб зібрати кошик, просто напишіть, що потрібно купити."
+)
+RESTRICTIONS_ADVISORY = "restrictions:advisory"
+"""Silpo reported food restrictions and the model was told them for the *menu*; no line
+of the cart was checked against them (Plan 4 D6). Rendered as that sentence."""
 
 NUDGE_KIND = "habit_due"
 NUDGE_COOLDOWN = timedelta(days=3)
@@ -214,6 +254,11 @@ class HabitServices:
     receipts_in_flight: set[int] = field(default_factory=set)
     """Users with an after-turn receipt import already scheduled, so a burst of taps
     schedules one import rather than one per tap. Per process, like the gateway's locks."""
+    prices: PriceSnapshotRepo | None = None
+    """Plan 4 price memory. `None` switches the deal scan and the alert off."""
+    receipts: ReceiptRepo | None = None
+    """Plan 4 receipt totals, for the digest. `None` stores lines only."""
+    prices_in_flight: set[int] = field(default_factory=set)
 
 
 class BackgroundConnect(Protocol):
@@ -390,12 +435,13 @@ async def on_text(services: Services, telegram_id: int, text: str) -> Outcome:
     try:
         async with services.connect(telegram_id) as mcp:
             _, context = await _load_context(services, telegram_id, mcp)
+            household = await household_context(mcp, text)
             outcome = await run_agent(
                 llm=services.llm,
                 mcp=mcp,
                 context=context,
                 history=history,
-                user_message=text,
+                user_message=f"{text}\n\n{household.lines}" if household.lines else text,
                 tools=await services.tools(mcp),
             )
             if outcome.basket is None:
@@ -403,6 +449,8 @@ async def on_text(services: Services, telegram_id: int, text: str) -> Outcome:
                 await services.conversations.append(telegram_id, "assistant", answer)
                 return Spoke(answer)
 
+            if household.restricted:
+                outcome.basket.warnings.append(RESTRICTIONS_ADVISORY)
             cart = await build_cart(
                 outcome.basket,
                 mcp,
@@ -451,6 +499,94 @@ async def on_text(services: Services, telegram_id: int, text: str) -> Outcome:
     return DraftReady(title=basket.title, cart=cart, budget_cap=budget_cap, basket_id=basket_id)
 
 
+PLAN_HINT = re.compile(
+    r"план|меню|тижд|гост|людей|осіб|вечір|свят|шашлик|день народж|дит|діт|рецепт", re.I
+)
+"""When a turn is worth two account reads before the model sees it (Plan 4 D6, J3):
+restrictions and children's ages are read only for a message that looks like a plan
+or an event. Both reads need no cart context and answer in a tenth of a second; both
+payloads are used for this one request and never stored."""
+
+
+@dataclass(frozen=True)
+class HouseholdContext:
+    lines: str = ""
+    """What is appended to the user message: «ОБМЕЖЕННЯ: …» and «ДІТИ: …» lines."""
+    restricted: bool = False
+
+
+def restriction_names(payload: Any) -> list[str]:
+    """`name` when Silpo gives one, the `slug` otherwise — never invented. The one
+    populated value ever seen was `{slug: "all-food", name: null}` (reference §10.5),
+    which reads as «all-food» here: unknown, and shown as such."""
+    names: list[str] = []
+    for entry in _listed(payload, "restrictions", "items", "data"):
+        if isinstance(entry, dict):
+            label = str(entry.get("name") or entry.get("slug") or "").strip()
+            if label:
+                names.append(label)
+        elif isinstance(entry, str) and entry.strip():
+            names.append(entry.strip())
+    return names
+
+
+def children_ages(payload: Any, today: date) -> list[int]:
+    """Whole years from `children[].dateOfBirth`; a child with no date is not counted."""
+    ages: list[int] = []
+    if not isinstance(payload, dict):
+        return ages
+    for child in payload.get("children") or []:
+        if not isinstance(child, dict):
+            continue
+        raw = str(child.get("dateOfBirth") or "")[:10]
+        try:
+            born = date.fromisoformat(raw)
+        except ValueError:
+            continue
+        age = today.year - born.year - ((today.month, today.day) < (born.month, born.day))
+        if 0 <= age < 25:
+            ages.append(age)
+    return sorted(ages)
+
+
+async def household_context(mcp: SilpoClient, text: str) -> HouseholdContext:
+    """Restrictions and children's ages for a plan or an event, as text for the model.
+
+    A soft constraint on the *proposal*, and said so: the model is asked to avoid the
+    restricted products in the menu, and the draft carries `RESTRICTIONS_ADVISORY`
+    because no line of the cart is checked — Plan 1 removed the substring filter that
+    failed in the dangerous direction, and nothing better exists until a populated
+    restrictions payload has been captured. A read that fails adds nothing.
+    """
+    if not PLAN_HINT.search(text):
+        return HouseholdContext()
+    lines: list[str] = []
+    restricted = False
+    try:
+        names = restriction_names(await mcp.get_my_food_restrictions())
+    except Exception:
+        names = []
+    if names:
+        restricted = True
+        lines.append("ОБМЕЖЕННЯ: " + ", ".join(names))
+    try:
+        ages = children_ages(await mcp.get_my_family(), today_in_kyiv())
+    except Exception:
+        ages = []
+    if ages:
+        lines.append("ДІТИ: " + ", ".join(f"{a} р." for a in ages))
+    return HouseholdContext(lines="\n".join(lines), restricted=restricted)
+
+
+async def on_unknown_command(services: Services, telegram_id: int) -> Outcome:
+    """A slash command Komora does not have: the list, not a model request.
+
+    `/help`, `/cancel`, a typo — anything that was not a known command fell through to
+    the text handler and became a basket request, spending the day's scarcest resource
+    on answering confusion (a known issue since Plan 1)."""
+    return Spoke(UNKNOWN_COMMAND)
+
+
 async def on_callback(services: Services, telegram_id: int, data: str) -> Outcome:
     action, _, raw_id = data.partition(":")
 
@@ -463,6 +599,13 @@ async def on_callback(services: Services, telegram_id: int, data: str) -> Outcom
         return await on_set_mute(services, telegram_id, raw_id, muted=action == "mute")
     if action == "habits" and raw_id in ("build", "nudge"):
         return await on_habits_draft(services, telegram_id, from_nudge=raw_id == "nudge")
+    if action == "habits" and raw_id.startswith("deal:"):
+        # «Зібрати кошик» under a deal alert: the product the alert named, and only it.
+        key = raw_id.partition(":")[2]
+        return await on_habits_draft(services, telegram_id, keys=[key] if key else [])
+    if action == "habits" and raw_id == "deals":
+        # From «/deals»: every tracked product currently discounted.
+        return await on_habits_draft(services, telegram_id, discounted_only=True)
     if action == "delete" and raw_id == "confirm":
         return await on_delete_confirm(services, telegram_id)
     if action == "delete" and raw_id == "keep":
@@ -957,7 +1100,444 @@ async def _load_context(
     # be refused for one still keeps the history current.
     await _schedule_receipts(services, telegram_id, context)
     await ensure_timeslot(mcp, context)
+    # Prices after the slot check: a search against a passed slot finds nothing, and
+    # nothing must not be written down as «unknown» for every tracked product.
+    await _schedule_prices(services, telegram_id, context)
     return cart_id, context
+
+
+PRICES_EVERY = timedelta(days=1)
+PRICES_SOURCE = "prices"
+"""The `history_imports` source a price scan records under — the same table, so a
+skip is a row and «/deals» can say when the tracked products were last re-priced."""
+
+
+async def _schedule_prices(services: Services, telegram_id: int, context: SearchContext) -> None:
+    """The after-turn price scan (Plan 4 Task 2), beside the receipts import.
+
+    A catalogue read needs a live cart context, which a job at an arbitrary hour
+    rarely holds — so, as with receipts, the turn that has one schedules the scan for
+    after its reply, at most once a day, one in flight per user."""
+    stores = services.habits
+    if stores is None or stores.prices is None or telegram_id in stores.prices_in_flight:
+        return
+    last = await stores.imports.last_ok(telegram_id, PRICES_SOURCE)
+    if last is not None and datetime.now(UTC) - last < PRICES_EVERY:
+        return
+    stores.prices_in_flight.add(telegram_id)
+    services.spawn(refresh_prices(services, telegram_id, context))
+
+
+async def refresh_prices(services: Services, telegram_id: int, context: SearchContext) -> None:
+    """Re-price the tracked products with the context the turn already read, then say
+    something only if one of them is on promotion (`deal_for`). Never raises."""
+    stores = services.habits
+    if stores is None or stores.prices is None:
+        return
+    try:
+        connect = stores.connect_background
+        session = (
+            connect(telegram_id, wait_seconds=AFTER_TURN_WAIT)
+            if connect is not None
+            else services.connect(telegram_id)
+        )
+        async with session as mcp:
+            snapshots = await scan_prices(services, telegram_id, mcp, context)
+        alert = await deal_for(services, telegram_id, snapshots)
+        if alert is not None:
+            await services.notify(telegram_id, alert)
+    except Busy:
+        await stores.imports.record(
+            telegram_id, PRICES_SOURCE, "skipped", "a turn held the session"
+        )
+    except (NotAuthenticated, McpError) as exc:
+        await stores.imports.record(
+            telegram_id, PRICES_SOURCE, "failed", f"{type(exc).__name__}: {exc}"
+        )
+    except Exception:
+        log.exception("after-turn price scan failed for %s", telegram_id)
+    finally:
+        stores.prices_in_flight.discard(telegram_id)
+
+
+async def scan_prices(
+    services: Services,
+    telegram_id: int,
+    mcp: SilpoClient,
+    context: SearchContext,
+    *,
+    now: datetime | None = None,
+) -> list[Snapshot]:
+    """One search over the tracked articles; a snapshot per product found, a row in
+    `history_imports` either way. A product the search did not return is unknown —
+    it gets no snapshot and is named in the row's detail."""
+    stores = services.habits
+    if stores is None or stores.prices is None:
+        return []
+    now = now or datetime.now(UTC)
+    habits = [h for h in await stores.habits.list(telegram_id) if h.reorderable]
+    if not habits:
+        await stores.imports.record(telegram_id, PRICES_SOURCE, "ok", "nothing tracked", at=now)
+        return []
+    try:
+        result = await snapshot_tracked(
+            mcp, context, habits, today=now.astimezone(KYIV).date(), now=now
+        )
+    except Exception as exc:
+        await stores.imports.record(
+            telegram_id, PRICES_SOURCE, "failed", f"{type(exc).__name__}: {exc}", at=now
+        )
+        raise
+    await stores.prices.upsert(telegram_id, result.snapshots)
+    detail = f"{len(result.snapshots)} priced" + (
+        f", unknown: {', '.join(result.unknown)}" if result.unknown else ""
+    )
+    await stores.imports.record(telegram_id, PRICES_SOURCE, "ok", detail, at=now)
+    return result.snapshots
+
+
+DEAL_KIND = "deal"
+DEAL_COOLDOWN = timedelta(days=7)
+"""One deal message per product per week (Plan 4 D9). A promotion that runs for a
+month is one piece of news, not four."""
+MAX_DEAL_ITEMS = 5
+
+
+async def _tracked_deals(
+    services: Services,
+    telegram_id: int,
+    snapshots: Sequence[Snapshot] | None = None,
+    *,
+    branch_id: str | None = None,
+) -> list[TrackedDeal]:
+    """The tracked, unmuted, reorderable habits whose latest snapshot is a promotion,
+    with the «звичайна ціна» comparison when enough history exists."""
+    stores = services.habits
+    if stores is None or stores.prices is None:
+        return []
+    habits = {h.product_key: h for h in await stores.habits.list(telegram_id)}
+    if snapshots is None:
+        if branch_id is None:
+            return []
+        snapshots = await stores.prices.latest(telegram_id, branch_id)
+    out: list[TrackedDeal] = []
+    for snapshot in deals_among(snapshots):
+        habit = habits.get(snapshot.product_key)
+        if habit is None or habit.muted or not habit.reorderable:
+            continue
+        history = await stores.prices.history(
+            telegram_id,
+            snapshot.product_key,
+            snapshot.branch_id,
+            since=snapshot.day - timedelta(days=USUAL_WINDOW_DAYS),
+        )
+        usual = usual_price(history)
+        below = percent_below(snapshot.price, usual) if usual is not None else None
+        out.append(TrackedDeal(habit=habit, snapshot=snapshot, below_usual=below))
+    return out
+
+
+async def deal_for(
+    services: Services,
+    telegram_id: int,
+    snapshots: Sequence[Snapshot],
+    *,
+    now: datetime | None = None,
+) -> DealReady | None:
+    """The J6 message, or nothing: a *nudgeable* habit on promotion, not just pushed
+    to the cart, not told about inside the cooldown, not in quiet hours."""
+    stores = services.habits
+    if stores is None or stores.prices is None or not snapshots:
+        return None
+    now = now or datetime.now(UTC)
+    if in_quiet_hours(await services.users.get(telegram_id), now):
+        return None
+    in_cart = await services.baskets.synced_at(telegram_id)
+    fresh: list[TrackedDeal] = []
+    for deal in await _tracked_deals(services, telegram_id, snapshots):
+        if not deal.habit.nudgeable:
+            continue
+        if already_in_cart(deal.habit, in_cart.get(deal.habit.product_key), now):
+            continue
+        last = await stores.notifications.last_sent(telegram_id, DEAL_KIND, deal.habit.product_key)
+        if last is not None and now - last < DEAL_COOLDOWN:
+            continue
+        fresh.append(deal)
+    if not fresh:
+        return None
+    chosen = fresh[:MAX_DEAL_ITEMS]
+    await stores.notifications.record(
+        telegram_id, DEAL_KIND, [d.habit.product_key for d in chosen], at=now
+    )
+    return DealReady(deals=chosen, today=now.astimezone(KYIV).date())
+
+
+BRANCH_DEALS_PAGE = 100
+DEGRADED_BRANCH = "degraded:branch"
+DEGRADED_PROMOS = "degraded:promos"
+
+
+async def on_deals(services: Services, telegram_id: int) -> Outcome:
+    """«/deals» and the «Акції» screen (Plan 4 Task 3).
+
+    Three lists, each computed by Python and each degrading on its own: the tracked
+    products on promotion (re-priced now if the last scan is older than a day — the
+    user asked), the branch's deepest discounts ranked here, and the account's coupons
+    and personal offers as text. No model request anywhere in it.
+    """
+    await services.users.ensure(telegram_id)
+    blob, _ = await services.users.get_token_blob(telegram_id)
+    if not blob:
+        return _needs_link(WELCOME)
+    stores = services.habits
+    warnings: list[str] = []
+    try:
+        async with services.connect(telegram_id) as mcp:
+            _, context = await _load_context(services, telegram_id, mcp)
+            mine: list[TrackedDeal] = []
+            scanned_at: datetime | None = None
+            if stores is not None and stores.prices is not None:
+                last = await stores.imports.last_ok(telegram_id, PRICES_SOURCE)
+                if last is None or datetime.now(UTC) - last >= PRICES_EVERY:
+                    snapshots = await scan_prices(services, telegram_id, mcp, context)
+                    mine = await _tracked_deals(services, telegram_id, snapshots)
+                    scanned_at = datetime.now(UTC)
+                else:
+                    mine = await _tracked_deals(services, telegram_id, branch_id=context.branch_id)
+                    scanned_at = last
+            try:
+                page = await mcp.get_products(
+                    context, mustHavePromotion=True, inStock=True, limit=BRANCH_DEALS_PAGE
+                )
+                branch = rank_branch_deals(
+                    [p for p in (page.get("products") or []) if isinstance(p, dict)]
+                )
+            except Exception:
+                branch, warnings = [], [*warnings, DEGRADED_BRANCH]
+            try:
+                coupons = describe_coupons(await _coupons(mcp))
+            except Exception:
+                coupons, warnings = [], [*warnings, "degraded:coupons"]
+            try:
+                promos = promo_texts(await mcp.get_my_promos())
+            except Exception:
+                promos, warnings = [], [*warnings, DEGRADED_PROMOS]
+    except NotAuthenticated:
+        return _needs_link(NEED_AUTH)
+    except CartContextMissing as exc:
+        return Spoke(_no_context(exc))
+    except McpError:
+        return Spoke(SILPO_DOWN)
+    return DealsReady(
+        mine=mine,
+        branch=branch,
+        coupons=coupons,
+        promos=promos,
+        scanned_at=scanned_at,
+        warnings=warnings,
+    )
+
+
+MAX_DEAL_NAME = 200
+
+
+async def on_add_deal(
+    services: Services,
+    telegram_id: int,
+    product_id: str,
+    name: str,
+    external_product_id: int | None,
+) -> Outcome:
+    """«Додати» on a branch deal: one known-product line into the open draft, or a new
+    draft titled «Акції» when there is none.
+
+    The id, the name and the article all arrive from the client, so they buy nothing:
+    the line goes through `resolve_known`, which searches by article and pins the hit
+    to the id — a product that is not that product, or is not in stock, comes back as
+    «не знайшлося» rather than as a line. The price and the reason are what Silpo
+    quotes now, not what the screen happened to draw.
+    """
+    await services.users.ensure(telegram_id)
+    product_id, name = product_id.strip(), " ".join(name.split())[:MAX_DEAL_NAME]
+    if not product_id or len(product_id) > 64 or not name:
+        return Spoke(NOT_A_DEAL, toast="Невідомий товар")
+    line = KnownLine(
+        product_id=product_id,
+        name=name,
+        external_product_id=external_product_id,
+        reason_kind="deal",
+        reason_text=DEAL_ADDED_REASON,
+    )
+    user = await services.users.get(telegram_id)
+    budget_cap = user.budget_weekly if user else None
+    try:
+        async with services.connect(telegram_id) as mcp:
+            _, context = await _load_context(services, telegram_id, mcp)
+            cart, _ = await build_known_cart([line], mcp, context, budget_cap=budget_cap)
+    except NotAuthenticated:
+        return _needs_link(NEED_AUTH)
+    except CartContextMissing as exc:
+        return Spoke(_no_context(exc))
+    except McpError:
+        return Spoke(SILPO_DOWN)
+
+    resolved = next((ln for ln in cart.lines if not ln.unavailable), None)
+    if resolved is None:
+        return Spoke(NOT_A_DEAL, toast="Нема в наявності")
+    if resolved.old_price is not None and resolved.old_price > resolved.unit_price:
+        resolved = resolved.model_copy(
+            update={
+                "reason_text": DEAL_REASON.format(
+                    price=uah(resolved.unit_price), old=uah(resolved.old_price)
+                )
+            }
+        )
+
+    active = await services.baskets.get_active(telegram_id)
+    if active is not None:
+        await services.baskets.append_item(active.id, resolved)
+        return await _edited_outcome(
+            services, telegram_id, active.id, active.title, toast=f"Додано {resolved.name}"[:200]
+        )
+    cart = cart.model_copy(update={"lines": [resolved]})
+    cart = apply_savings(cart.model_copy(update={"savings_notes": []}))
+    await services.conversations.append(telegram_id, "assistant", draft_recap(DEALS_TITLE, cart))
+    basket_id = await services.baskets.create_from_cart(telegram_id, DEALS_TITLE, "deals", cart)
+    return await _draft_ready(
+        services, telegram_id, basket_id, DEALS_TITLE, cart, toast=f"Додано {resolved.name}"[:200]
+    )
+
+
+# --- The weekly digest (Plan 4 Task 4) --------------------------------------------
+
+DIGEST_KIND = "digest"
+DIGEST_ON_OFF = frozenset({"on", "off", "так", "ні", "увімкнути", "вимкнути"})
+DIGEST_HOUR = 18
+"""Kyiv, Sunday. The tick is hourly, so the message goes out in the 18:00 hour."""
+
+
+async def on_digest(services: Services, telegram_id: int, argument: str) -> Outcome:
+    await services.users.ensure(telegram_id)
+    word = argument.strip().lower()
+    if word in ("on", "так", "увімкнути"):
+        await services.users.set_digest(telegram_id, True)
+        return Spoke(DIGEST_ON)
+    if word in ("off", "ні", "вимкнути"):
+        await services.users.set_digest(telegram_id, False)
+        return Spoke(DIGEST_OFF)
+    user = await services.users.get(telegram_id)
+    state = "Зараз увімкнено." if user is not None and user.digest_weekly else "Зараз вимкнено."
+    return Spoke(f"{state}\n\n{DIGEST_HELP}")
+
+
+def digest_week(now: datetime) -> tuple[date, date]:
+    """Monday to the next Monday (exclusive), Kyiv, for the week `now` falls in."""
+    today = now.astimezone(KYIV).date()
+    start = today - timedelta(days=today.weekday())
+    return start, start + timedelta(days=7)
+
+
+def digest_due(user: User | None, now: datetime) -> bool:
+    kyiv = now.astimezone(KYIV)
+    return bool(
+        user is not None and user.digest_weekly and kyiv.weekday() == 6 and kyiv.hour >= DIGEST_HOUR
+    )
+
+
+async def digest_for(
+    services: Services,
+    telegram_id: int,
+    *,
+    now: datetime | None = None,
+    mcp: SilpoClient | None = None,
+) -> Spoke | None:
+    """This week's digest from stored data, or nothing. `mcp` is optional and only
+    adds the expiring coupons; without it that section is simply absent."""
+    stores = services.habits
+    if stores is None:
+        return None
+    now = now or datetime.now(UTC)
+    start, end = digest_week(now)
+    start_at = datetime.combine(start, datetime.min.time(), tzinfo=KYIV).astimezone(UTC)
+    end_at = datetime.combine(end, datetime.min.time(), tzinfo=KYIV).astimezone(UTC)
+
+    online = [
+        e
+        for e in await stores.purchases.events(telegram_id)
+        if e.source == "online" and start_at <= e.bought_at < end_at
+    ]
+    online_spent = sum((e.unit_price * Decimal(str(e.qty)) for e in online), Decimal("0")).quantize(
+        Decimal("0.01")
+    )
+    receipts = (
+        await stores.receipts.between(telegram_id, start_at, end_at)
+        if stores.receipts is not None
+        else []
+    )
+    user = await services.users.get(telegram_id)
+    today = now.astimezone(KYIV).date()
+    horizon = today + timedelta(days=7)
+    habits = await stores.habits.list(telegram_id)
+    due_soon = [h for h in due_to_buy(habits, horizon) if h.due_on > today or h.is_due(today)]
+    expiring: list[ExpiringCoupon] = []
+    if mcp is not None:
+        try:
+            for coupon in _listed(await mcp.get_my_coupons(), "coupons", "items", "data"):
+                if not isinstance(coupon, dict) or not coupon_usable(coupon):
+                    continue
+                ends = _date_of(coupon.get("endDate"))
+                if ends is None or not (today <= ends <= horizon):
+                    continue
+                [note] = describe_coupons([coupon]) or [""]
+                if note:
+                    expiring.append(ExpiringCoupon(text=note, ends_on=ends))
+        except Exception:
+            log.info("coupons unavailable for the digest of %s", telegram_id, exc_info=True)
+
+    text = digest_text(
+        DigestInput(
+            week_start=start,
+            week_end=end,
+            online_spent=online_spent,
+            online_lines=len(online),
+            receipts=receipts,
+            budget_cap=user.budget_weekly if user else None,
+            due_next_week=due_soon,
+            expiring=expiring,
+        ),
+        today,
+    )
+    return Spoke(text) if text else None
+
+
+def _date_of(value: Any) -> date | None:
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except TypeError, ValueError:
+        return None
+
+
+async def send_digest_if_due(
+    services: Services, telegram_id: int, *, now: datetime, mcp: SilpoClient | None = None
+) -> bool:
+    """Sunday evening, once per ISO week, only to a subscriber. Returns whether sent."""
+    stores = services.habits
+    if stores is None:
+        return False
+    user = await services.users.get(telegram_id)
+    if not digest_due(user, now):
+        return False
+    week = (
+        f"{now.astimezone(KYIV).isocalendar().year}-W{now.astimezone(KYIV).isocalendar().week:02d}"
+    )
+    if await stores.notifications.last_sent(telegram_id, DIGEST_KIND, week) is not None:
+        return False
+    digest = await digest_for(services, telegram_id, now=now, mcp=mcp)
+    if digest is None:
+        return False
+    await stores.notifications.record(telegram_id, DIGEST_KIND, [week], at=now)
+    await services.notify(telegram_id, digest)
+    return True
 
 
 async def _schedule_receipts(services: Services, telegram_id: int, context: SearchContext) -> None:
@@ -1044,6 +1624,7 @@ async def refresh_history(
         since_offline=await stores.imports.last_ok(telegram_id, "offline"),
         now=now,
         include_online=online,
+        receipts=stores.receipts,
     )
     failed = {e.partition(":")[0] for e in report.errors}
     if online:
@@ -1180,7 +1761,12 @@ async def on_set_mute(
 
 
 async def on_habits_draft(
-    services: Services, telegram_id: int, *, from_nudge: bool = False
+    services: Services,
+    telegram_id: int,
+    *,
+    from_nudge: bool = False,
+    keys: Sequence[str] | None = None,
+    discounted_only: bool = False,
 ) -> Outcome:
     """A basket from due habits — no model request — through the known-product resolve
     path and the ordinary pipeline, then confirmed like any other draft.
@@ -1189,6 +1775,10 @@ async def on_habits_draft(
     usual», every tracked habit due by date (`due_to_buy`) — the list was opened on
     purpose, so the nudge tier does not apply. With none due, everything tracked: the
     user asked for a basket, and «нема з чого» is the only honest refusal.
+
+    `keys` (a deal alert's «Зібрати кошик») names the products exactly;
+    `discounted_only` («/deals») takes the tracked products currently on promotion,
+    per the last scan. Both are the user's own habits, looked up for the sender.
     """
     stores = _habits_or_off(services)
     if isinstance(stores, Spoke):
@@ -1197,7 +1787,13 @@ async def on_habits_draft(
     today = today_in_kyiv()
     tracked = await stores.habits.list(telegram_id)
     usable = [h for h in tracked if h.reorderable and not h.muted]
-    chosen = (due(tracked, today) if from_nudge else []) or due_to_buy(tracked, today) or usable
+    if keys is not None:
+        wanted = set(keys)
+        chosen = [h for h in usable if h.product_key in wanted]
+    elif discounted_only:
+        chosen = usable  # narrowed to the branch's snapshots once the context is known
+    else:
+        chosen = (due(tracked, today) if from_nudge else []) or due_to_buy(tracked, today) or usable
     lines = habit_lines(chosen, today)
     if not lines:
         return Spoke(NO_HABITS_TO_BUILD)
@@ -1207,6 +1803,13 @@ async def on_habits_draft(
     try:
         async with services.connect(telegram_id) as mcp:
             _, context = await _load_context(services, telegram_id, mcp)
+            if discounted_only:
+                # Snapshots are per branch, and the branch is only known from the cart.
+                deals = await _tracked_deals(services, telegram_id, branch_id=context.branch_id)
+                on_sale = {d.habit.product_key for d in deals}
+                lines = [ln for ln in lines if ln.product_id in on_sale]
+                if not lines:
+                    return Spoke(NO_HABITS_TO_BUILD)
             cart, learned = await build_known_cart(lines, mcp, context, budget_cap=budget_cap)
     except NotAuthenticated:
         return _needs_link(NEED_AUTH)

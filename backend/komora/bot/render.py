@@ -21,6 +21,8 @@ from html import escape
 
 from komora.bot.outcomes import (
     Ask,
+    DealReady,
+    DealsReady,
     DraftReady,
     HabitsReady,
     NudgeReady,
@@ -28,10 +30,11 @@ from komora.bot.outcomes import (
     PreviewReady,
     Spoke,
     Synced,
+    TrackedDeal,
 )
 from komora.core.habits.engine import Habit
 from komora.core.habits.purchases import KYIV
-from komora.core.models import ResolvedCart, ResolvedLine, SyncReport
+from komora.core.models import MenuItem, ResolvedCart, ResolvedLine, SyncReport
 from komora.core.money import CURRENCY, uah
 from komora.core.passes.budget import OVER_BUDGET, optional_lines_total
 from komora.core.sync import SyncPreview
@@ -62,7 +65,12 @@ def quantity(qty: float) -> str:
 
 def line_text(index: int, line: ResolvedLine) -> str:
     name = esc(line.name)
-    unit = f" · {esc(line.unit)}" if line.unit else ""
+    # The pack size, now that a search hit carries one (`displayRatio`, reference
+    # §10.3); `ratio` — the August field — was null on every weighted product and
+    # rarely set otherwise. Not on a weighted good, whose «100г» is the pricing unit,
+    # not the pack.
+    size = line.display_ratio if (line.display_ratio and not line.weighted) else line.unit
+    unit = f" · {esc(size)}" if size else ""
     parts = [f"{index}. <b>{name}</b>{unit}"]
 
     if line.unavailable:
@@ -105,6 +113,11 @@ def warning_text(code: str) -> str:
             "Час доставки у вашому кошику Сільпо вже недоступний. Кошик зберемо, але "
             "оберіть новий час у застосунку Сільпо перед оформленням."
         )
+    if kind == "restrictions":
+        return (
+            "Обмеження в харчуванні з вашого профілю Сільпо враховано при складанні меню, "
+            "але кожен товар у кошику на них не перевірявся — перегляньте самі."
+        )
     if kind == "degraded":
         return {
             "coupons": "Купони зараз недоступні — показано без них.",
@@ -115,8 +128,17 @@ def warning_text(code: str) -> str:
                 "Не вдалося перевірити, чи товари відповідають запиту — "
                 "перегляньте позиції уважніше."
             ),
+            "branch": "Акції магазину зараз недоступні — показано без них.",
+            "promos": "Персональні пропозиції зараз недоступні — показано без них.",
         }.get(rest, f"Часткові дані: {esc(rest)}")
     return esc(code)
+
+
+def render_menu(menu: list[MenuItem]) -> list[str]:
+    """A meal plan's dishes above the basket — a list, never lines of the cart."""
+    if not menu:
+        return []
+    return ["<b>Меню</b>", *(f"• {esc(m.day)} — {esc(m.dish)}" for m in menu[:14]), ""]
 
 
 _VALIDATIONS: dict[str, str] = {
@@ -225,6 +247,7 @@ def render_cart(
         ).strip()
 
     blocks = [f"<b>{esc(title)}</b>", ""]
+    blocks += render_menu(cart.menu)
     blocks += [line_text(i, line) for i, line in enumerate(cart.lines, start=1)]
     blocks += removals
 
@@ -423,6 +446,98 @@ def render_nudge(outcome: NudgeReady) -> str:
     return "\n".join(["Схоже, закінчуються:", *rows, "", "Зібрати кошик?"])
 
 
+NO_DEALS_MINE = "Серед ваших звичних покупок зараз нічого не подешевшало."
+NO_DEALS_BRANCH = "Знижок у цьому магазині зараз не видно."
+PROMOS_NOTE = "Активувати персональну пропозицію можна лише в застосунку Сільпо."
+DEALS_TRUST = (
+    "Знижка — це різниця між старою і теперішньою ціною Сільпо. Купони й пропозиції — "
+    "текст про ваш акаунт, а не про товар у кошику; застосовує їх Сільпо на касі."
+)
+MAX_BRANCH_DEALS_SHOWN = 10
+
+
+def deal_sentence(deal: TrackedDeal) -> str:
+    """«39,99 ₴ замість 60,99 ₴ (−34 %)» — the exact saving, and the comparison to the
+    usual price only once there is enough shelf history to name one (Plan 4 D3)."""
+    snap = deal.snapshot
+    old = snap.old_price if snap.old_price is not None else snap.price
+    text = f"{money(snap.price)} замість {money(old)} (−{snap.percent_off} %)"
+    if deal.below_usual is not None and deal.below_usual > 0:
+        text += f", на {deal.below_usual} % нижче за звичайну тут"
+    return text
+
+
+def render_deal(outcome: DealReady) -> str:
+    """The one proactive deal message: a product the household buys, cheaper."""
+    intro = (
+        "Ваш звичний товар зараз дешевший:"
+        if len(outcome.deals) == 1
+        else "Ваші звичні товари зараз дешевші:"
+    )
+    rows = [
+        f"{i}. <b>{esc(d.habit.name)}</b> — {deal_sentence(d)}"
+        for i, d in enumerate(outcome.deals, start=1)
+    ]
+    return "\n".join([intro, *rows, "", "Зібрати кошик?"])
+
+
+def prices_checked_text(scanned_at: datetime | None) -> str | None:
+    """When the tracked products were last re-priced — one wording for both surfaces,
+    like `freshness_text`; `None` when never."""
+    if scanned_at is None:
+        return None
+    return f"Ціни перевірено {scanned_at.astimezone(KYIV):%d.%m о %H:%M}"
+
+
+def render_deals(outcome: DealsReady) -> str:
+    """«/deals»: three sections, each honest about being empty or unavailable."""
+    blocks = [f"<b>{DEALS_HEADING}</b>", ""]
+    blocks.append("<b>Ваші звичні покупки</b>")
+    if outcome.mine:
+        blocks += [
+            f"{i}. {esc(d.habit.name)} — {deal_sentence(d)}"
+            for i, d in enumerate(outcome.mine, start=1)
+        ]
+    else:
+        blocks.append(NO_DEALS_MINE)
+    checked = prices_checked_text(outcome.scanned_at)
+    if checked is not None:
+        blocks.append(checked)
+
+    blocks += ["", "<b>Найбільші знижки в магазині</b>"]
+    if outcome.branch:
+        for deal in outcome.branch[:MAX_BRANCH_DEALS_SHOWN]:
+            per = "/кг" if deal.weighted else ""
+            size = (
+                f" · {esc(deal.display_ratio)}" if deal.display_ratio and not deal.weighted else ""
+            )
+            blocks.append(
+                f"• {esc(deal.name)}{size} — {money(deal.price)}{per} замість "
+                f"{money(deal.old_price)}{per} (−{deal.percent_off} %)"
+            )
+    elif "degraded:branch" not in outcome.warnings:
+        blocks.append(NO_DEALS_BRANCH)
+
+    if outcome.coupons:
+        blocks += ["", "<b>Ваші купони</b>", *(f"• {esc(c)}" for c in outcome.coupons[:8])]
+    if outcome.promos:
+        blocks += [
+            "",
+            "<b>Персональні пропозиції</b>",
+            *(f"• {esc(p)}" for p in outcome.promos[:8]),
+        ]
+        blocks.append(PROMOS_NOTE)
+    if outcome.warnings:
+        blocks += ["", *(warning_text(w) for w in outcome.warnings)]
+    blocks += ["", DEALS_TRUST]
+    return "\n".join(blocks)
+
+
+DEALS_HEADING = "Акції"
+DEALS_START = "deals"
+"""The launch payload that opens the deals screen. No value: the lists are the
+sender's own."""
+BUILD_DEALS_BUTTON = "Зібрати кошик зі знижок"
 BUILD_HABITS_BUTTON = "Зібрати кошик"
 NOT_NOW_BUTTON = "Не зараз"
 MAX_HABIT_BUTTONS = 24
@@ -511,6 +626,12 @@ def _open_usual(mini_app_url: str | None, worth_it: bool) -> tuple[Button, ...]:
     if not mini_app_url or not worth_it:
         return ()
     return (Button(OPEN_APP_BUTTON, url=f"{mini_app_url}?startapp={USUAL_START}"),)
+
+
+def _open_deals(mini_app_url: str | None) -> tuple[Button, ...]:
+    if not mini_app_url:
+        return ()
+    return (Button(OPEN_APP_BUTTON, url=f"{mini_app_url}?startapp={DEALS_START}"),)
 
 
 def freshness_text(fresh_at: datetime | None) -> str:
@@ -625,4 +746,38 @@ def to_reply(outcome: Outcome, mini_app_url: str | None = None) -> Reply:
                     Button(outcome.yes_label, data=outcome.yes),
                     Button(outcome.no_label, data=outcome.no),
                 ),
+            )
+
+        case DealReady():
+            # One product per alert is the common case; the draft holds exactly what
+            # the message named. Several products: one button builds them all, and
+            # the mutes are per row, numbered like a nudge's.
+            keys = [d.habit.product_key for d in outcome.deals]
+            build = (
+                Button(BUILD_HABITS_BUTTON, data=f"habits:deal:{keys[0]}")
+                if len(keys) == 1
+                else Button(BUILD_DEALS_BUTTON, data="habits:deals")
+            )
+            mutes = tuple(
+                Button(f"{MUTED_MARK} {i}", data=f"mute:{key}", same_row=i > 1)
+                for i, key in enumerate(keys[:MAX_HABIT_BUTTONS], start=1)
+            )
+            return Reply(
+                render_deal(outcome),
+                buttons=(
+                    build,
+                    Button(NOT_NOW_BUTTON, data="dismiss"),
+                    *mutes,
+                    *_open_deals(mini_app_url),
+                ),
+            )
+
+        case DealsReady():
+            build_all: tuple[Button, ...] = (
+                (Button(BUILD_DEALS_BUTTON, data="habits:deals"),) if outcome.mine else ()
+            )
+            return Reply(
+                render_deals(outcome),
+                buttons=(*build_all, *_open_deals(mini_app_url)),
+                toast=outcome.toast,
             )

@@ -6,7 +6,7 @@
  * of the screen that made it — see `describeError`. */
 
 import { webApp } from "./telegram";
-import type { Outcome } from "./types";
+import type { BranchDeal, Outcome } from "./types";
 
 export class ApiError extends Error {
   readonly status: number;
@@ -27,8 +27,10 @@ export class ApiError extends Error {
  * of claim-more-than-the-data-supports the rest of this file exists to avoid. `read`
  * stays for ⇄, which really does search Silpo again. `usual` opens «Звичні покупки»,
  * which reads Komora's own database like `open` — but it is not a draft, so it cannot
- * borrow `open`'s sentence about one. */
-export type Attempt = "draft" | "open" | "usual" | "read" | "edit" | "write";
+ * borrow `open`'s sentence about one. `deals` is the same shape one screen over: it
+ * does read Silpo, but what failed was *opening a screen*, and a screen that never
+ * opened has no draft to reassure anyone about. */
+export type Attempt = "draft" | "open" | "usual" | "deals" | "read" | "edit" | "write";
 
 /** Whether a prose answer to `attempt` is news about the screen that asked, rather
  * than somewhere to go.
@@ -67,6 +69,7 @@ const NO_ANSWER = "Сільпо не відповідає. Чернетка на
 const NO_REACH = "Комора не відповідає. Чернетка на місці — спробуйте за хвилину.";
 const NO_OPEN = "Не вдалося відкрити цю чернетку. Спробуйте, будь ласка, ще раз.";
 const NO_USUAL = "Не вдалося відкрити звичні покупки. Спробуйте, будь ласка, ще раз.";
+const NO_DEALS = "Не вдалося відкрити акції. Спробуйте, будь ласка, ще раз.";
 const SERVER = "Сталася помилка на сервері. Спробуйте, будь ласка, за кілька хвилин.";
 const UNKNOWN = "Щось пішло не так. Спробуйте, будь ласка, ще раз.";
 
@@ -81,6 +84,7 @@ export function describeError(error: unknown, attempt: Attempt): string {
   // Silpo for the failure the way the other two can.
   if (attempt === "open") return NO_OPEN;
   if (attempt === "usual") return NO_USUAL;
+  if (attempt === "deals") return NO_DEALS;
   if (!(error instanceof ApiError)) return UNKNOWN;
   if (error.status === 0) {
     if (attempt === "draft") return NO_DRAFT;
@@ -145,4 +149,20 @@ export const api = {
   // the authenticated sender only, so a guessed one mutes nothing of anyone else's.
   mute: (productKey: string) => post(`habits/${encodeURIComponent(productKey)}/mute`),
   unmute: (productKey: string) => post(`habits/${encodeURIComponent(productKey)}/unmute`),
+  /** «Акції»: the tracked products currently discounted, the branch's deepest
+   * discounts, coupons and promos. Computed by Python from reads — no model request. */
+  deals: () => get("deals"),
+  /** A basket from the tracked products that are discounted right now; lands on the
+   * ordinary draft, like `habitsDraft`. */
+  dealsDraft: () => post("deals/draft"),
+  /** «Додати» on a branch deal. The id, the name and the article are sent back exactly
+   * as they were drawn, and none of them is trusted: the handler re-fetches the product
+   * by article and pins the hit to the id, the way a picked alternative is re-checked.
+   * So the price that becomes a line is the one Silpo quotes then, not this one. */
+  addDeal: (deal: BranchDeal) =>
+    post("deals/add", {
+      product_id: deal.product_id,
+      name: deal.name,
+      external_product_id: deal.external_product_id,
+    }),
 };

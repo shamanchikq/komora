@@ -167,6 +167,53 @@ def receipt_key(receipt: dict[str, Any]) -> str | None:
     return None
 
 
+@dataclass(frozen=True)
+class ReceiptTotals:
+    """A receipt's own totals (Plan 4 Task 4) — `sumReg`, `sumDiscount`,
+    `accruedBalaBonusesSum` — keyed like its lines."""
+
+    receipt_key: str
+    bought_at: datetime
+    total: Decimal
+    discount: Decimal
+    bonuses_accrued: Decimal
+
+
+TOTAL_TOLERANCE = Decimal("1.00")
+"""`sumReg` is undocumented. It is read as the receipt total only when it agrees with
+the sum of the lines to within a hryvnia (till roundings); otherwise the line sum is
+stored, so a digest never claims a figure two fields disagree on."""
+
+
+def receipt_totals(payload: dict[str, Any]) -> list[ReceiptTotals]:
+    """Totals per receipt, from the same payload the lines come from."""
+    out: list[ReceiptTotals] = []
+    for receipt in payload.get("orders") or []:
+        if not isinstance(receipt, dict):
+            continue
+        key = receipt_key(receipt)
+        bought = parse_time(receipt.get("createdAt"))
+        if key is None or bought is None:
+            continue
+        line_sum = Decimal("0")
+        for line in receipt.get("products") or []:
+            if isinstance(line, dict):
+                line_sum += _decimal(line.get("price")) * Decimal(str(line.get("quantity") or 0))
+        line_sum = line_sum.quantize(Decimal("0.01"))
+        reported = _decimal(receipt.get("sumReg"))
+        total = reported if abs(reported - line_sum) <= TOTAL_TOLERANCE else line_sum
+        out.append(
+            ReceiptTotals(
+                receipt_key=key,
+                bought_at=bought,
+                total=max(total, Decimal("0")),
+                discount=max(_decimal(receipt.get("sumDiscount")), Decimal("0")),
+                bonuses_accrued=max(_decimal(receipt.get("accruedBalaBonusesSum")), Decimal("0")),
+            )
+        )
+    return out
+
+
 def offline_purchases(payload: dict[str, Any]) -> list[PurchaseEvent]:
     """Receipt lines netted per product; a product netting to zero or less was returned."""
     events: list[PurchaseEvent] = []

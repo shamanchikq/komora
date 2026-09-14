@@ -26,6 +26,12 @@ READ_TOOLS: Final[dict[str, str]] = {
     "silpo_get_promotions": "get_promotions",
     "silpo_get_my_coupons": "get_my_coupons",
     "silpo_get_categories": "get_categories",
+    # Plan 4: three more reads, so «що з акцій?» and «щось схоже на …» can be answered.
+    # Still a hand-written allowlist — a server-supplied `readOnlyHint` may check this
+    # list (`test_agent_loop`), it never extends it.
+    "silpo_get_my_promos": "get_my_promos",
+    "silpo_get_product_sets": "get_product_sets",
+    "silpo_get_similar_products": "get_similar_products",
 }
 """Tool name -> the `SilpoClient` method that serves it. Nothing here mutates."""
 
@@ -36,12 +42,24 @@ CONTEXT_TOOLS: Final[frozenset[str]] = frozenset(
         "silpo_get_product_details",
         "silpo_get_promotions",
         "silpo_get_categories",
+        "silpo_get_product_sets",
+        "silpo_get_similar_products",
     }
 )
 """Read tools whose published schema requires branch or delivery context.
 
 Every one of them lists at least `branchId` as required, so a call the loop dispatched
-without it would fail validation rather than return a result.
+without it would fail validation rather than return a result. `get_similar_products`
+requires the full slot too since 2026-09-14 (reference §10.1).
+"""
+
+MAX_LISTED_PRODUCTS: Final = 20
+"""How many products of a browse the model is shown.
+
+A page of a hundred is ~55 000 characters (reference §10.7), and `_dispatch` used to
+cut the JSON at 8 000 — mid-object, so the model read a truncated string and guessed
+at the rest. Clipping the *list* keeps every product it does see whole, and the
+payload says how many were left out.
 """
 
 INJECTED_PARAMS: Final[frozenset[str]] = frozenset(
@@ -93,6 +111,23 @@ PROPOSE_BASKET_SCHEMA: Final[dict[str, Any]] = {
                             "попросив більше — не вгадуй запас."
                         ),
                     },
+                    "amount": {
+                        "type": "object",
+                        "description": (
+                            "Скільки ПРОДУКТУ потрібно, коли це відомо з рецепта чи з "
+                            "кількості гостей — «1,5 кг», «3 л», «10 шт». Система сама "
+                            "перерахує в упаковки за розміром пакування Сільпо. Пропусти, "
+                            "якщо кількість не має значення."
+                        ),
+                        "properties": {
+                            "value": {"type": "number", "description": "Число, напр. 1.5."},
+                            "unit": {
+                                "type": "string",
+                                "description": "Одиниця українською: «кг», «г», «л», «мл», «шт».",
+                            },
+                        },
+                        "required": ["value", "unit"],
+                    },
                     "reason_text": {
                         "type": "string",
                         "description": (
@@ -107,6 +142,29 @@ PROPOSE_BASKET_SCHEMA: Final[dict[str, Any]] = {
                 },
                 "required": ["description", "quantity", "reason_text"],
             },
+        },
+        "menu": {
+            "type": "array",
+            "description": (
+                "Лише для плану харчування: страви по днях українською — "
+                "[{day: «понеділок», dish: «борщ»}]. Показується над кошиком. "
+                "Порожній масив, якщо це не план."
+            ),
+            "items": {
+                "type": "object",
+                "properties": {
+                    "day": {"type": "string", "description": "День або прийом їжі, українською."},
+                    "dish": {"type": "string", "description": "Назва страви українською."},
+                },
+                "required": ["day", "dish"],
+            },
+        },
+        "guests": {
+            "type": "integer",
+            "description": (
+                "Лише для події («на 10 людей»): кількість людей. Кількості в lines "
+                "уже мають бути розраховані на них."
+            ),
         },
         "removals": {
             "type": "array",
@@ -145,32 +203,90 @@ def strip_injected(schema: dict[str, Any]) -> dict[str, Any]:
 
 
 _SENTENCE = re.compile(r"(?<=[.!?])\s+|\n+")
+_PARAGRAPH = re.compile(r"\n\s*\n")
+_HEADING = re.compile(r"^([A-Z][A-Z0-9 /&()-]{2,40}):")
+
+MAX_DESCRIPTION: Final = 1600
+"""Long enough for the paragraphs Komora wants the model to have (article search,
+package size, weighted units); short enough that nine tools stay a stable, cacheable
+prefix. Cut at a paragraph, then at a sentence — never mid-word."""
+
+DROPPED_HEADINGS: Final[frozenset[str]] = frozenset({"BUDGET"})
+"""Paragraphs Silpo addresses to a generic agent and Komora's own prompt contradicts.
+
+`find_products_batch` carries «BUDGET: If user mentions a budget, ALWAYS fill the
+cart as close to the budget limit as possible». Komora's budget pass does the
+opposite — it flags an overage and never adds a thing — and until 2026-09-14 the only
+reason the model never read that sentence was a 400-character cut that happened to
+fall before it. An accident is not a policy; this is.
+"""
+
+DROPPED_PHRASES: Final[tuple[str, ...]] = (
+    "fill the cart",
+    "budget limit",
+    "as close to the budget",
+    "maximize the total spend",
+)
+"""The same instruction, wherever it appears without its heading. Both lists are
+checked in `test_agent_loop`: a kept description that gains one of these fails."""
+
+
+def _wanted(paragraph: str) -> bool:
+    heading = _HEADING.match(paragraph)
+    if heading and heading.group(1).strip() in DROPPED_HEADINGS:
+        return False
+    lowered = paragraph.casefold()
+    return not any(phrase in lowered for phrase in DROPPED_PHRASES)
+
+
+def _without_unreachable(paragraph: str, unreachable: Collection[str]) -> str:
+    kept = [
+        sentence
+        for sentence in _SENTENCE.split(paragraph)
+        if not any(name in sentence for name in unreachable)
+    ]
+    return " ".join(s.strip() for s in kept if s.strip())
 
 
 def describe(tool: dict[str, Any], unreachable: Collection[str]) -> str:
     """The description the model reads: Silpo's own, minus advice it cannot act on.
 
-    Three of the read tools tell the caller to fetch branch and timeslot from
-    `silpo_get_shopping_cart_by_id`, in two different wordings. Sound advice for a
-    general agent, impossible for this one: those parameters are hidden by
-    `strip_injected`, and no cart tool is in `READ_TOOLS`. Left in, the model is
-    instructed to call a tool it does not have, to fill a field it cannot see.
+    Two kinds of advice are removed. Sentences that name a tool the model does not
+    have — three read tools say to fetch branch and timeslot from
+    `silpo_get_shopping_cart_by_id`, in two wordings, and those parameters are hidden
+    by `strip_injected` anyway; left in, the model is told to call a tool it cannot
+    reach to fill a field it cannot see. And whole paragraphs Silpo addresses to a
+    generic agent that Komora's prompt contradicts (`DROPPED_HEADINGS`,
+    `DROPPED_PHRASES`) — read live 2026-09-14, the descriptions are structured as
+    `HEADING: text` paragraphs and one of them says to fill the cart to the budget.
 
-    Dropping whole sentences rather than pattern-matching the known two, because the
-    first attempt did exactly that and missed `get_promotions`, which phrases it
-    differently. A sentence naming an unreachable tool has nothing else to offer.
-
-    Removed on principle rather than on measurement — an A/B against gemma4:12b and
-    qwen3.6:27b showed no reliable difference. What it guarantees is only that the
-    tool surface never asks for the impossible.
+    What survives is kept in Silpo's order, first paragraph first, up to
+    `MAX_DESCRIPTION` — cut at a paragraph boundary, then at a sentence. The old
+    400-character cut hid the article-search and package-size paragraphs the resolve
+    pass now depends on the model knowing about (reference §10.6).
     """
     text = (tool.get("description") or "").strip()
-    kept = [
-        sentence
-        for sentence in _SENTENCE.split(text)
-        if not any(name in sentence for name in unreachable)
+    paragraphs = [
+        cleaned
+        for paragraph in _PARAGRAPH.split(text)
+        if paragraph.strip() and _wanted(paragraph.strip())
+        for cleaned in (_without_unreachable(paragraph.strip(), unreachable),)
+        if cleaned
     ]
-    return " ".join(s.strip() for s in kept if s.strip())[:400]
+    out = ""
+    for paragraph in paragraphs:
+        candidate = f"{out} {paragraph}".strip()
+        if len(candidate) <= MAX_DESCRIPTION:
+            out = candidate
+            continue
+        # The paragraph that overflows is cut at a sentence, and nothing follows it.
+        for sentence in _SENTENCE.split(paragraph):
+            trial = f"{out} {sentence.strip()}".strip()
+            if len(trial) > MAX_DESCRIPTION:
+                break
+            out = trial
+        break
+    return out
 
 
 def build_tool_decls(captured_tools: list[dict[str, Any]]) -> list[ToolDecl]:

@@ -5,16 +5,24 @@ Each method opens its own session, so callers never manage transactions.
 
 import json
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Literal
 
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from komora.core.deals.models import Snapshot
 from komora.core.habits.engine import Habit
-from komora.core.habits.purchases import PurchaseEvent, Source
-from komora.core.models import BasketStatus, CartRemoval, ResolvedCart, ResolvedLine
+from komora.core.habits.purchases import PurchaseEvent, ReceiptTotals, Source
+from komora.core.models import (
+    BasketStatus,
+    CartRemoval,
+    MenuItem,
+    ResolvedCart,
+    ResolvedLine,
+    SpecialPrice,
+)
 from komora.db.base import utcnow
 from komora.db.tables import (
     ConversationMessage,
@@ -24,8 +32,10 @@ from komora.db.tables import (
     HistoryImport,
     Notification,
     OAuthClientRegistration,
+    PriceSnapshot,
     ProductHabit,
     Purchase,
+    Receipt,
     User,
 )
 
@@ -119,6 +129,8 @@ class UserRepo:
                 HabitMute,
                 ProductHabit,
                 Purchase,
+                Receipt,
+                PriceSnapshot,
                 ConversationMessage,
             ):
                 await session.execute(delete(table).where(table.user_id == telegram_id))
@@ -133,6 +145,22 @@ class UserRepo:
             )
             await session.execute(delete(User).where(User.telegram_id == telegram_id))
             return True
+
+    async def set_digest(self, telegram_id: int, enabled: bool) -> None:
+        async with self._sessions() as session, session.begin():
+            await session.execute(
+                update(User).where(User.telegram_id == telegram_id).values(digest_weekly=enabled)
+            )
+
+    async def digest_subscribers(self) -> list[int]:
+        """Linked users who asked for the Sunday digest."""
+        async with self._sessions() as session:
+            result = await session.execute(
+                select(User.telegram_id).where(
+                    User.silpo_tokens.is_not(None), User.digest_weekly.is_(True)
+                )
+            )
+            return [int(row) for row in result.scalars()]
 
     async def set_quiet_hours(self, telegram_id: int, start: int | None, end: int | None) -> None:
         async with self._sessions() as session, session.begin():
@@ -224,8 +252,17 @@ def _line(item: DraftItem) -> ResolvedLine:
         weighted=item.weighted,
         step=item.step,
         stock=item.stock,
+        display_ratio=item.display_ratio,
+        display_price=(
+            Decimal(str(item.display_price)) if item.display_price is not None else None
+        ),
+        special_prices=[SpecialPrice.model_validate(s) for s in json.loads(item.special_prices)],
         synced=item.synced,
     )
+
+
+def _special_json(line: ResolvedLine) -> str:
+    return json.dumps([s.model_dump(mode="json") for s in line.special_prices], ensure_ascii=False)
 
 
 class BasketRepo:
@@ -260,36 +297,31 @@ class BasketRepo:
                 coupon_notes=json.dumps(cart.coupon_notes, ensure_ascii=False),
                 removals=json.dumps([r.model_dump() for r in cart.removals], ensure_ascii=False),
                 warnings=json.dumps(cart.warnings, ensure_ascii=False),
+                menu=json.dumps([m.model_dump() for m in cart.menu], ensure_ascii=False),
             )
             session.add(basket)
             await session.flush()
 
             for position, line in enumerate(cart.lines):
-                session.add(
-                    DraftItem(
-                        basket_id=basket.id,
-                        position=position,
-                        description=line.description,
-                        category=line.category,
-                        product_id=line.product_id,
-                        company_id=line.company_id,
-                        branch_id=line.branch_id,
-                        name=line.name,
-                        qty=line.qty,
-                        unit=line.unit,
-                        unit_price=line.unit_price,
-                        old_price=line.old_price,
-                        reason_kind=line.reason_kind,
-                        reason_text=line.reason_text,
-                        substituted_from=line.substituted_from,
-                        optional=line.optional,
-                        unavailable=line.unavailable,
-                        weighted=line.weighted,
-                        step=line.step,
-                        stock=line.stock,
-                    )
-                )
+                session.add(_item_of(basket.id, position, line))
             return basket.id
+
+    async def append_item(self, basket_id: int, line: ResolvedLine) -> int:
+        """Add one line to an open draft — «Додати» on the deals screen.
+
+        Returns the line's index among the visible lines, which is what the surfaces
+        address a line by. The draft's totals are recomputed by the caller
+        (`_edited_outcome`), exactly as after a swap.
+        """
+        async with self._sessions() as session, session.begin():
+            result = await session.execute(
+                select(func.max(DraftItem.position), func.count(DraftItem.id)).where(
+                    DraftItem.basket_id == basket_id, DraftItem.removed.is_(False)
+                )
+            )
+            last, visible = result.one()
+            session.add(_item_of(basket_id, (last if last is not None else -1) + 1, line))
+            return int(visible or 0)
 
     async def get_active(self, telegram_id: int) -> DraftBasketRow | None:
         async with self._sessions() as session:
@@ -318,6 +350,7 @@ class BasketRepo:
             )
             return ResolvedCart(
                 lines=[_line(item) for item in result.scalars().all()],
+                menu=[MenuItem.model_validate(m) for m in json.loads(basket.menu or "[]")],
                 total=Decimal(str(basket.total)),
                 estimated_savings=Decimal(str(basket.estimated_savings)),
                 savings_notes=json.loads(basket.savings_notes),
@@ -403,6 +436,9 @@ class BasketRepo:
             item.weighted = line.weighted
             item.step = line.step
             item.stock = line.stock
+            item.display_ratio = line.display_ratio
+            item.display_price = line.display_price
+            item.special_prices = _special_json(line)
             return True
 
     async def set_qty(self, basket_id: int, position: int, qty: float) -> bool:
@@ -559,6 +595,34 @@ class BasketRepo:
         async with self._sessions() as session:
             basket = await session.get(DraftBasketRow, basket_id)
             return basket.status if basket else None
+
+
+def _item_of(basket_id: int, position: int, line: ResolvedLine) -> DraftItem:
+    return DraftItem(
+        basket_id=basket_id,
+        position=position,
+        description=line.description,
+        category=line.category,
+        product_id=line.product_id,
+        company_id=line.company_id,
+        branch_id=line.branch_id,
+        name=line.name,
+        qty=line.qty,
+        unit=line.unit,
+        unit_price=line.unit_price,
+        old_price=line.old_price,
+        reason_kind=line.reason_kind,
+        reason_text=line.reason_text,
+        substituted_from=line.substituted_from,
+        optional=line.optional,
+        unavailable=line.unavailable,
+        weighted=line.weighted,
+        step=line.step,
+        stock=line.stock,
+        display_ratio=line.display_ratio,
+        display_price=line.display_price,
+        special_prices=_special_json(line),
+    )
 
 
 # --- Habits ----------------------------------------------------------------------
@@ -751,6 +815,152 @@ class HabitRepo:
             if muted:
                 session.add(HabitMute(user_id=user_id, product_key=product_key))
             return True
+
+
+class ReceiptRepo:
+    """Receipt totals for the digest (Plan 4 Task 4). Idempotent like `PurchaseRepo`."""
+
+    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+        self._sessions = sessions
+
+    async def upsert(self, user_id: int, receipts: Sequence[ReceiptTotals]) -> int:
+        if not receipts:
+            return 0
+        async with self._sessions() as session, session.begin():
+            result = await session.execute(
+                select(Receipt).where(
+                    Receipt.user_id == user_id,
+                    Receipt.receipt_key.in_({r.receipt_key for r in receipts}),
+                )
+            )
+            existing = {row.receipt_key: row for row in result.scalars()}
+            for receipt in receipts:
+                row = existing.get(receipt.receipt_key)
+                if row is None:
+                    row = Receipt(user_id=user_id, receipt_key=receipt.receipt_key)
+                    session.add(row)
+                    existing[receipt.receipt_key] = row
+                row.bought_at = receipt.bought_at
+                row.total = receipt.total
+                row.discount = receipt.discount
+                row.bonuses_accrued = receipt.bonuses_accrued
+            return len(receipts)
+
+    async def between(self, user_id: int, start: datetime, end: datetime) -> list[ReceiptTotals]:
+        async with self._sessions() as session:
+            result = await session.execute(
+                select(Receipt)
+                .where(
+                    Receipt.user_id == user_id, Receipt.bought_at >= start, Receipt.bought_at < end
+                )
+                .order_by(Receipt.bought_at)
+            )
+            return [
+                ReceiptTotals(
+                    receipt_key=row.receipt_key,
+                    bought_at=row.bought_at,
+                    total=Decimal(str(row.total)),
+                    discount=Decimal(str(row.discount)),
+                    bonuses_accrued=Decimal(str(row.bonuses_accrued)),
+                )
+                for row in result.scalars()
+            ]
+
+
+class PriceSnapshotRepo:
+    """Shelf prices of tracked products, one row per (product, branch, Kyiv day)."""
+
+    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+        self._sessions = sessions
+
+    async def upsert(self, user_id: int, snapshots: Sequence[Snapshot]) -> int:
+        if not snapshots:
+            return 0
+        async with self._sessions() as session, session.begin():
+            days = {s.day for s in snapshots}
+            result = await session.execute(
+                select(PriceSnapshot).where(
+                    PriceSnapshot.user_id == user_id, PriceSnapshot.day.in_(days)
+                )
+            )
+            existing = {(r.product_key, r.branch_id, r.day): r for r in result.scalars()}
+            for snap in snapshots:
+                key = (snap.product_key, snap.branch_id, snap.day)
+                row = existing.get(key)
+                if row is None:
+                    row = PriceSnapshot(
+                        user_id=user_id,
+                        product_key=snap.product_key,
+                        branch_id=snap.branch_id,
+                        day=snap.day,
+                    )
+                    session.add(row)
+                    existing[key] = row
+                row.external_product_id = snap.external_product_id
+                row.price = snap.price
+                row.old_price = snap.old_price
+                row.display_price = snap.display_price
+                row.available = snap.available
+                row.captured_at = snap.captured_at
+            return len(snapshots)
+
+    async def latest(self, user_id: int, branch_id: str) -> list[Snapshot]:
+        """The newest snapshot per product at this branch."""
+        async with self._sessions() as session:
+            newest = (
+                select(PriceSnapshot.product_key, func.max(PriceSnapshot.day).label("day"))
+                .where(PriceSnapshot.user_id == user_id, PriceSnapshot.branch_id == branch_id)
+                .group_by(PriceSnapshot.product_key)
+                .subquery()
+            )
+            result = await session.execute(
+                select(PriceSnapshot)
+                .join(
+                    newest,
+                    (PriceSnapshot.product_key == newest.c.product_key)
+                    & (PriceSnapshot.day == newest.c.day),
+                )
+                .where(PriceSnapshot.user_id == user_id, PriceSnapshot.branch_id == branch_id)
+            )
+            return [_snapshot_of(row) for row in result.scalars()]
+
+    async def history(
+        self, user_id: int, product_key: str, branch_id: str, *, since: date
+    ) -> list[Snapshot]:
+        async with self._sessions() as session:
+            result = await session.execute(
+                select(PriceSnapshot)
+                .where(
+                    PriceSnapshot.user_id == user_id,
+                    PriceSnapshot.product_key == product_key,
+                    PriceSnapshot.branch_id == branch_id,
+                    PriceSnapshot.day >= since,
+                )
+                .order_by(PriceSnapshot.day)
+            )
+            return [_snapshot_of(row) for row in result.scalars()]
+
+    async def last_day(self, user_id: int) -> date | None:
+        async with self._sessions() as session:
+            result = await session.execute(
+                select(func.max(PriceSnapshot.day)).where(PriceSnapshot.user_id == user_id)
+            )
+            day: date | None = result.scalar_one_or_none()
+            return day
+
+
+def _snapshot_of(row: PriceSnapshot) -> Snapshot:
+    return Snapshot(
+        product_key=row.product_key,
+        external_product_id=row.external_product_id,
+        branch_id=row.branch_id,
+        day=row.day,
+        price=Decimal(str(row.price)),
+        old_price=Decimal(str(row.old_price)) if row.old_price is not None else None,
+        display_price=(Decimal(str(row.display_price)) if row.display_price is not None else None),
+        available=row.available,
+        captured_at=row.captured_at,
+    )
 
 
 ImportOutcome = Literal["ok", "skipped", "failed"]

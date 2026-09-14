@@ -45,7 +45,7 @@ default menu button still is not set. The checklist is in
 All from `backend/`.
 
 ```bash
-uv run pytest              # 1021 tests
+uv run pytest              # 1100+ tests
 uv run ruff check .        # lint
 uv run ruff format .       # format
 uv run mypy komora         # strict
@@ -93,6 +93,9 @@ komora/
 │   │              + recap.py (what the model is told it did last turn)
 │   ├── habits/    purchases (history -> events) -> engine (events -> habits, or nothing)
 │   │              -> draft (due habits -> KnownLines); importer pages both history tools
+│   ├── deals/     price snapshots of tracked products, the deal scan, branch deals ranked
+│   ├── digest.py  the Sunday digest, from stored receipts and purchases only
+│   ├── units.py   displayRatio parsed; a stated need («1,5 кг») turned into packs
 │   ├── passes/    resolve -> verify -> savings -> budget; resolve_known for known products
 │   │              + categories.py (Silpo's taxonomy, beats free-text search)
 │   │              + removals.py («прибери ковбаски» -> a product Komora synced)
@@ -322,8 +325,25 @@ two more: **«Скасувати» did not reach the model** — the history sti
 cancelled draft, so the next message resurrected it (`recap.CANCELLED_TAG`) — and a
 weighted tie rounded down on a float (`0.3 / 0.2 = 1.4999…`), so «сир 300 г» became 0,2 кг.
 
-Only the "stated basket" and "habits" intents exist — meal plan, budget-week, deals and
-event handlers are Plan 4.
+**Plan 4 (breadth) is code-complete, 2026-09-14, unwalked live** — written and built
+the same day against a live read of the tools it leans on (reference §10;
+`docs/superpowers/plans/2026-09-14-plan4-breadth.md`). Deals are computed, never
+proposed: a deal is `oldPrice > price` on the tracked product's own article, found by
+one `find_products_batch` call after a turn that holds a cart context
+(`core/deals/scan.py`, `price_snapshots`), and a J6 alert goes out once per product
+per week when a nudgeable habit is on promotion. `/deals` and the Mini App's «Акції»
+rank the branch's discounts in Python, because Silpo's `sortBy: price` orders on
+`displayPrice`. The Sunday digest (`/digest on`, off by default) is built from
+receipts' own totals (`receipts` table) and never adds online orders to them. Meal
+plans and events are one `propose_basket` with a `menu`, `guests` and per-line
+`amount`, which `resolve` turns into packs from `displayRatio` (`core/units.py`) when
+it can read one. Restrictions are told to the model for the menu and flagged as
+unchecked on the cart; nothing filters a line. `agent/tools.describe` now keeps
+Silpo's descriptions paragraph by paragraph and drops the ones Komora contradicts
+(«ALWAYS fill the cart as close to the budget limit»), with a test that fails if a
+kept description gains such a phrase. **Task 0's live half is not done:** the fixture
+is still August's, the four probes are open, and the checklist in
+[backend/README.md](backend/README.md#manual-checklist--plan-4) is unwalked.
 
 Known gaps, all deliberate — the current list lives in
 [backend/README.md](backend/README.md#known-issues).

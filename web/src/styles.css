@@ -917,3 +917,53 @@ h1 {
   opacity: 0.55;
   cursor: default;
 }
+
+/* Two doors under the compose hint. `.usual-link` keeps its own margin for the case
+   where it stands alone, so the row cancels it and owns the spacing instead. */
+.doors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.doors .usual-link {
+  margin-top: 0;
+}
+
+/* --- meal plan (Plan 4 D5) --------------------------------------------------------- */
+/* The menu above the basket. A card, not rows: a dish is not a product, and drawing it
+   in the row card would say it was one. */
+
+.menu-card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg);
+  padding: 10px 13px;
+  margin: 10px 0;
+  font-size: 0.9rem;
+}
+
+.menu-card ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  color: var(--hint);
+}
+
+.menu-card li {
+  margin: 2px 0;
+}
+
+/* --- deals (Plan 4 Task 3) --------------------------------------------------------- */
+/* Coupons and personal offers: prose about the account, so a plain list rather than
+   the product card — nothing here is a thing that can go in a basket. */
+
+.plain-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 0.9rem;
+}
+
+.plain-list li {
+  margin: 4px 0;
+}

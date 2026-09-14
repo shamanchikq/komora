@@ -79,7 +79,7 @@ async def test_offline_pages_ten_at_a_time_with_date_start() -> None:
     receipts = [receipt(i, f"2026-08-{1 + i % 28:02d}") for i in range(23)]
     silpo = FakeSilpo(offline_orders=receipts)
     now = datetime(2026, 9, 14, tzinfo=UTC)
-    events = await read_offline(silpo, CONTEXT, since=None, now=now)
+    events = (await read_offline(silpo, CONTEXT, since=None, now=now)).events
     assert len(events) == 23
     calls = [c for c in silpo.history_calls if c[0] == "offline"]
     assert [c[1]["offset"] for c in calls] == [0, 10, 20]
@@ -96,7 +96,9 @@ def test_date_start_is_the_last_import_minus_a_day_or_the_backfill_horizon() -> 
 async def test_a_refresh_sends_date_start_and_the_fake_honours_it() -> None:
     silpo = FakeSilpo(offline_orders=[receipt(1, "2026-07-01"), receipt(2, "2026-09-10")])
     now = datetime(2026, 9, 14, tzinfo=UTC)
-    events = await read_offline(silpo, CONTEXT, since=datetime(2026, 9, 1, tzinfo=UTC), now=now)
+    events = (
+        await read_offline(silpo, CONTEXT, since=datetime(2026, 9, 1, tzinfo=UTC), now=now)
+    ).events
     assert [e.product_key for e in events] == ["c2"]
 
 
