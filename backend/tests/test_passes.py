@@ -17,6 +17,7 @@ from komora.core.passes.resolve import (
     fallback_terms,
     resolve_basket,
     snap_quantity,
+    usable,
 )
 from tests.fakes import CONTEXT, FakeSilpo, product
 
@@ -76,6 +77,46 @@ class TestClampQuantity:
         assert clamp_quantity(0.17, cheese) == 0.2
 
 
+class TestCarrierBags:
+    """A bag leads its name with the word; goods that merely come in one do not.
+
+    Bag names are the ones in a real purchase history (2026-09-13) and in Silpo's own
+    tool descriptions; «Пакети для сміття» is a category in the captured tree.
+    """
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "Пакет біорозкладний 3кг 958358",
+            "Пакет Сільпо Пакет з Пакетів 18 кг",
+            "Пакет для катання Сільпо з додаванням вторинного поліетилену 12 кг",
+            "Пакет-майка",
+            "пакет",
+        ],
+    )
+    def test_a_carrier_bag_is_not_usable(self, name: str) -> None:
+        assert not usable(product(name, 2))
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "Сир кисломолочний Ферма 5% пакет",
+            "Сир кисломолочний Ферма 9% пакет",
+            "Молоко 2,5% у пакеті",
+            "Пакети для сміття 35 л",
+            "Чай чорний 25 пакетиків",
+            "«Пакетний» набір",
+        ],
+    )
+    def test_goods_that_mention_a_bag_are_usable(self, name: str) -> None:
+        assert usable(product(name, 2))
+
+    def test_a_product_with_no_name_is_not_a_bag(self) -> None:
+        nameless = product("x", 2)
+        del nameless["name"]
+        assert usable(nameless)
+
+
 class TestResolve:
     async def test_descriptions_become_real_products(self) -> None:
         mcp = FakeSilpo({"молоко": [product("Молоко Яготинське", 42.90)]})
@@ -102,6 +143,13 @@ class TestResolve:
         cart = await resolve_basket(draft(line("пакет")), mcp, CONTEXT)
         assert cart.lines == []
         assert cart.warnings == ["not_found:пакет"]
+
+    async def test_goods_sold_in_a_bag_are_not_bags(self) -> None:
+        """Seen in a real purchase history, 2026-09-13: the substring rule refused it."""
+        cheese = product("Сир кисломолочний Ферма 5% пакет", 59.99)
+        mcp = FakeSilpo({"кисломолочний сир": [cheese]})
+        cart = await resolve_basket(draft(line("кисломолочний сир")), mcp, CONTEXT)
+        assert [resolved.name for resolved in cart.lines] == [cheese["name"]]
 
     async def test_missing_product_is_reported_not_silently_dropped(self) -> None:
         cart = await resolve_basket(draft(line("ікра")), FakeSilpo({}), CONTEXT)

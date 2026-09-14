@@ -297,7 +297,7 @@ These are not suggestions — the descriptions read as a prescriptive agent play
 | **Show `totalAfterDiscounts`** | *"the actual amount the user will PAY"*. Never display `total`. |
 | **Validate the timeslot** | Call `get_time_slots` **immediately** after reading the cart; if the cart's slot is not in the available set, make the user pick again before doing anything else. Times are UTC. |
 | **Respect `stock`** | Never exceed it. Check first, cap, and tell the user the maximum. |
-| **Never re-add plastic bags** | пакет / пакунок, when reordering from a cart. Genuinely non-obvious. |
+| **Never re-add plastic bags** | Silpo names them *"пакет, пакет з пакетів, пакет-майка"*, when reordering from a cart. Genuinely non-obvious. A product is a bag when its name's **first word** is «пакет» (or «пакунок», our addition): bags are named that way, and goods sold in one are not — «Сир кисломолочний Ферма 5 % пакет» is cheese. Whole word and singular, so «Пакети для сміття» and tea «пакетики» are not bags. `passes/resolve.is_carrier_bag`; see the Task 0 note below. |
 | **Surface `validations[]`** | `level: "error"` entries **block checkout**; warnings must be communicated. **The `message` is a code, not prose** — see §5.1. |
 | **Offer балабонуси** | If `calculation.loyalty` has `bonusAvailable > 0` and `isEnabled`, offer to apply them. |
 | **Show both checkout links** | «Оформити на сайті» (`checkoutWebLink`) and «Оформити в застосунку» (`checkoutMobileLink`). |
@@ -618,5 +618,5 @@ collapsed.
 
 **Carrier bags are named first.** Of the 10 names here containing «пакет», the 7 bags all
 *start* with «Пакет»; the other 3 are cottage cheese sold in one («Сир кисломолочний Ферма
-5 % пакет»). The substring rule in §5 — and in `passes/resolve.py` — rejects that cheese as
-a bag. Filed as its own fix.
+5 % пакет»). The substring rule §5 used to state — and `passes/resolve.py` applied —
+rejected that cheese as a bag; the rule is now the name's first word.

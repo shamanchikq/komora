@@ -40,17 +40,25 @@ product is genuinely not on, and the two want opposite fallbacks — see `_narro
 NOT_FOUND = "not_found"
 DEGRADED_REPLACEMENTS = "degraded:replacements"
 
-# Silpo's tool descriptions are explicit: never re-add carrier bags.
-_PLASTIC_BAGS = ("пакет", "пакунок")
+_CARRIER_BAGS = frozenset({"пакет", "пакунок"})
+_FIRST_WORD = re.compile(r"\w+")
 
 
-def _is_plastic_bag(product: dict[str, Any]) -> bool:
-    name = str(product.get("name", "")).casefold()
-    return any(word in name for word in _PLASTIC_BAGS)
+def is_carrier_bag(product: dict[str, Any]) -> bool:
+    """Silpo's tool descriptions are explicit: never re-add carrier bags.
+
+    A bag is named for what it is, so the word comes first — «Пакет біорозкладний 3кг»,
+    «Пакет-майка», «Пакет Сільпо Пакет з Пакетів». Anywhere else in a name it is the
+    packaging: «Сир кисломолочний Ферма 5% пакет» is cottage cheese, and matching the
+    word anywhere refused it. Whole word and singular, because «Пакети для сміття» is a
+    shelf of its own and «25 пакетиків» is tea.
+    """
+    first = _FIRST_WORD.search(str(product.get("name") or ""))
+    return first is not None and first.group().casefold() in _CARRIER_BAGS
 
 
 def usable(product: dict[str, Any]) -> bool:
-    return bool(product.get("id") and product.get("companyId") and not _is_plastic_bag(product))
+    return bool(product.get("id") and product.get("companyId") and not is_carrier_bag(product))
 
 
 def in_stock(product: dict[str, Any]) -> bool:

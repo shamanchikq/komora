@@ -45,7 +45,7 @@ default menu button still is not set. The checklist is in
 All from `backend/`.
 
 ```bash
-uv run pytest              # 901 tests
+uv run pytest              # 916 tests
 uv run ruff check .        # lint
 uv run ruff format .       # format
 uv run mypy komora         # strict

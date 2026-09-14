@@ -53,6 +53,7 @@ from komora.core.mcp.auth import (
 )
 from komora.core.mcp.client import open_session
 from komora.core.mcp.payload import error_of, root_causes, unwrap
+from komora.core.passes.resolve import is_carrier_bag
 from komora.db.base import Base, make_engine, make_session_factory
 from komora.db.repo import OAuthClientRepo, UserRepo
 
@@ -95,15 +96,6 @@ def line_items(payload: Any) -> list[dict[str, Any]]:
         if isinstance(shipment, dict):
             lines.extend(p for p in (shipment.get("products") or []) if isinstance(p, dict))
     return lines
-
-
-# Silpo's own tool descriptions insist on this: never re-add carrier bags when
-# reordering from a cart.
-_PLASTIC_BAGS = ("пакет", "пакунок")
-
-
-def is_plastic_bag(product: dict[str, Any]) -> bool:
-    return any(word in str(product.get("name", "")).lower() for word in _PLASTIC_BAGS)
 
 
 def search_results(payload: Any) -> list[dict[str, Any]]:
@@ -271,7 +263,7 @@ async def main(probe_cart: bool, port: int) -> int:
                 if p.get("productId")
                 and p.get("companyId")
                 and p.get("available", True)
-                and not is_plastic_bag(p)
+                and not is_carrier_bag(p)
                 and (p.get("stock") is None or p["stock"] >= 1)
             ]
             if not check(
