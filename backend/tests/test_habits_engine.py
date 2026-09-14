@@ -142,7 +142,7 @@ def test_coverage_starts_at_the_first_receipt_so_a_data_hole_is_not_a_cadence() 
     found = {h.product_key: h for h in compute_habits(online + receipts)}
     assert found["p"].events == 4 and found["p"].median_gap_days == 7
     # Online only: coverage is the first order with lines, and the gaps are real.
-    (only_online,) = compute_habits(online + [event("p", date(2026, 4, 24), source="online")])
+    (only_online,) = compute_habits([*online, event("p", date(2026, 4, 24), source="online")])
     assert only_online.events == 4
 
 
