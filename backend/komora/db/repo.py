@@ -9,7 +9,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any, Literal
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from komora.core.habits.engine import Habit
@@ -475,7 +475,7 @@ class BasketRepo:
                     DraftItem.basket_id == basket_id,
                     DraftItem.product_id.in_(product_ids),
                 )
-                .values(synced=True)
+                .values(synced=True, synced_at=utcnow())
             )
 
     async def unmark_synced(self, telegram_id: int, product_ids: set[str]) -> None:
@@ -501,8 +501,24 @@ class BasketRepo:
                     DraftItem.basket_id.in_(baskets),
                     DraftItem.product_id.in_(product_ids),
                 )
-                .values(synced=False)
+                .values(synced=False, synced_at=None)
             )
+
+    async def synced_at(self, telegram_id: int) -> dict[str, datetime]:
+        """When Komora last put each product in this user's Silpo cart, for lines still
+        recorded as there. What a nudge asks before calling something «закінчується»."""
+        async with self._sessions() as session:
+            result = await session.execute(
+                select(DraftItem.product_id, func.max(DraftItem.synced_at))
+                .join(DraftBasketRow, DraftBasketRow.id == DraftItem.basket_id)
+                .where(
+                    DraftBasketRow.user_id == telegram_id,
+                    DraftItem.synced.is_(True),
+                    DraftItem.synced_at.is_not(None),
+                )
+                .group_by(DraftItem.product_id)
+            )
+            return {str(product_id): at for product_id, at in result.all() if at is not None}
 
     async def update_totals(self, basket_id: int, cart: ResolvedCart) -> None:
         """Write back everything a swap recomputes.

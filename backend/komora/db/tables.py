@@ -141,6 +141,10 @@ class DraftItem(Base):
     product of its own already sitting there, and `synced_lines` could not offer that
     product for removal either.
     """
+    synced_at: Mapped[datetime | None] = mapped_column(default=None)
+    """When a push last landed this line. `synced` says the product is in the cart;
+    this says since when — which is what lets a nudge tell «already in your cart» from
+    «bought weeks ago». Null for lines landed before 2026-09-14."""
     weighted: Mapped[bool] = mapped_column(default=False)
     """Priced per kilogram; a Mini App needs this to show «0,15 кг × 999,00 ₴/кг»."""
     step: Mapped[float | None] = mapped_column(default=None)

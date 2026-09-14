@@ -17,14 +17,15 @@ Two rules are enforced here rather than trusted:
   client, so a user could otherwise sync somebody else's cart by guessing a number.
 """
 
+import asyncio
 import logging
 import math
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Coroutine
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
-from typing import Protocol
+from typing import Any, Protocol
 
 from komora.bot.outcomes import (
     AlternativesReady,
@@ -42,13 +43,14 @@ from komora.core.agent.recap import draft_recap, sync_recap
 from komora.core.agent.tools import ToolSource
 from komora.core.alternatives import list_alternatives, next_alternative
 from komora.core.habits.draft import HABITS_INTENT, HABITS_TITLE, habit_lines
-from komora.core.habits.engine import Habit, compute_habits, due
+from komora.core.habits.engine import Habit, compute_habits, due, due_to_buy
 from komora.core.habits.importer import ImportReport, import_history
 from komora.core.habits.purchases import KYIV
 from komora.core.llm.protocol import LLMClient, LLMUnavailable, Message
 from komora.core.mcp.errors import McpError, NotAuthenticated
+from komora.core.mcp.gateway import Busy
 from komora.core.mcp.protocol import SilpoClient
-from komora.core.models import ResolvedCart
+from komora.core.models import ResolvedCart, SearchContext
 from komora.core.passes.budget import OVER_BUDGET, apply_budget
 from komora.core.passes.promos import apply_savings
 from komora.core.passes.removals import match_removals
@@ -56,9 +58,11 @@ from komora.core.passes.resolve import snap_quantity
 from komora.core.pipeline import (
     CartContextMissing,
     SilpoCache,
+    TimeslotExpired,
     build_cart,
     build_known_cart,
     categories_for,
+    ensure_timeslot,
     load_context,
 )
 from komora.core.sync import cart_product_ids, execute_sync, preview_sync
@@ -121,6 +125,10 @@ NO_CONTEXT = (
     "У вашому кошику Сільпо не вибрано магазин або час доставки, а без них Сільпо не "
     "шукає товари. Оберіть їх у застосунку Сільпо — і напишіть мені ще раз."
 )
+SLOT_EXPIRED = (
+    "Час доставки у вашому кошику Сільпо вже минув, а за минулим часом Сільпо не "
+    "знаходить жодного товару. Оберіть новий час у застосунку Сільпо — і спробуйте ще раз."
+)
 SILPO_DOWN = "Сільпо зараз не відповідає. Спробуйте, будь ласка, за кілька хвилин."
 LLM_DOWN = "Не можу зараз подумати над кошиком — модель недоступна. Спробуйте пізніше."
 UNEXPECTED = (
@@ -159,10 +167,10 @@ DELETE_ASK = (
     "та чернетки? Кошик у Сільпо це не зачепить. Скасувати це буде неможливо."
 )
 DELETE_YES = "Так, видалити все"
+DELETE_KEPT = "Добре, нічого не видаляю."
 DELETED = "Готово. Комора більше нічого про вас не зберігає. /start — якщо захочете повернутись."
 NOTHING_TO_DELETE = "Комора й так нічого про вас не зберігає."
-PAYOFF_INTRO = "Ваші покупки за останні {months} вже в Коморі. Відстежую {items}:"
-PAYOFF_INTRO_SHORT = "Ваші покупки вже в Коморі. Відстежую {items}:"
+PAYOFF_INTRO = "Ваші покупки вже в Коморі. Відстежую {items}:"
 PAYOFF_OUTRO = "«/usual» — подивитися, «/mute» — вимкнути щось; коли буде пора, нагадаю."
 
 NUDGE_KIND = "habit_due"
@@ -195,9 +203,38 @@ class HabitServices:
     habits: HabitRepo
     imports: HistoryImportRepo
     notifications: NotificationRepo
-    connect_background: SilpoConnect | None = None
+    connect_background: BackgroundConnect | None = None
     """A session that yields to a user's turn instead of queueing behind it —
     `SilpoGateway.connect_background`. Falls back to `Services.connect` when unset."""
+    receipts_in_flight: set[int] = field(default_factory=set)
+    """Users with an after-turn receipt import already scheduled, so a burst of taps
+    schedules one import rather than one per tap. Per process, like the gateway's locks."""
+
+
+class BackgroundConnect(Protocol):
+    """`SilpoGateway.connect_background`: a session that gives up with `Busy` after
+    `wait_seconds` rather than queueing behind a user's turn indefinitely."""
+
+    def __call__(
+        self, telegram_id: int, *, wait_seconds: float = ...
+    ) -> AbstractAsyncContextManager[SilpoClient]: ...
+
+
+class Spawn(Protocol):
+    """Run a coroutine nobody awaits — work that must not cost the reply latency."""
+
+    def __call__(self, work: Coroutine[Any, Any, None]) -> None: ...
+
+
+_detached: set[asyncio.Task[None]] = set()
+
+
+def run_detached(work: Coroutine[Any, Any, None]) -> None:
+    """The production `Spawn`. Keeps a reference until the task ends — the event loop
+    holds only a weak one, and a collected task simply never finishes."""
+    task = asyncio.get_running_loop().create_task(work)
+    _detached.add(task)
+    task.add_done_callback(_detached.discard)
 
 
 class SilpoConnect(Protocol):
@@ -241,6 +278,15 @@ class Services:
     notify: Notify = _no_notify
     """Say an outcome to a user nobody is replying to — the learning payoff after a
     link, a nudge. Built in `main.py` over the same `render.to_reply` a reply uses."""
+    spawn: Spawn = run_detached
+    """Where work that must not delay a reply goes — the receipts import a turn
+    schedules (`_load_context`). Tests pass one that holds the work until drained."""
+
+
+def _no_context(exc: CartContextMissing) -> str:
+    """No slot at all and a slot that has passed are fixed in the same place, but they
+    are not the same sentence."""
+    return SLOT_EXPIRED if isinstance(exc, TimeslotExpired) else NO_CONTEXT
 
 
 def _needs_link(text: str) -> Spoke:
@@ -295,7 +341,7 @@ async def on_text(services: Services, telegram_id: int, text: str) -> Outcome:
 
     try:
         async with services.connect(telegram_id) as mcp:
-            _, context = await load_context(mcp)
+            _, context = await _load_context(services, telegram_id, mcp)
             outcome = await run_agent(
                 llm=services.llm,
                 mcp=mcp,
@@ -330,8 +376,8 @@ async def on_text(services: Services, telegram_id: int, text: str) -> Outcome:
                 )
     except NotAuthenticated:
         return _needs_link(NEED_AUTH)
-    except CartContextMissing:
-        return Spoke(NO_CONTEXT)
+    except CartContextMissing as exc:
+        return Spoke(_no_context(exc))
     except McpError:
         return Spoke(SILPO_DOWN)
     except LLMUnavailable:
@@ -367,10 +413,12 @@ async def on_callback(services: Services, telegram_id: int, data: str) -> Outcom
         return Spoke(DISMISSED, toast="Добре")
     if action in ("mute", "unmute"):
         return await on_set_mute(services, telegram_id, raw_id, muted=action == "mute")
-    if action == "habits" and raw_id == "build":
-        return await on_habits_draft(services, telegram_id)
+    if action == "habits" and raw_id in ("build", "nudge"):
+        return await on_habits_draft(services, telegram_id, from_nudge=raw_id == "nudge")
     if action == "delete" and raw_id == "confirm":
         return await on_delete_confirm(services, telegram_id)
+    if action == "delete" and raw_id == "keep":
+        return Spoke(DELETE_KEPT, toast="Нічого не видалено")
 
     basket_id, _, raw_position = raw_id.partition(":")
     try:
@@ -514,14 +562,14 @@ async def on_list_alternatives(
     line = cart.lines[position]
     try:
         async with services.connect(telegram_id) as mcp:
-            _, context = await load_context(mcp)
+            _, context = await _load_context(services, telegram_id, mcp)
             options = await list_alternatives(
                 line, mcp, context, await categories_for(mcp, context, services.cache)
             )
     except NotAuthenticated:
         return _needs_link(NEED_AUTH)
-    except CartContextMissing:
-        return Spoke(NO_CONTEXT)
+    except CartContextMissing as exc:
+        return Spoke(_no_context(exc))
     except McpError:
         return Spoke(SILPO_DOWN)
 
@@ -554,14 +602,14 @@ async def on_choose_alternative(
 
     try:
         async with services.connect(telegram_id) as mcp:
-            _, context = await load_context(mcp)
+            _, context = await _load_context(services, telegram_id, mcp)
             options = await list_alternatives(
                 line, mcp, context, await categories_for(mcp, context, services.cache)
             )
     except NotAuthenticated:
         return _needs_link(NEED_AUTH)
-    except CartContextMissing:
-        return Spoke(NO_CONTEXT)
+    except CartContextMissing as exc:
+        return Spoke(_no_context(exc))
     except McpError:
         return Spoke(SILPO_DOWN)
 
@@ -720,14 +768,14 @@ async def _swap(
     line = cart.lines[position]
     try:
         async with services.connect(telegram_id) as mcp:
-            _, context = await load_context(mcp)
+            _, context = await _load_context(services, telegram_id, mcp)
             alternative = await next_alternative(
                 line, mcp, context, await categories_for(mcp, context, services.cache)
             )
     except NotAuthenticated:
         return _needs_link(NEED_AUTH)
-    except CartContextMissing:
-        return Spoke(NO_CONTEXT)
+    except CartContextMissing as exc:
+        return Spoke(_no_context(exc))
     except McpError:
         return Spoke(SILPO_DOWN)
 
@@ -753,12 +801,12 @@ async def _preview(services: Services, telegram_id: int, basket_id: int) -> Outc
 
     try:
         async with services.connect(telegram_id) as mcp:
-            _, context = await load_context(mcp)
+            _, context = await _load_context(services, telegram_id, mcp)
             preview = await preview_sync(cart, mcp, context)
     except NotAuthenticated:
         return _needs_link(NEED_AUTH)
-    except CartContextMissing:
-        return Spoke(NO_CONTEXT)
+    except CartContextMissing as exc:
+        return Spoke(_no_context(exc))
     except McpError:
         return Spoke(SILPO_DOWN)
 
@@ -783,8 +831,8 @@ async def _push(services: Services, telegram_id: int, basket_id: int) -> Outcome
             report = await execute_sync(cart, mcp)
     except NotAuthenticated:
         return _needs_link(NEED_AUTH)
-    except CartContextMissing:
-        return Spoke(NO_CONTEXT)
+    except CartContextMissing as exc:
+        return Spoke(_no_context(exc))
     except McpError:
         return Spoke(SILPO_DOWN)
 
@@ -829,27 +877,112 @@ async def _fresh_at(stores: HabitServices, telegram_id: int) -> datetime | None:
     return max(known) if known else None
 
 
+RECEIPTS_EVERY = timedelta(days=1)
+"""How stale receipts may be before a turn that holds a cart context reads them again."""
+AFTER_TURN_WAIT = 120.0
+"""How long an after-turn import waits for the turn that scheduled it to let go of the
+session. That turn is still running when the import is scheduled — a model request
+and a pipeline can take a minute — so the background job's two seconds would read
+every single one of these as `Busy`."""
+PAYOFF_KIND = "payoff"
+PAYOFF_SUBJECT = "habits"
+
+
+async def _load_context(
+    services: Services, telegram_id: int, mcp: SilpoClient
+) -> tuple[str, SearchContext]:
+    """`pipeline.load_context`, plus the one thing only a turn can do for habits.
+
+    Receipts need the cart's branch and an unexpired timeslot, which a job at an
+    arbitrary hour usually does not find. A turn that has just read them does — so
+    every turn that reads the cart schedules a receipts import for *after* its reply
+    (`refresh_receipts`) when receipts are more than a day old. Before this, receipts
+    were read on link and by the job alone, and a household whose slot had lapsed stopped
+    being read at all: the last purchase stopped moving and nudges fired about milk
+    already bought in the shop.
+    """
+    cart_id, context = await load_context(mcp, check_slot=False)
+    # Receipts first: they read fine against a passed slot, so a turn that is about to
+    # be refused for one still keeps the history current.
+    await _schedule_receipts(services, telegram_id, context)
+    await ensure_timeslot(mcp, context)
+    return cart_id, context
+
+
+async def _schedule_receipts(services: Services, telegram_id: int, context: SearchContext) -> None:
+    stores = services.habits
+    if stores is None or telegram_id in stores.receipts_in_flight:
+        return
+    last = await stores.imports.last_ok(telegram_id, "offline")
+    if last is not None and datetime.now(UTC) - last < RECEIPTS_EVERY:
+        return
+    stores.receipts_in_flight.add(telegram_id)
+    services.spawn(refresh_receipts(services, telegram_id, context))
+
+
+async def refresh_receipts(services: Services, telegram_id: int, context: SearchContext) -> None:
+    """The after-turn import: receipts only, with the context the turn already read.
+
+    Never raises — nobody is awaiting it. Every outcome is a row in `history_imports`.
+    If this is the first time receipts could be read, the learning payoff that
+    `on_linked` held back goes out now (`send_payoff`).
+    """
+    stores = services.habits
+    if stores is None:
+        return
+    try:
+        connect = stores.connect_background
+        session = (
+            connect(telegram_id, wait_seconds=AFTER_TURN_WAIT)
+            if connect is not None
+            else services.connect(telegram_id)
+        )
+        async with session as mcp:
+            await refresh_history(services, telegram_id, mcp, context=context, online=False)
+        await send_payoff(services, telegram_id)
+    except Busy:
+        await stores.imports.record(telegram_id, "offline", "skipped", "a turn held the session")
+    except (NotAuthenticated, McpError) as exc:
+        await stores.imports.record(
+            telegram_id, "offline", "failed", f"{type(exc).__name__}: {exc}"
+        )
+    except Exception:
+        log.exception("after-turn receipts import failed for %s", telegram_id)
+    finally:
+        stores.receipts_in_flight.discard(telegram_id)
+
+
 async def refresh_history(
-    services: Services, telegram_id: int, mcp: SilpoClient, *, now: datetime | None = None
+    services: Services,
+    telegram_id: int,
+    mcp: SilpoClient,
+    *,
+    now: datetime | None = None,
+    context: SearchContext | None = None,
+    online: bool = True,
 ) -> ImportReport:
-    """Read what is new from both sources, record each outcome, recompute habits.
+    """Read what is new, record each outcome, recompute habits.
 
     Receipts need the cart's context; with none they are *skipped* and the skip is a
     row in `history_imports`, not a log line. A failed source is recorded the same
     way. Habits are recomputed from every stored purchase — never edited in place.
+
+    `context` is the one a turn already read, so the cart is not read twice;
+    `online=False` reads receipts alone (`refresh_receipts`).
     """
     stores = services.habits
     if stores is None:
         raise RuntimeError("habits are not configured")
     now = now or datetime.now(UTC)
 
-    context = None
-    try:
-        _, context = await load_context(mcp)
-    except Exception as exc:
-        # A cart that cannot be read is a cart with no context: receipts are skipped
-        # and the online source is still read. The reason is recorded with the skip.
-        log.info("no cart context for %s: %s", telegram_id, exc)
+    if context is None:
+        try:
+            _, context = await load_context(mcp, check_slot=False)
+        except Exception as exc:
+            # A cart that cannot be read is a cart with no context: receipts are
+            # skipped and the online source is still read. The reason is recorded
+            # with the skip.
+            log.info("no cart context for %s: %s", telegram_id, exc)
 
     report = await import_history(
         mcp,
@@ -859,15 +992,17 @@ async def refresh_history(
         since_online=await stores.imports.last_ok(telegram_id, "online"),
         since_offline=await stores.imports.last_ok(telegram_id, "offline"),
         now=now,
+        include_online=online,
     )
     failed = {e.partition(":")[0] for e in report.errors}
-    await stores.imports.record(
-        telegram_id,
-        "online",
-        "failed" if "online" in failed else "ok",
-        next((e for e in report.errors if e.startswith("online")), ""),
-        at=now,
-    )
+    if online:
+        await stores.imports.record(
+            telegram_id,
+            "online",
+            "failed" if "online" in failed else "ok",
+            next((e for e in report.errors if e.startswith("online")), ""),
+            at=now,
+        )
     if report.skipped is not None:
         await stores.imports.record(telegram_id, "offline", "skipped", report.skipped, at=now)
     else:
@@ -896,34 +1031,48 @@ async def on_linked(services: Services, telegram_id: int) -> Outcome | None:
         return None
     try:
         async with services.connect(telegram_id) as mcp:
-            await refresh_history(services, telegram_id, mcp)
+            report = await refresh_history(services, telegram_id, mcp)
     except NotAuthenticated, CartContextMissing, McpError:
         log.info("backfill after link failed for %s", telegram_id, exc_info=True)
+        return None
+    if report.offline is None:
+        # Receipts were skipped — most often a cart with no live timeslot — or failed.
+        # They are where most shopping is, so a payoff now would be built from online
+        # orders alone and say «ваші покупки вже в Коморі» about half of them. Held
+        # back instead: the first turn that reads a cart context imports receipts and
+        # sends it then (`refresh_receipts` → `send_payoff`).
+        return None
+    return await _payoff(stores, telegram_id)
+
+
+async def _payoff(stores: HabitServices, telegram_id: int) -> Spoke | None:
+    """The payoff, at most once per user — and recorded as sent before it is said."""
+    if await stores.notifications.last_sent(telegram_id, PAYOFF_KIND, PAYOFF_SUBJECT):
         return None
     habits = [h for h in await stores.habits.list(telegram_id) if h.reorderable]
     if not habits:
         return None
-    return Spoke(payoff_text(habits, today_in_kyiv(), await _history_span(stores, telegram_id)))
+    await stores.notifications.record(telegram_id, PAYOFF_KIND, [PAYOFF_SUBJECT])
+    return Spoke(payoff_text(habits, today_in_kyiv()))
 
 
-async def _history_span(stores: HabitServices, telegram_id: int) -> int | None:
-    events = await stores.purchases.events(telegram_id)
-    if not events:
-        return None
-    first = min(e.bought_at for e in events)
-    return max(1, round((datetime.now(UTC) - first).days / 30))
+async def send_payoff(services: Services, telegram_id: int) -> None:
+    """Say the payoff `on_linked` could not, if there is one to say."""
+    if services.habits is None:
+        return
+    payoff = await _payoff(services.habits, telegram_id)
+    if payoff is not None:
+        await services.notify(telegram_id, payoff)
 
 
-def payoff_text(habits: list[Habit], today: date, months: int | None) -> str:
-    """«Відстежую 3 позиції» reads well at three and is never sent at zero."""
+def payoff_text(habits: list[Habit], today: date) -> str:
+    """«Відстежую 3 позиції» reads well at three and is never sent at zero.
+
+    It names no span. «За останні 19 місяців» was counted from the oldest online order,
+    while receipts — where the shopping is — reached back eighty days: a number true of
+    one source, read as a claim about all of them."""
     count = f"{len(habits)} {pl(len(habits), 'позицію', 'позиції', 'позицій')}"
-    intro = (
-        PAYOFF_INTRO.format(
-            months=f"{months} {pl(months, 'місяць', 'місяці', 'місяців')}", items=count
-        )
-        if months
-        else PAYOFF_INTRO_SHORT.format(items=count)
-    )
+    intro = PAYOFF_INTRO.format(items=count)
     named = [
         f"• {h.name} — кожні ~{days(round(h.median_gap_days))}" for h in habits[:MAX_NUDGE_ITEMS]
     ]
@@ -979,12 +1128,16 @@ async def on_set_mute(
     )
 
 
-async def on_habits_draft(services: Services, telegram_id: int) -> Outcome:
+async def on_habits_draft(
+    services: Services, telegram_id: int, *, from_nudge: bool = False
+) -> Outcome:
     """A basket from due habits — no model request — through the known-product resolve
     path and the ordinary pipeline, then confirmed like any other draft.
 
-    Due habits first; with none due, everything tracked: the user asked for it, and
-    «нема з чого» is the only honest refusal.
+    From a nudge, the draft holds what the nudge named: due and nudgeable. From «your
+    usual», every tracked habit due by date (`due_to_buy`) — the list was opened on
+    purpose, so the nudge tier does not apply. With none due, everything tracked: the
+    user asked for a basket, and «нема з чого» is the only honest refusal.
     """
     stores = _habits_or_off(services)
     if isinstance(stores, Spoke):
@@ -992,7 +1145,8 @@ async def on_habits_draft(services: Services, telegram_id: int) -> Outcome:
     await services.users.ensure(telegram_id)
     today = today_in_kyiv()
     tracked = await stores.habits.list(telegram_id)
-    chosen = due(tracked, today) or [h for h in tracked if h.reorderable and not h.muted]
+    usable = [h for h in tracked if h.reorderable and not h.muted]
+    chosen = (due(tracked, today) if from_nudge else []) or due_to_buy(tracked, today) or usable
     lines = habit_lines(chosen, today)
     if not lines:
         return Spoke(NO_HABITS_TO_BUILD)
@@ -1001,12 +1155,12 @@ async def on_habits_draft(services: Services, telegram_id: int) -> Outcome:
     budget_cap = user.budget_weekly if user else None
     try:
         async with services.connect(telegram_id) as mcp:
-            _, context = await load_context(mcp)
+            _, context = await _load_context(services, telegram_id, mcp)
             cart, learned = await build_known_cart(lines, mcp, context, budget_cap=budget_cap)
     except NotAuthenticated:
         return _needs_link(NEED_AUTH)
-    except CartContextMissing:
-        return Spoke(NO_CONTEXT)
+    except CartContextMissing as exc:
+        return Spoke(_no_context(exc))
     except McpError:
         return Spoke(SILPO_DOWN)
 
@@ -1026,13 +1180,33 @@ async def on_delete(services: Services, telegram_id: int) -> Outcome:
     """«/delete» asks first. The wipe is one tap away and cannot be undone."""
     if await services.users.get(telegram_id) is None:
         return Spoke(NOTHING_TO_DELETE)
-    return Ask(DELETE_ASK, yes="delete:confirm", yes_label=DELETE_YES)
+    return Ask(DELETE_ASK, yes="delete:confirm", yes_label=DELETE_YES, no="delete:keep")
 
 
 async def on_delete_confirm(services: Services, telegram_id: int) -> Outcome:
     if not await services.users.delete(telegram_id):
         return Spoke(NOTHING_TO_DELETE, toast="Нічого видаляти")
     return Spoke(DELETED, toast="Видалено")
+
+
+IN_CART_MIN = timedelta(days=3)
+
+
+def already_in_cart(habit: Habit, sent_at: datetime | None, now: datetime) -> bool:
+    """Komora put this product in the Silpo cart after the last purchase it has seen.
+
+    A purchase is recorded only once an order is *received*, so a habits draft pushed
+    minutes ago is invisible to the engine — and the first job tick after the live walk
+    would have said «Схоже, закінчуються» about a cheese and a bun sitting in the very
+    cart Komora had just filled. `synced_at` is exact about the first half. The window
+    (one interval, at least three days) is the other half: a line the user took out of
+    the cart and never ordered must not silence the product for ever.
+    """
+    if sent_at is None:
+        return False
+    after_last_purchase = sent_at.astimezone(KYIV).date() >= habit.last_bought
+    window = max(IN_CART_MIN, timedelta(days=habit.median_gap_days))
+    return after_last_purchase and now - sent_at < window
 
 
 DEFAULT_QUIET_HOURS = (22, 8)
@@ -1065,9 +1239,18 @@ async def nudge_for(
     today = now.astimezone(KYIV).date()
     candidates = due(await stores.habits.list(telegram_id), today)
     fresh: list[Habit] = []
+    in_cart = await services.baskets.synced_at(telegram_id)
     for habit in candidates:
+        if already_in_cart(habit, in_cart.get(habit.product_key), now):
+            continue
         last = await stores.notifications.last_sent(telegram_id, NUDGE_KIND, habit.product_key)
-        if last is None or now - last >= NUDGE_COOLDOWN:
+        # Once per expected purchase, not once per cooldown. `due_on` moves only when a
+        # purchase is recorded, so a nudge sent on or after it has already asked about
+        # this purchase; asking again every three days until the habit lapsed was
+        # nagging about a question the user had answered by not tapping.
+        if last is None or (
+            now - last >= NUDGE_COOLDOWN and last.astimezone(KYIV).date() < habit.due_on
+        ):
             fresh.append(habit)
     if not fresh:
         return None

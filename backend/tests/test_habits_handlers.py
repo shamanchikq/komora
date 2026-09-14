@@ -6,9 +6,11 @@ so the whole loop — link, backfill, payoff, «/usual», mute, nudge, habits dr
 """
 
 import contextlib
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Coroutine
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+from typing import Any
 
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -16,12 +18,14 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from komora.api.app import create_app
 from komora.bot.habits_job import REFRESH_EVERY, refresh_if_stale, tick
 from komora.bot.handlers import (
+    DELETE_KEPT,
     DELETED,
     DISMISSED,
     HABITS_OFF,
     NO_HABITS_TO_BUILD,
     NOTHING_MUTED,
     NUDGE_KIND,
+    SLOT_EXPIRED,
     UNKNOWN_HABIT,
     HabitServices,
     Services,
@@ -32,15 +36,19 @@ from komora.bot.handlers import (
     on_habits_draft,
     on_linked,
     on_mute_list,
+    on_push,
     on_set_mute,
     on_start,
     on_usual,
     refresh_history,
+    refresh_receipts,
+    send_payoff,
+    today_in_kyiv,
 )
-from komora.bot.outcomes import Ask, DraftReady, HabitsReady, NudgeReady, Outcome, Spoke
+from komora.bot.outcomes import Ask, DraftReady, HabitsReady, NudgeReady, Outcome, Spoke, Synced
 from komora.bot.render import NO_HABITS, to_reply
 from komora.core.habits.engine import compute_habits
-from komora.core.habits.purchases import PurchaseEvent
+from komora.core.habits.purchases import PurchaseEvent, offline_purchases
 from komora.core.mcp.auth import AuthorizationBridge
 from komora.core.mcp.gateway import Busy
 from komora.db.repo import (
@@ -53,7 +61,7 @@ from komora.db.repo import (
     UserRepo,
 )
 from komora.db.tables import User
-from tests.fakes import INITDATA_TOKEN, FakeSilpo, product, signed_init_data
+from tests.fakes import CONTEXT, INITDATA_TOKEN, FakeSilpo, product, signed_init_data
 
 USER = 4242
 OTHER = 777
@@ -106,6 +114,23 @@ class Recorder:
         self.sent.append((telegram_id, outcome))
 
 
+class Deferred:
+    """A `Spawn` that holds work until the test says «the reply has gone out»."""
+
+    def __init__(self) -> None:
+        self.pending: list[Coroutine[Any, Any, None]] = []
+
+    def __call__(self, work: Coroutine[Any, Any, None]) -> None:
+        self.pending.append(work)
+
+    async def drain(self) -> int:
+        ran = 0
+        while self.pending:
+            await self.pending.pop(0)
+            ran += 1
+        return ran
+
+
 def build(
     sessions: async_sessionmaker,
     *,
@@ -121,7 +146,9 @@ def build(
         yield fake
 
     @contextlib.asynccontextmanager
-    async def connect_background(telegram_id: int) -> AsyncIterator[FakeSilpo]:
+    async def connect_background(
+        telegram_id: int, *, wait_seconds: float = 2.0
+    ) -> AsyncIterator[FakeSilpo]:
         if busy:
             raise Busy("turn in flight")
         yield fake
@@ -149,8 +176,14 @@ def build(
         connect=connect,  # type: ignore[arg-type]
         habits=stores,
         notify=notify,
+        spawn=Deferred(),
     )
     return services, fake, notify
+
+
+def deferred(services: Services) -> Deferred:
+    assert isinstance(services.spawn, Deferred)
+    return services.spawn
 
 
 async def linked(services: Services, telegram_id: int = USER) -> None:
@@ -264,6 +297,8 @@ class TestRefreshAndPayoff:
         assert isinstance(payoff, Spoke)
         assert "Відстежую 2 позиції" in payoff.text
         assert "Молоко Галичина — кожні ~7 днів" in payoff.text
+        # No span: «за останні 19 місяців» counted the oldest online order.
+        assert "місяц" not in payoff.text
 
         empty, _, _ = build(sessions, silpo=FakeSilpo(CATALOGUE))
         await linked(empty, OTHER)
@@ -366,6 +401,52 @@ class TestHabitsDraft:
         await on_set_mute(services, USER, BREAD, muted=True)
         assert await on_habits_draft(services, USER) == Spoke(NO_HABITS_TO_BUILD)
 
+    async def test_a_nudge_builds_what_it_named_usual_what_is_due(self, sessions) -> None:  # type: ignore[no-untyped-def]
+        services, silpo, _ = build(sessions)
+        await linked(services)
+        await refresh_history(services, USER, silpo)
+        stores = services.habits
+        assert stores is not None
+        yesterday = today_in_kyiv() - timedelta(days=1)
+        by_key = {h.product_key: h for h in await stores.habits.list(USER)}
+        tight = replace(by_key[MILK], due_on=yesterday, cv=0.3)
+        loose = replace(by_key[BREAD], due_on=yesterday, cv=0.9)  # tracked, not nudgeable
+        await stores.habits.replace(USER, [tight, loose])
+
+        nudged = await on_callback(services, USER, "habits:nudge")
+        assert isinstance(nudged, DraftReady)
+        assert [ln.product_id for ln in nudged.cart.lines] == [MILK]
+
+        usual = await on_callback(services, USER, "habits:build")
+        assert isinstance(usual, DraftReady)
+        assert {ln.product_id for ln in usual.cart.lines} == {MILK, BREAD}
+
+        # Nothing due: a draft the user asked for still holds everything tracked.
+        later = today_in_kyiv() + timedelta(days=5)
+        await stores.habits.replace(
+            USER, [replace(tight, due_on=later), replace(loose, due_on=later)]
+        )
+        idle = await on_habits_draft(services, USER)
+        assert isinstance(idle, DraftReady)
+        assert {ln.product_id for ln in idle.cart.lines} == {MILK, BREAD}
+
+    async def test_an_expired_slot_refuses_in_one_sentence(self, sessions) -> None:  # type: ignore[no-untyped-def]
+        passed = {
+            "start": CONTEXT.timeslot_start,
+            "end": CONTEXT.timeslot_end,
+            "available": False,
+            "deliveryType": CONTEXT.delivery_type,
+        }
+        silpo = FakeSilpo(CATALOGUE, offline_orders=weekly_receipts(), slots=[passed])
+        services, silpo, _ = build(sessions, silpo=silpo)
+        await linked(services)
+        await seeded(services)
+        # Not a draft of «Не знайшлося» lines for goods Silpo stocks.
+        assert await on_habits_draft(services, USER) == Spoke(SLOT_EXPIRED)
+        assert silpo.search_calls == []
+        # Receipts need no live slot, so the turn still keeps history current.
+        assert len(deferred(services).pending) == 1
+
     async def test_a_name_search_teaches_the_article_number(self, sessions) -> None:  # type: ignore[no-untyped-def]
         """An online-only product carries no article; the draft learns it on the way."""
         order = {
@@ -410,19 +491,64 @@ class TestHabitsDraft:
 
 
 class TestNudges:
-    async def test_a_nudge_is_due_habits_once_per_cooldown(self, sessions) -> None:  # type: ignore[no-untyped-def]
+    async def test_a_nudge_asks_once_per_expected_purchase(self, sessions) -> None:  # type: ignore[no-untyped-def]
         services, silpo, _ = build(sessions)
         await linked(services)
         await refresh_history(services, USER, silpo)
-        now = datetime(2026, 8, 1, 12, tzinfo=UTC)  # long after the last receipt
+        now = datetime(2026, 8, 1, 12, tzinfo=UTC)  # a few days past both due dates
         nudge = await nudge_for(services, USER, now=now)
         assert isinstance(nudge, NudgeReady)
         assert {h.product_key for h in nudge.habits} == {MILK, BREAD}
         reply = to_reply(nudge)
         assert "Схоже, закінчуються" in reply.text
-        assert [b.data for b in reply.buttons][:2] == ["habits:build", "dismiss"]
+        # Numbered, so «🔇 1» and «🔇 2» name something the user can read.
+        assert "1. " in reply.text and "2. " in reply.text
+        assert [b.data for b in reply.buttons][:2] == ["habits:nudge", "dismiss"]
         assert await nudge_for(services, USER, now=now + timedelta(days=1)) is None
-        assert await nudge_for(services, USER, now=now + timedelta(days=4)) is not None
+        # Past the cooldown, still the same purchase: an ignored nudge is an answer.
+        assert await nudge_for(services, USER, now=now + timedelta(days=4)) is None
+
+        # Milk is bought again; its next expected purchase is a new question.
+        stores = services.habits
+        assert stores is not None
+        bought = receipt(99, date(2026, 8, 2), (MILK, "Молоко Галичина", 815253))
+        await stores.purchases.upsert(USER, offline_purchases({"orders": [bought]}))
+        await stores.habits.replace(USER, compute_habits(await stores.purchases.events(USER)))
+        again = await nudge_for(services, USER, now=datetime(2026, 8, 9, 12, tzinfo=UTC))
+        assert isinstance(again, NudgeReady)
+        assert [h.product_key for h in again.habits] == [MILK]
+
+    async def test_no_nudge_about_what_komora_just_put_in_the_cart(self, sessions) -> None:  # type: ignore[no-untyped-def]
+        services, silpo, _ = build(sessions)
+        await linked(services)
+        await services.users.set_quiet_hours(USER, 5, 5)  # never quiet: the clock is real
+        await refresh_history(services, USER, silpo)
+        stores = services.habits
+        assert stores is not None
+        yesterday = today_in_kyiv() - timedelta(days=1)
+        await stores.habits.replace(
+            USER, [replace(h, due_on=yesterday) for h in await stores.habits.list(USER)]
+        )
+        draft = await on_habits_draft(services, USER)
+        assert isinstance(draft, DraftReady) and draft.basket_id is not None
+        assert isinstance(await on_push(services, USER, draft.basket_id), Synced)
+        assert set(await services.baskets.synced_at(USER)) == {MILK, BREAD}
+
+        # Minutes later the job asks: both are in the cart Komora just filled.
+        assert await nudge_for(services, USER, now=datetime.now(UTC)) is None
+        # A line taken out and never ordered stops silencing it after one interval of
+        # its own: milk (every ~7 days) speaks again at ten days, still short of
+        # lapsing; bread (every ~14) is still held back.
+        later = await nudge_for(services, USER, now=datetime.now(UTC) + timedelta(days=10))
+        assert isinstance(later, NudgeReady)
+        assert {h.product_key for h in later.habits} == {MILK}
+
+    async def test_a_lapsed_habit_is_never_nudged(self, sessions) -> None:  # type: ignore[no-untyped-def]
+        services, silpo, _ = build(sessions)
+        await linked(services)
+        await refresh_history(services, USER, silpo)
+        # Weekly milk last seen in July is not «running out» in September.
+        assert await nudge_for(services, USER, now=datetime(2026, 9, 14, 12, tzinfo=UTC)) is None
 
     async def test_quiet_hours_and_mutes_hold_a_nudge_back(self, sessions) -> None:  # type: ignore[no-untyped-def]
         services, silpo, _ = build(sessions)
@@ -474,7 +600,12 @@ class TestDelete:
         await on_habits_draft(services, USER)
         ask = await on_delete(services, USER)
         assert isinstance(ask, Ask) and ask.yes == "delete:confirm"
-        assert [b.data for b in to_reply(ask).buttons] == ["delete:confirm", "dismiss"]
+        assert [b.data for b in to_reply(ask).buttons] == ["delete:confirm", "delete:keep"]
+
+        # «Скасувати» is its own answer — not the nudge's «нагадаю, коли буде пора».
+        kept = await on_callback(services, USER, "delete:keep")
+        assert kept == Spoke(DELETE_KEPT, toast="Нічого не видалено")
+        assert await services.users.get(USER) is not None
 
         done = await on_callback(services, USER, "delete:confirm")
         assert done == Spoke(DELETED, toast="Видалено")
@@ -506,6 +637,9 @@ class TestApi:
 
             listed = (await client.get("/api/habits", headers=header(USER))).json()
             assert listed["kind"] == "habits" and listed["fresh_at"]
+            assert listed["fresh_text"].startswith("Історія оновлена")
+            assert listed["empty_text"] == NO_HABITS
+            assert {"due", "lapsed", "muted", "sentence"} <= set(listed["habits"][0])
             milk = next(h for h in listed["habits"] if h["product_key"] == MILK)
             assert milk["sentence"].startswith("Ви купуєте") and milk["muted"] is False
 
@@ -522,3 +656,101 @@ class TestApi:
             draft = (await client.post("/api/habits/draft", headers=header(USER))).json()
             assert draft["kind"] == "draft" and draft["basket_id"]
             assert {ln["product_id"] for ln in draft["cart"]["lines"]} == {MILK, BREAD}
+
+
+# --- receipts after a turn, and the payoff they can release ------------------------
+
+
+async def seeded(services: Services) -> None:
+    """Habits in the database with no import ever recorded — as after a link that
+    could not read receipts, or for a user who linked before receipts ran on turns."""
+    stores = services.habits
+    assert stores is not None
+    events = offline_purchases({"orders": weekly_receipts()})
+    await stores.purchases.upsert(USER, events)
+    await stores.habits.replace(USER, compute_habits(await stores.purchases.events(USER)))
+
+
+class TestReceiptsAfterATurn:
+    async def test_a_turn_with_a_context_imports_receipts_after_its_reply(self, sessions) -> None:  # type: ignore[no-untyped-def]
+        services, silpo, notify = build(sessions)
+        await linked(services)
+        await seeded(services)
+        stores = services.habits
+        assert stores is not None
+
+        assert isinstance(await on_habits_draft(services, USER), DraftReady)
+        later = deferred(services)
+        # Scheduled, not run: the reply is not kept waiting for it.
+        assert len(later.pending) == 1
+        assert await stores.imports.last_ok(USER, "offline") is None
+        # A second turn while the first import waits schedules nothing more.
+        await on_habits_draft(services, USER)
+        assert len(later.pending) == 1
+
+        silpo.history_calls.clear()
+        assert await later.drain() == 1
+        assert await stores.imports.last_ok(USER, "offline") is not None
+        # Receipts alone, with the turn's context — online orders are the job's.
+        assert {source for source, _ in silpo.history_calls} == {"offline"}
+        assert await stores.imports.last_ok(USER, "online") is None
+
+        # The payoff the link never got to say goes out now, once.
+        (said,) = notify.sent
+        assert isinstance(said[1], Spoke) and "Відстежую 2 позиції" in said[1].text
+        await send_payoff(services, USER)
+        assert len(notify.sent) == 1
+
+        # Fresh now: the next turn schedules nothing.
+        await on_habits_draft(services, USER)
+        assert later.pending == []
+
+    async def test_a_link_without_receipts_holds_the_payoff_back(self, sessions) -> None:  # type: ignore[no-untyped-def]
+        silpo = FakeSilpo(
+            CATALOGUE, offline_orders=weekly_receipts(), fails={"get_my_shopping_cart"}
+        )
+        services, _, _ = build(sessions, silpo=silpo)
+        await linked(services)
+        assert await on_linked(services, USER) is None
+        stores = services.habits
+        assert stores is not None
+        assert await stores.notifications.last_sent(USER, "payoff", "habits") is None
+
+    async def test_the_payoff_at_link_is_not_said_twice(self, sessions) -> None:  # type: ignore[no-untyped-def]
+        services, _, notify = build(sessions)
+        await linked(services)
+        assert isinstance(await on_linked(services, USER), Spoke)
+        await send_payoff(services, USER)
+        assert notify.sent == []
+
+    async def test_a_busy_session_is_recorded_as_a_skip(self, sessions) -> None:  # type: ignore[no-untyped-def]
+        services, _, notify = build(sessions, busy=True)
+        await linked(services)
+        stores = services.habits
+        assert stores is not None
+        stores.receipts_in_flight.add(USER)
+        from tests.fakes import CONTEXT
+
+        await refresh_receipts(services, USER, CONTEXT)
+        assert await stores.imports.last_ok(USER, "offline") is None
+        assert USER not in stores.receipts_in_flight
+        assert notify.sent == []
+
+
+class TestRendering:
+    def test_the_usual_list_and_a_nudge_open_the_mini_app_on_the_habits_screen(self) -> None:
+        from komora.bot.render import to_reply as render
+
+        (habit,) = compute_habits(
+            offline_purchases({"orders": weekly_receipts()}), since=date(2026, 6, 1)
+        )[:1]
+        today = date(2026, 7, 27)
+        url = "https://t.me/bot/app"
+        listed = render(HabitsReady(habits=[habit], today=today), url)
+        assert f"{url}?startapp=usual" in [b.url for b in listed.buttons]
+        nudge = render(NudgeReady(habits=[habit], today=today), url)
+        assert f"{url}?startapp=usual" in [b.url for b in nudge.buttons]
+        # Nothing tracked: the screen would say the same sentence, so no door to it.
+        empty = render(HabitsReady(habits=[], today=today), url)
+        assert empty.buttons == ()
+        assert render(HabitsReady(habits=[habit], today=today)).buttons[-1].url is None

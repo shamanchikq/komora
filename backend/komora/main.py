@@ -166,14 +166,42 @@ async def run() -> None:
     )
 
     log.info("Komora is up: callback on :%s, bot polling, habits job", settings.http_port)
+
+    # The habits job runs in-process on purpose (the bridge and the poller are both
+    # single-process, and a worker of its own would need the bot handle this process
+    # already holds) — but NOT inside the gather. uvicorn and aiogram each catch
+    # SIGINT/SIGTERM and return; the job is an endless loop around an hour-long sleep
+    # and handles no signal, so a gather that included it never finished: Ctrl+C left
+    # a process that held port 8000 and kept polling until it was killed. It is a task
+    # that lives exactly as long as the two things that do answer a signal.
+    #
+    # And the two halves stop each other. Only ONE of them ever hears the signal:
+    # uvicorn installs its handlers with `signal.signal`, aiogram's `start_polling`
+    # then installs its own with `loop.add_signal_handler`, which replaces them. So
+    # Ctrl+C stopped polling and uvicorn never knew — the gather waited on a server
+    # nobody had told to exit, and SIGTERM and SIGINT both left a live process holding
+    # the port (found on 2026-09-14, restarting for the habits walk; `kill -9` was the
+    # only way out). Whichever half returns first now ends the other.
+    async def serve() -> None:
+        try:
+            await server.serve()
+        finally:
+            with contextlib.suppress(RuntimeError):  # «Polling is not started»
+                await dispatcher.stop_polling()
+
+    async def poll() -> None:
+        try:
+            await dispatcher.start_polling(bot)
+        finally:
+            server.should_exit = True
+
+    habits_job = asyncio.create_task(run_habits_job(services))
     try:
-        # The habits job joins the same gather: in-process on purpose (the bridge and
-        # the poller are both single-process), and a worker of its own would need the
-        # bot handle this process already holds.
-        await asyncio.gather(
-            server.serve(), dispatcher.start_polling(bot), run_habits_job(services)
-        )
+        await asyncio.gather(serve(), poll())
     finally:
+        habits_job.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await habits_job
         server.should_exit = True
         for task in linking.values():
             task.cancel()

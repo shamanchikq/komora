@@ -10,6 +10,12 @@ describe("parseTarget", () => {
     expect(parseTarget(" basket_7 ")).toEqual({ kind: "basket", id: 7 });
   });
 
+  it("reads the habits screen, which names nothing", () => {
+    expect(parseTarget("usual")).toEqual({ kind: "usual" });
+    // A value after it is not this kind: the screen has no id to take.
+    expect(parseTarget("usual_42")).toBeNull();
+  });
+
   it("opens on compose rather than erroring when there is no link", () => {
     // Both of the ordinary launches: the menu button, and a browser during development.
     expect(parseTarget(undefined)).toBeNull();

@@ -12,10 +12,16 @@
 
 import { webApp } from "./telegram";
 
-export type Target = { kind: "basket"; id: number };
+/** `usual` carries no value: the habits screen is the sender's own, looked up by who
+ * opened it — there is no id to name, so none to guess. */
+export type Target = { kind: "basket"; id: number } | { kind: "usual" };
+
+const USUAL = "usual";
 
 export function parseTarget(param: string | null | undefined): Target | null {
-  const match = /^basket_(\d+)$/.exec((param ?? "").trim());
+  const trimmed = (param ?? "").trim();
+  if (trimmed === USUAL) return { kind: "usual" };
+  const match = /^basket_(\d+)$/.exec(trimmed);
   if (match === null) return null;
   const id = Number(match[1]);
   // A malformed id is not an error worth showing: the app opens on compose, which is

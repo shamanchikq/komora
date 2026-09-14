@@ -80,8 +80,41 @@ export interface Alternatives {
   options: Line[];
 }
 
+/** One tracked habit, as `api.minapp._habit_json` sends it. `sentence` is the engine's
+ * own claim, verbatim — the screen restates no cadence rule. */
+export interface Habit {
+  product_key: string;
+  name: string;
+  sentence: string;
+  /** Due by the engine's date and not lapsed. */
+  due: boolean;
+  /** Overdue by more than two intervals: shown, never offered as «вже пора». */
+  lapsed: boolean;
+  due_on: string;
+  last_bought: string;
+  median_gap_days: number;
+  events: number;
+  muted: boolean;
+  /** False for counter goods keyed by a till article: a cadence, never a cart line. */
+  reorderable: boolean;
+  weighted: boolean;
+  unit: string;
+}
+
+export interface Habits {
+  kind: "habits";
+  habits: Habit[];
+  fresh_at: string | null;
+  /** «Історія оновлена 14.09 о 10:20» — the chat's sentence, not re-derived here. */
+  fresh_text: string;
+  /** What the chat says when nothing passes the threshold. */
+  empty_text: string;
+  toast: string | null;
+}
+
 export type Outcome =
   | Alternatives
+  | Habits
   | {
       kind: "draft";
       basket_id: number | null;
@@ -99,3 +132,4 @@ export type DraftOutcome = Extract<Outcome, { kind: "draft" }>;
 export type PreviewOutcome = Extract<Outcome, { kind: "preview" }>;
 export type SyncedOutcome = Extract<Outcome, { kind: "synced" }>;
 export type SpokeOutcome = Extract<Outcome, { kind: "spoke" }>;
+export type HabitsOutcome = Extract<Outcome, { kind: "habits" }>;

@@ -45,7 +45,7 @@ default menu button still is not set. The checklist is in
 All from `backend/`.
 
 ```bash
-uv run pytest              # 996 tests
+uv run pytest              # 1011 tests
 uv run ruff check .        # lint
 uv run ruff format .       # format
 uv run mypy komora         # strict
@@ -282,7 +282,7 @@ asked for it, so «Сільпо зараз не відповідає» threw awa
 took the retry with it. That last one is the 2026-08-26 ⇄ lesson for a third time: on a
 surface with no scrollback, an answer is not a destination.
 
-**Plan 3 (habits) is code-complete for Tasks 1–5, 2026-09-14.** The engine and
+**Plan 3 (habits) is code-complete, Tasks 1–6, 2026-09-14.** The engine and
 `resolve_known` ran over one real shopping history the same day (3 habits; both due
 ones resolved live to their exact products); the Telegram side is unwalked.
 `/start` backfills both history sources and names the rhythm once; a job in the same
@@ -290,8 +290,28 @@ process refreshes twice a day and nudges when a habit is due; `/usual`, `/mute` 
 `/delete` exist; a habits draft is built with no model request through
 `resolve_known`, pinned to the stored product id and searched by article number. The
 key is the catalog product id — the spec's leaf category does not exist in the API.
-Thresholds (tracked CV ≤ 1.0, nudged ≤ 0.75) come from one household. The Mini App
-routes exist; the screen waits on a design pass. The checklist is in
+Thresholds (tracked CV ≤ 1.0, nudged ≤ 0.75) come from one household.
+
+A review of the merge the same day found six defects, suite green: receipts were read
+only on link and by the job, which rarely holds a live timeslot, so the last purchase
+froze and nudges fired about milk already bought — every turn that reads the cart now
+imports receipts **after its reply** (`handlers._load_context`), and a payoff the link
+could not build waits for it; `due` had no upper bound, so a habit abandoned in May was
+nudged every three days in September — it now **lapses** after two intervals, and a
+nudge asks once per expected purchase; cancelling `/delete` answered with the nudge's
+«нагадаю»; the nudge's mute numbers named nothing; one delivery erased a habit's article
+number; and the habits draft used the nudge tier to pick lines. **Task 6 is built** —
+«Звичні покупки» in the Mini App, from compose or `?startapp=usual`
+(`docs/superpowers/design/2026-09-14-usual-screen.md`).
+
+**Walked live the same afternoon** on the shopper's account — `/delete`, link and payoff,
+`/usual` and mute, a habits draft into the real Silpo cart, and «Звичні покупки» — which
+found five more: Ctrl+C could not stop the process (aiogram's signal handlers replace
+uvicorn's, so the server was never told to exit); a passed delivery slot built a draft
+calling stocked goods «Не знайшлося» — now refused up front in `load_context`; the payoff
+claimed a span only online orders covered; the next nudge would have named products
+Komora had just pushed (`draft_items.synced_at`); and a menu button stored with Telegram
+still pointed at a dead tunnel. The checklist is in
 [backend/README.md](backend/README.md#manual-checklist--habits).
 
 Only the "stated basket" and "habits" intents exist — meal plan, budget-week, deals and

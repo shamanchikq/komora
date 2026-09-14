@@ -15,6 +15,7 @@ Output is Telegram HTML, so every value that came from Silpo or the model goes t
 """
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from decimal import Decimal
 from html import escape
 
@@ -409,16 +410,15 @@ def render_habits(outcome: HabitsReady) -> str:
         blocks.append(f"   — {esc(habit.sentence(outcome.today))}")
         if not habit.reorderable:
             blocks.append("   (з прилавка — у кошик Сільпо не додається)")
-    if outcome.fresh_at is not None:
-        blocks += ["", f"Історія оновлена {outcome.fresh_at.astimezone(KYIV):%d.%m %H:%M}"]
-    else:
-        blocks += ["", FRESH_NEVER]
+    blocks += ["", freshness_text(outcome.fresh_at)]
     return "\n".join(blocks)
 
 
 def render_nudge(outcome: NudgeReady) -> str:
-    names = ", ".join(esc(h.name) for h in outcome.habits)
-    return f"Схоже, закінчуються: {names}.\nЗібрати кошик?"
+    """Numbered, because the mute buttons under it are «🔇 1», «🔇 2» — a comma-joined
+    line left the user guessing which product a number meant."""
+    rows = [f"{i}. {esc(h.name)}" for i, h in enumerate(outcome.habits, start=1)]
+    return "\n".join(["Схоже, закінчуються:", *rows, "", "Зібрати кошик?"])
 
 
 BUILD_HABITS_BUTTON = "Зібрати кошик"
@@ -492,6 +492,26 @@ def deep_link(mini_app_url: str, basket_id: int) -> str:
     the parser a new shape. Telegram allows `A-Za-z0-9_-`, up to 64 characters.
     """
     return f"{mini_app_url}?startapp=basket_{basket_id}"
+
+
+USUAL_START = "usual"
+"""The launch payload that opens «Звичні покупки». No value after the kind: the screen
+is the sender's own, looked up by who opened it, so there is nothing to name."""
+
+
+def _open_usual(mini_app_url: str | None, worth_it: bool) -> tuple[Button, ...]:
+    """«Відкрити в Коморі» onto the habits screen — only where a Mini App is deployed,
+    and not under an empty list, where the screen would say the same sentence again."""
+    if not mini_app_url or not worth_it:
+        return ()
+    return (Button(OPEN_APP_BUTTON, url=f"{mini_app_url}?startapp={USUAL_START}"),)
+
+
+def freshness_text(fresh_at: datetime | None) -> str:
+    """When history was last read, in Kyiv time — one wording for both surfaces."""
+    if fresh_at is None:
+        return FRESH_NEVER
+    return f"Історія оновлена {fresh_at.astimezone(KYIV):%d.%m о %H:%M}"
 
 
 def draft_buttons(
@@ -568,7 +588,10 @@ def to_reply(outcome: Outcome, mini_app_url: str | None = None) -> Reply:
             usable = [h for h in outcome.habits if h.reorderable and not h.muted]
             return Reply(
                 render_habits(outcome),
-                buttons=habit_buttons(outcome.habits, offer_draft=bool(usable)),
+                buttons=(
+                    *habit_buttons(outcome.habits, offer_draft=bool(usable)),
+                    *_open_usual(mini_app_url, bool(outcome.habits)),
+                ),
                 toast=outcome.toast,
             )
 
@@ -580,9 +603,12 @@ def to_reply(outcome: Outcome, mini_app_url: str | None = None) -> Reply:
             return Reply(
                 render_nudge(outcome),
                 buttons=(
-                    Button(BUILD_HABITS_BUTTON, data="habits:build"),
+                    # `habits:nudge`, not `habits:build`: the draft holds what this
+                    # message named, not every habit that happens to be due by date.
+                    Button(BUILD_HABITS_BUTTON, data="habits:nudge"),
                     Button(NOT_NOW_BUTTON, data="dismiss"),
                     *mutes,
+                    *_open_usual(mini_app_url, True),
                 ),
             )
 
@@ -591,6 +617,6 @@ def to_reply(outcome: Outcome, mini_app_url: str | None = None) -> Reply:
                 outcome.text,
                 buttons=(
                     Button(outcome.yes_label, data=outcome.yes),
-                    Button(outcome.no_label, data="dismiss"),
+                    Button(outcome.no_label, data=outcome.no),
                 ),
             )

@@ -110,9 +110,21 @@ habits at all. From then on:
   those products **without a model request** (`core/habits/draft.py` →
   `passes/resolve.resolve_known`), which is then previewed and confirmed exactly like a
   typed one. The job never touches the Silpo cart.
-- **Receipts need the cart's context** — a branch and an unexpired timeslot — so with
-  none they are skipped and the skip is recorded (`history_imports`); online orders
-  are read regardless. `/usual` shows when history was last read.
+- **Receipts need the cart's context** — a branch and an unexpired timeslot — which the
+  job rarely finds, so **every turn that reads the cart imports receipts after its
+  reply** when they are more than a day old (`handlers._load_context` →
+  `refresh_receipts`). With no context anywhere they are skipped and the skip is
+  recorded (`history_imports`); online orders are read regardless. `/usual` shows when
+  history was last read. If receipts could not be read at link, the payoff waits for
+  the first turn that can read them, and is sent once.
+- **A habit lapses** when it is overdue by more than two of its own intervals: it stops
+  being due and is never nudged, but stays in `/usual` with its sentence. A nudge asks
+  **once per expected purchase** — only a new purchase makes a product due again — and
+  says nothing about a product Komora itself pushed into the Silpo cart since the last
+  purchase (`draft_items.synced_at`), for one interval.
+- **A passed delivery slot refuses up front**, on every path that searches: «Час
+  доставки … вже минув». Silpo finds nothing against a passed slot, so a draft built
+  there could only call real goods missing.
 - **The rules** are `core/habits/purchases.py` (what counts as a purchase, from the
   2026-09-13 capture) and `core/habits/engine.py` (≥ 4 events, median gap, tracked at
   CV ≤ 1.0, nudged at CV ≤ 0.75 — thresholds set on one household and expected to move).
@@ -121,9 +133,12 @@ habits at all. From then on:
 - **`/mute`** stops one product for good (until unmuted); a muted product never appears
   in a nudge or a habits draft. **`/delete`** asks once, then removes the user row and
   everything under it — tokens, purchases, habits, drafts. The Silpo cart is untouched.
-- **Mini App:** `GET /api/habits`, `POST /api/habits/{key}/mute` and `/unmute`,
-  `POST /api/habits/draft` serve the same outcomes. The screen itself waits on a design
-  pass (there is no way to reach it from the approved design yet).
+- **Mini App:** «Звичні покупки» — reached from a button on compose and from
+  «Відкрити в Коморі» under `/usual` and a nudge (`?startapp=usual`). Grouped rows
+  with the engine's sentence and a mute toggle; «Зібрати кошик» builds the habits draft
+  onto the ordinary draft screen. Served by `GET /api/habits`,
+  `POST /api/habits/{key}/mute` and `/unmute`, `POST /api/habits/draft`. Design note:
+  `docs/superpowers/design/2026-09-14-usual-screen.md`.
 
 `uv run alembic upgrade head` first: five tables and two columns arrived with this
 (`e3460e4eec92`). The engine and the resolve path have run over one real history; the
@@ -405,16 +420,33 @@ Unwalked as of 2026-09-14.
       pushed like any other. **The items appear in the real Silpo cart.**
 - [ ] With the Silpo cart's timeslot removed, `/usual` still answers and the next
       refresh records `skipped` for receipts, `ok` for online.
-- [ ] A nudge arrives when a habit is due, in the daytime, and not again within three
-      days. «Не зараз» clears its keyboard.
-- [ ] `/delete` → the question → «Так, видалити все» → «Готово …»; `/start` afterwards
-      is the welcome for a stranger.
+- [ ] A message that builds a basket (any text, with a live timeslot) → a minute later
+      `history_imports` has an `offline ok` row. If `/start` ran without a timeslot, the
+      payoff arrives now instead, once.
+- [ ] A nudge arrives when a habit is due, in the daytime, numbered, and not again for
+      the same purchase. «Не зараз» clears its keyboard. «Зібрати кошик» under it builds
+      exactly the products it named. It does not name a product just pushed to the cart.
+- [ ] With the Silpo slot passed, «Зібрати кошик» answers «Час доставки … вже минув»
+      instead of a draft of «Не знайшлося».
+- [ ] `/delete` → «Скасувати» → «Добре, нічого не видаляю.» Then `/delete` → «Так,
+      видалити все» → «Готово …»; `/start` afterwards is the welcome for a stranger.
+
+Mini App — «Звичні покупки»:
+
+- [ ] Compose shows «Звичні покупки →»; it opens the list with the freshness line and
+      rows grouped «Вже пора» / «Решта» / «Не відстежую».
+- [ ] «Відкрити в Коморі» under `/usual` opens the same screen, not compose.
+- [ ] «Не відстежувати» moves the row to «Не відстежую» and toasts; the list stays.
+- [ ] «Зібрати кошик» (MainButton) → loading → the habits draft; send it like any other.
+- [ ] With the Silpo timeslot removed, «Зібрати кошик» returns to the list with the
+      reason in a banner — not to compose.
+- [ ] Long names wrap beside the toggle on a phone; nothing hides under the MainButton.
 
 ### Known issues
 
 Found by the live runs on 2026-08-11/12, and left open deliberately.
 
-- **Habits are unwalked in Telegram.** The normaliser, the engine and `resolve_known`
+- **Habits are unwalked in Telegram and in the Mini App.** The normaliser, the engine and `resolve_known`
   ran over one real shopping history on 2026-09-14 (reference §9): 3 habits tracked,
   both due ones resolved live to their exact products by article number, and the
   «every ~146 days» artefact the plan predicted appeared and was removed by making
@@ -430,7 +462,17 @@ Found by the live runs on 2026-08-11/12, and left open deliberately.
   suggest «2» of something sold by weight.
 - **The thresholds are one household's.** Tracked at CV ≤ 1.0, nudged at CV ≤ 0.75,
   chosen so that the only history measured yields a few habits rather than none. A
-  second household may move them; `engine.py` says so beside the constants.
+  second household may move them; `engine.py` says so beside the constants. The lapse
+  window (two intervals) is a judgement, not a measurement.
+- **The menu button goes stale with the tunnel.** Its web_app URL is stored with
+  Telegram, per chat and as the default, and BotFather's Web App URL does not update it.
+  After a quick-tunnel restart it opens a blank page until reset with
+  `setChatMenuButton`; message buttons (the `t.me` link) are unaffected. A named tunnel,
+  or setting it on startup from `KOMORA_PUBLIC_BASE_URL`, would end this.
+- **Habits loose ends.** Quiet hours can only be set in the database; a user whose
+  tokens stopped working gets a `failed` import row every hour; the chat's `/usual`
+  has toggles for the first eight rows; «Аналізую ваші покупки…» is not sent before the
+  backfill.
 
 - **There is no dietary-restriction filtering.** The pass was removed rather than
   shipped wrong. It matched restriction terms as substrings, which fails in the

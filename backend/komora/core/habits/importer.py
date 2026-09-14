@@ -149,19 +149,25 @@ async def import_history(
     since_online: datetime | None,
     since_offline: datetime | None,
     now: datetime | None = None,
+    include_online: bool = True,
 ) -> ImportReport:
     """Read both sources into `sink`. A failed source is an error, a missing context
-    is a skip, and neither stops the other source."""
+    is a skip, and neither stops the other source.
+
+    `include_online=False` reads receipts alone — what a turn that already holds a
+    fresh cart context does after its reply; online orders need no context and are
+    kept current by the job."""
     now = now or datetime.now(UTC)
     online: int | None = None
     offline: int | None = None
     skipped: str | None = None
     errors: list[str] = []
 
-    try:
-        online = await sink.upsert(user_id, await read_online(mcp, stop_before=since_online))
-    except Exception as exc:
-        errors.append(f"online: {type(exc).__name__}: {exc}")
+    if include_online:
+        try:
+            online = await sink.upsert(user_id, await read_online(mcp, stop_before=since_online))
+        except Exception as exc:
+            errors.append(f"online: {type(exc).__name__}: {exc}")
 
     if context is None:
         skipped = "receipts need a cart with a branch and a timeslot"

@@ -30,6 +30,8 @@ from komora.core.passes.resolve import NOT_FOUND, resolve_basket, resolve_known
 from komora.core.passes.verify import DEGRADED_VERIFY, find_mismatches
 
 TIMESLOT_EXPIRED = "timeslot:expired"
+"""No longer emitted by a build — an expired slot now refuses up front (`TimeslotExpired`).
+Kept because baskets stored before 2026-09-14 carry it, and both surfaces still draw it."""
 
 MAX_COUPON_DETAILS = 5
 """Each one is a separate call, and a note nobody reads is not worth a round trip."""
@@ -104,7 +106,30 @@ def _cart_body(payload: Any) -> dict[str, Any]:
     return {}
 
 
-async def load_context(mcp: SilpoClient) -> tuple[str, SearchContext]:
+class TimeslotExpired(CartContextMissing):
+    """The cart names a delivery slot Silpo no longer offers.
+
+    A `CartContextMissing` because it is the same kind of problem — only the user can
+    fix it, in the Silpo app — but said differently: the slot is there, it has passed.
+    """
+
+
+async def ensure_timeslot(mcp: SilpoClient, context: SearchContext) -> None:
+    """Refuse to search against a slot Silpo no longer offers.
+
+    Silpo answers a search made against a passed slot with **zero results for
+    everything** (measured 2026-08-26: «молоко» 0 on a stale slot, 30 on a current one).
+    This used to be a warning attached *after* the build — «Кошик зберемо, але оберіть
+    новий час» — under a draft whose every line read «Не знайшлося». On the live habits
+    walk (2026-09-14) that was a basket of a cheese and a bun Silpo plainly stocks,
+    each declared missing: two false claims and a model request spent on the way. Only
+    a definite «no» refuses; a check Silpo cannot answer lets the build go ahead.
+    """
+    if await timeslot_is_offered(mcp, context) is False:
+        raise TimeslotExpired(f"cart slot {context.timeslot_start} is no longer offered")
+
+
+async def load_context(mcp: SilpoClient, *, check_slot: bool = True) -> tuple[str, SearchContext]:
     """Read the cart, which is the only place the search context exists.
 
     Silpo's own docs call this "always the first step": `find_products_batch` requires
@@ -129,7 +154,12 @@ async def load_context(mcp: SilpoClient) -> tuple[str, SearchContext]:
     if missing:
         raise CartContextMissing(f"cart {cart_id} has no {', '.join(missing)}")
 
-    return cart_id, SearchContext.model_validate(fields)
+    context = SearchContext.model_validate(fields)
+    if check_slot:
+        # Everything that searches needs a live slot. Receipts do not — they were read
+        # against a passed one on the live walk — so the history import skips this.
+        await ensure_timeslot(mcp, context)
+    return cart_id, context
 
 
 def _listed(payload: Any, *keys: str) -> list[Any]:
@@ -337,7 +367,8 @@ async def _finish(
     budget_cap: int | None,
     already_spent: Decimal | None,
 ) -> ResolvedCart:
-    """Savings, coupons, the timeslot check and the budget — shared by both entries."""
+    """Savings, coupons and the budget — shared by both entries. The slot was checked
+    before anything was searched (`load_context`)."""
     cart = apply_savings(cart)
 
     try:
@@ -345,9 +376,6 @@ async def _finish(
     except Exception:
         notes = []
         warnings.append(DEGRADED_COUPONS)
-
-    if await timeslot_is_offered(mcp, context) is False:
-        warnings.append(TIMESLOT_EXPIRED)
 
     cart = cart.model_copy(
         update={
