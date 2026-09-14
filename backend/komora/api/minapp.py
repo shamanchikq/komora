@@ -46,6 +46,7 @@ from komora.bot.outcomes import (
     Spoke,
     Synced,
 )
+from komora.bot.render import NO_HABITS, freshness_text
 from komora.core.habits.engine import Habit
 from komora.core.initdata import InitDataRejected, verify_init_data
 
@@ -99,6 +100,10 @@ def serialise(outcome: Outcome | AlternativesReady) -> dict[str, Any]:
                 "kind": "habits",
                 "habits": [_habit_json(h, outcome.today) for h in outcome.habits],
                 "fresh_at": outcome.fresh_at.isoformat() if outcome.fresh_at else None,
+                # Both sentences are the chat's own, sent as text so the screen restates
+                # no wording rule — the defect class every frontend review has found.
+                "fresh_text": freshness_text(outcome.fresh_at),
+                "empty_text": NO_HABITS,
                 "toast": outcome.toast,
             }
         case NudgeReady():
@@ -112,6 +117,7 @@ def serialise(outcome: Outcome | AlternativesReady) -> dict[str, Any]:
                 "text": outcome.text,
                 "yes": outcome.yes,
                 "yes_label": outcome.yes_label,
+                "no": outcome.no,
                 "no_label": outcome.no_label,
             }
     raise TypeError(f"unhandled outcome {type(outcome).__name__}")
@@ -124,6 +130,7 @@ def _habit_json(habit: Habit, today: Any) -> dict[str, Any]:
         "name": habit.name,
         "sentence": habit.sentence(today),
         "due": habit.is_due(today),
+        "lapsed": habit.lapsed(today),
         "due_on": habit.due_on.isoformat(),
         "last_bought": habit.last_bought.isoformat(),
         "median_gap_days": habit.median_gap_days,

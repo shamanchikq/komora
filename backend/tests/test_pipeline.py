@@ -11,6 +11,7 @@ from komora.core.passes.promos import DEGRADED_COUPONS
 from komora.core.pipeline import (
     TIMESLOT_EXPIRED,
     CartContextMissing,
+    TimeslotExpired,
     _listed,
     build_cart,
     load_context,
@@ -227,13 +228,19 @@ class TestBuildCart:
         assert [line.name for line in cart.lines] == ["Молоко"]
         assert DEGRADED_COUPONS in cart.warnings
 
-    async def test_an_expired_timeslot_warns_without_blocking_the_cart(self) -> None:
-        """Silpo asks for this check up front. The cart is still worth building — the
-        user just has to pick a new slot before checkout."""
+    async def test_an_expired_timeslot_refuses_before_anything_is_searched(self) -> None:
+        """Silpo finds nothing against a passed slot, so a build there could only say
+        «не знайшлося» about goods it stocks. It used to warn and build anyway."""
         mcp = FakeSilpo(CATALOGUE, slots=[slot(CONTEXT.timeslot_start, available=False)])
-        cart = await build_cart(basket("молоко"), mcp, CONTEXT)
-        assert [line.name for line in cart.lines] == ["Молоко"]
-        assert TIMESLOT_EXPIRED in cart.warnings
+        with pytest.raises(TimeslotExpired):
+            await load_context(mcp)
+        assert mcp.search_calls == []
+        # Receipts read fine against a passed slot; the history import asks not to check.
+        assert (await load_context(mcp, check_slot=False))[1] == CONTEXT
+
+    async def test_a_slot_check_silpo_cannot_answer_does_not_refuse(self) -> None:
+        _, context = await load_context(FakeSilpo(fails={"get_time_slots"}))
+        assert context == CONTEXT
 
     async def test_a_valid_timeslot_adds_no_warning(self) -> None:
         cart = await build_cart(basket("молоко"), FakeSilpo(CATALOGUE), CONTEXT)

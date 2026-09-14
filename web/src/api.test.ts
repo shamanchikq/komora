@@ -37,6 +37,14 @@ describe("describeError", () => {
     expect(describeError(new ApiError(0), "read")).toContain("Сільпо не відповідає");
   });
 
+  it("does not call the habits screen a draft", () => {
+    for (const error of [new ApiError(0), new ApiError(500)]) {
+      const text = describeError(error, "usual");
+      expect(text).toContain("звичні покупки");
+      expect(text).not.toContain("чернетк");
+    }
+  });
+
   it("distinguishes a server answer from no answer", () => {
     expect(describeError(new ApiError(500), "read")).toContain("на сервері");
     expect(describeError(new Error("network"), "read")).toContain("Щось пішло не так");
@@ -79,6 +87,7 @@ describe("staysOnScreen", () => {
   it("never holds a screen that does not exist yet, and lets a cancel leave", () => {
     expect(staysOnScreen(spoke(null), "draft")).toBe(false);
     expect(staysOnScreen(spoke(null), "open")).toBe(false);
+    expect(staysOnScreen(spoke(null), "usual")).toBe(false);
     expect(staysOnScreen(spoke(null), "edit")).toBe(false);
   });
 });

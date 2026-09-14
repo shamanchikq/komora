@@ -1,5 +1,6 @@
 /** Screen flow: compose → loading → draft review → sync sheet → synced, with prose
- * outcomes as the universal detour. The native MainButton carries each screen's
+ * outcomes as the universal detour. «Звичні покупки» sits beside compose: reached from
+ * it or from a `startapp=usual` link, and it leads into the same draft review. The native MainButton carries each screen's
  * primary action; outside Telegram an in-page fallback bar does the same job. */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -11,6 +12,8 @@ import { telegramHost } from "./telegram";
 import type {
   AlternativesOutcome,
   DraftOutcome,
+  Habit,
+  HabitsOutcome,
   Outcome,
   PreviewOutcome,
   SyncedOutcome,
@@ -21,6 +24,7 @@ import { PreviewSheet, confirmLabel, hasChanges } from "./screens/PreviewSheet";
 import { SyncedScreen } from "./screens/SyncedScreen";
 import { AlternativesSheet } from "./screens/AlternativesSheet";
 import { SpokeView } from "./screens/SpokeView";
+import { UsualScreen, canBuild } from "./screens/UsualScreen";
 import { SEND_BUTTON, noAlternatives } from "./copy";
 
 interface Banner {
@@ -35,6 +39,7 @@ type View =
   | { name: "preview"; outcome: PreviewOutcome }
   | { name: "synced"; outcome: SyncedOutcome }
   | { name: "alternatives"; outcome: AlternativesOutcome }
+  | { name: "usual"; outcome: HabitsOutcome }
   | { name: "spoke"; text: string; needsLink: boolean };
 
 const RETRY_BUTTON = "Спробувати ще раз";
@@ -43,7 +48,8 @@ const NOTICE_MS = 2600;
 /** The two attempts with no screen behind them: they replace whatever was there with
  * the loading shell, so a failure has nowhere to stay and lands on compose. Every
  * other attempt is launched from a screen that is still true while it runs. */
-const FROM_NOTHING: readonly Attempt[] = ["draft", "open"];
+const FROM_NOTHING: readonly Attempt[] = ["draft", "open", "usual"];
+const BUILD_USUAL = "Зібрати кошик";
 
 export default function App() {
   // A deep link is read once, before the first paint, so a launch that names a basket
@@ -79,6 +85,10 @@ export default function App() {
       switch (outcome.kind) {
         case "alternatives":
           setView({ name: "alternatives", outcome });
+          break;
+        case "habits":
+          setView({ name: "usual", outcome });
+          flash(outcome.toast);
           break;
         case "preview":
           setView({ name: "preview", outcome });
@@ -215,6 +225,64 @@ export default function App() {
     [run],
   );
 
+  const openUsual = useCallback(() => void run(() => api.habits(), "usual"), [run]);
+
+  /** Mute or unmute one row. The answer IS the updated list, so the screen stays and
+   * the change is announced in a toast — never replaced by a sentence (the lesson
+   * learned three times over on the draft). */
+  const toggleMute = useCallback(
+    async (habit: Habit) => {
+      if (busy) return;
+      setBusy(true);
+      setBanner(null);
+      try {
+        const outcome = habit.muted
+          ? await api.unmute(habit.product_key)
+          : await api.mute(habit.product_key);
+        if (outcome.kind === "spoke" && !outcome.needs_link) {
+          flash(outcome.toast);
+          setBanner({ text: outcome.text, firm: false });
+        } else {
+          route(outcome);
+        }
+      } catch (exc) {
+        setBanner({ text: describeError(exc, "edit"), firm: true });
+      } finally {
+        setBusy(false);
+      }
+    },
+    [busy, flash, route],
+  );
+
+  /** «Зібрати кошик» from the habits screen. Shows the loading shell like compose does,
+   * but a refusal — no cart context, Silpo silent, nothing left to build — returns to
+   * the list it came from with the reason on top, rather than to compose: the list is
+   * still true, and it is the only place the build can be retried from. */
+  const buildUsual = useCallback(
+    async (from: HabitsOutcome) => {
+      if (busy) return;
+      setBusy(true);
+      setBanner(null);
+      setView({ name: "loading" });
+      try {
+        const outcome = await api.habitsDraft();
+        if (outcome.kind === "spoke" && !outcome.needs_link) {
+          setView({ name: "usual", outcome: from });
+          flash(outcome.toast);
+          setBanner({ text: outcome.text, firm: true });
+        } else {
+          route(outcome);
+        }
+      } catch (exc) {
+        setView({ name: "usual", outcome: from });
+        setBanner({ text: describeError(exc, "draft"), firm: true });
+      } finally {
+        setBusy(false);
+      }
+    },
+    [busy, flash, route],
+  );
+
   const goCompose = useCallback(() => {
     setText("");
     setBanner(null);
@@ -245,6 +313,9 @@ export default function App() {
       // the user, and picking is the whole point of the screen.
       case "alternatives":
         return null;
+      case "usual":
+        if (!canBuild(view.outcome.habits)) return null;
+        return () => void buildUsual(view.outcome);
       case "draft":
         if (view.outcome.basket_id === null) return null;
         return () =>
@@ -270,6 +341,8 @@ export default function App() {
       case "spoke":
       case "alternatives":
         return null;
+      case "usual":
+        return canBuild(view.outcome.habits) ? BUILD_USUAL : null;
       case "draft":
         return view.outcome.basket_id === null ? null : SEND_BUTTON;
       case "preview":
@@ -286,7 +359,11 @@ export default function App() {
   useEffect(() => {
     if (opened.current || target === null) return;
     opened.current = true;
-    void run(() => api.open(target.id), "open");
+    if (target.kind === "usual") {
+      void run(() => api.habits(), "usual");
+    } else {
+      void run(() => api.open(target.id), "open");
+    }
   }, [run, target]);
 
   // A launch with no payload used to mean "compose", always — so the menu button
@@ -410,6 +487,7 @@ export default function App() {
           text={text}
           onText={setText}
           onSubmit={(value) => void run(() => api.draft(value), "draft")}
+          onUsual={openUsual}
         />
       )}
 
@@ -487,6 +565,14 @@ export default function App() {
             )
           }
           onBack={goBack}
+        />
+      )}
+
+      {view.name === "usual" && (
+        <UsualScreen
+          outcome={view.outcome}
+          busy={busy}
+          onToggle={(habit) => void toggleMute(habit)}
         />
       )}
 

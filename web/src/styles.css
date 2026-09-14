@@ -855,3 +855,65 @@ h1 {
   border-radius: 999px;
   padding: 2px 8px;
 }
+
+/* --- your usual (Plan 3 Task 6) --------------------------------------------------------- */
+/* The draft's row card, seen as a list of rhythms rather than of goods: no price, no
+   stepper — a sentence and one quiet toggle. */
+
+.group-title {
+  color: var(--hint);
+  font-size: 0.76rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin: 18px 2px 8px;
+}
+
+.row-muted {
+  opacity: 0.6;
+}
+
+.mute-toggle {
+  flex: none;
+  border: 1px solid var(--line);
+  background: var(--sec);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 3px 9px;
+  font-size: 0.76rem;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.mute-toggle:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* Due is the one state worth colour: the brand's, not amber — nothing is wrong. */
+.reason.due {
+  color: var(--brand);
+}
+
+.reason.due i {
+  background: var(--brand);
+}
+
+.usual-link {
+  display: inline-flex;
+  gap: 6px;
+  margin-top: 18px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: 12px;
+  padding: 10px 14px;
+  font: inherit;
+  font-size: 0.92rem;
+  cursor: pointer;
+}
+
+.usual-link:disabled {
+  opacity: 0.55;
+  cursor: default;
+}

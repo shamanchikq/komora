@@ -19,7 +19,7 @@ import {
  * no size field), a step-based stepper for weighted goods with Silpo's stock as its
  * ceiling, and ⇄ on every row that can still be sent. */
 
-function tileCode(name: string): string {
+export function tileCode(name: string): string {
   const word = name.split(/\s+/)[0] ?? "";
   return word.slice(0, 3).toUpperCase();
 }

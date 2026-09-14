@@ -39,6 +39,16 @@ TRACK_CV = 1.0
 NUDGE_CV = 0.75
 QTY_SCALE = (0.5, 2.0)
 """How far the last quantity may stretch or shrink the next expected gap."""
+LAPSE_GAPS = 2.0
+"""A habit overdue by more than this many of its own intervals has **lapsed**: it is no
+longer due, and nothing is sent about it.
+
+Without it `due` had no upper bound. Weekly milk last seen in May was «due» in
+September and would be nudged every cooldown for ever — about a product the household
+stopped buying, or kept buying somewhere Komora cannot see (receipts are only read
+when a cart context exists). Two intervals is one missed purchase and then some; past
+that, silence is the claim the data supports. The habit stays in «your usual» with its
+sentence, which remains true («минуло 120 днів»), and a new purchase revives it."""
 
 
 @dataclass(frozen=True)
@@ -67,8 +77,12 @@ class Habit:
     def days_since(self, today: date) -> int:
         return max(0, (today - self.last_bought).days)
 
+    def lapsed(self, today: date) -> bool:
+        """Overdue by more than `LAPSE_GAPS` intervals — see the constant."""
+        return (today - self.due_on).days > LAPSE_GAPS * self.median_gap_days
+
     def is_due(self, today: date) -> bool:
-        return today >= self.due_on
+        return today >= self.due_on and not self.lapsed(today)
 
     def sentence(self, today: date) -> str:
         """«Ви купуєте X кожні ~N днів, минуло M» — the one claim the data supports."""
@@ -141,10 +155,10 @@ def compute_habits(events: list[PurchaseEvent], *, since: date | None = None) ->
     if since is None:
         since = coverage_start(events)
     per_day = _collapse(events)
-    latest: dict[str, PurchaseEvent] = {}
-    for event in events:
-        if event.product_key not in latest or event.bought_at > latest[event.product_key].bought_at:
-            latest[event.product_key] = event
+    by_product: dict[str, list[PurchaseEvent]] = defaultdict(list)
+    for event in sorted(events, key=lambda e: e.bought_at):
+        by_product[event.product_key].append(event)
+    latest = {key: seen[-1] for key, seen in by_product.items()}
 
     found: list[Habit] = []
     for key, by_day in per_day.items():
@@ -160,6 +174,18 @@ def compute_habits(events: list[PurchaseEvent], *, since: date | None = None) ->
         median_qty = float(statistics.median(quantities))
         last_day = days_seen[-1]
         sample = latest[key]
+        # What a *receipt* knows beats what the latest event guessed. An online line
+        # carries no article number and no unit, so taking both from whichever event
+        # was newest dropped the receipt's `lagerId` the moment the household had one
+        # delivery — and the draft then searched by name, which misses seven times in
+        # twelve. The article is the newest one ever seen; the unit and the weighted
+        # flag come from the newest receipt when there is one.
+        article = next(
+            (e.external_product_id for e in reversed(by_product[key]) if e.external_product_id),
+            None,
+        )
+        receipts = [e for e in by_product[key] if e.source == "offline"]
+        shape = receipts[-1] if receipts else sample
         found.append(
             Habit(
                 product_key=key,
@@ -172,10 +198,10 @@ def compute_habits(events: list[PurchaseEvent], *, since: date | None = None) ->
                 last_qty=by_day[last_day],
                 median_qty=median_qty,
                 due_on=next_due(last_day, median_gap, by_day[last_day], median_qty),
-                unit=sample.unit,
-                weighted=sample.weighted,
+                unit=shape.unit,
+                weighted=shape.weighted,
                 reorderable=sample.reorderable,
-                external_product_id=sample.external_product_id,
+                external_product_id=article,
             )
         )
     return sorted(found, key=lambda h: (-h.confidence, h.due_on, h.name))
@@ -184,3 +210,18 @@ def compute_habits(events: list[PurchaseEvent], *, since: date | None = None) ->
 def due(habits: list[Habit], today: date) -> list[Habit]:
     """What a nudge may mention: due, nudgeable, and not muted. Soonest first."""
     return sorted((h for h in habits if h.is_due(today) and h.nudgeable), key=lambda h: h.due_on)
+
+
+def due_to_buy(habits: list[Habit], today: date) -> list[Habit]:
+    """What a basket the user *asked for* may hold: due, reorderable, not muted.
+
+    Not `due`: the nudge tier (CV ≤ 0.75) exists because a message sent unasked costs
+    more when it is wrong. A draft from «your usual» was opened on purpose, like the
+    list it came from, so it takes every tracked habit that is due — a due habit at
+    CV 0.8 used to be left out, while a day with nothing nudgeable due swept in
+    everything tracked, due or not.
+    """
+    return sorted(
+        (h for h in habits if h.is_due(today) and h.reorderable and not h.muted),
+        key=lambda h: h.due_on,
+    )

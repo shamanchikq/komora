@@ -1,10 +1,12 @@
 """The engine's rules on synthetic histories — spec §6 as Plan 3 settled them."""
 
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 from komora.core.habits.draft import habit_lines, suggested_qty
 from komora.core.habits.engine import (
+    LAPSE_GAPS,
     MIN_EVENTS,
     NUDGE_CV,
     TRACK_CV,
@@ -12,6 +14,7 @@ from komora.core.habits.engine import (
     compute_habits,
     coverage_start,
     due,
+    due_to_buy,
     next_due,
 )
 from komora.core.habits.purchases import PurchaseEvent
@@ -102,7 +105,8 @@ def test_next_due_scales_with_the_last_quantity_within_bounds() -> None:
 
 def test_due_lists_only_due_nudgeable_unmuted_soonest_first() -> None:
     a = compute_habits(weekly("a", 5, name="А"))[0]
-    b = compute_habits(weekly("b", 5, start=date(2026, 5, 1), name="Б"))[0]
+    # A week ahead of `a`: overdue on `a`'s due date, but well inside its lapse window.
+    b = compute_habits(weekly("b", 5, start=date(2026, 5, 25), name="Б"))[0]
     today = a.due_on
     assert [h.product_key for h in due([a, b], today)] == ["b", "a"]
     muted = Habit(**{**a.__dict__, "muted": True})
@@ -167,3 +171,39 @@ def test_suggested_qty_is_whole_packs_or_kilograms_never_zero() -> None:
     assert suggested_qty(b) == 0.35
     (c,) = compute_habits(weekly("c", 5, qty=0.0001, weighted=True))
     assert suggested_qty(c) == 0.1
+
+
+def test_a_long_overdue_habit_has_lapsed_and_is_not_due() -> None:
+    """Weekly milk last seen in May is not «due» in September — it stopped, or it is
+    bought where Komora cannot see. Either way nothing may be sent about it."""
+    (habit,) = compute_habits(weekly("p", 5))
+    window = int(LAPSE_GAPS * habit.median_gap_days)
+    assert habit.is_due(habit.due_on + timedelta(days=window))
+    gone = habit.due_on + timedelta(days=window + 1)
+    assert habit.lapsed(gone) and not habit.is_due(gone)
+    assert due([habit], gone) == []
+    assert due_to_buy([habit], gone) == []
+    # Still true to say, so it still has a sentence.
+    assert "минуло" in habit.sentence(gone)
+
+
+def test_due_to_buy_ignores_the_nudge_tier_but_not_the_date() -> None:
+    (a,) = compute_habits(weekly("a", 5))
+    loose = Habit(**{**a.__dict__, "product_key": "loose", "cv": NUDGE_CV + 0.1})
+    today = a.due_on
+    assert due([a, loose], today) == [a]
+    assert {h.product_key for h in due_to_buy([a, loose], today)} == {"a", "loose"}
+    assert due_to_buy([a], today - timedelta(days=1)) == []
+    muted = Habit(**{**a.__dict__, "muted": True})
+    counter = Habit(**{**a.__dict__, "reorderable": False})
+    assert due_to_buy([muted, counter], today) == []
+
+
+def test_a_later_delivery_does_not_erase_what_the_receipts_knew() -> None:
+    """An online line has no article number and no unit. The newest event used to
+    supply both, so one delivery sent the next draft searching by name."""
+    receipts = [replace(e, external_product_id=815253) for e in weekly("p", 4)]
+    delivery = event("p", date(2026, 6, 29), source="online", weighted=True)
+    (habit,) = compute_habits([*receipts, delivery])
+    assert habit.external_product_id == 815253
+    assert habit.unit == "900г" and not habit.weighted

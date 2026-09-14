@@ -6,11 +6,15 @@ export function ComposeScreen({
   text,
   onText,
   onSubmit,
+  onUsual,
 }: {
   busy: boolean;
   text: string;
   onText: (value: string) => void;
   onSubmit: (value: string) => void;
+  /** The door to «Звичні покупки». The menu button carries no launch payload, so this
+   * is the one way to reach that screen without a link from the chat. */
+  onUsual: () => void;
 }) {
   const canSend = text.trim().length > 0 && !busy;
 
@@ -36,6 +40,10 @@ export function ComposeScreen({
         aria-label="Що потрібно купити"
       />
       <div className="hint">Наприклад: молоко, хліб і щось до чаю</div>
+
+      <button type="button" className="usual-link" disabled={busy} onClick={onUsual}>
+        Звичні покупки <span aria-hidden>→</span>
+      </button>
 
       <footer className="trust">
         Чернетка живе в Коморі, поки ви не підтвердите — у кошику Сільпо нічого не

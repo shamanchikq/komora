@@ -99,6 +99,10 @@ class Ask:
     text: str
     yes: str
     yes_label: str
+    no: str
+    """The refusal's callback payload. Its own action, never a shared «dismiss»: that
+    one answers a nudge («Нагадаю, коли знову буде пора»), and cancelling a wipe with
+    it told the user they would be reminded about something."""
     no_label: str = "Скасувати"
 
 

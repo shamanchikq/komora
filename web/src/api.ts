@@ -25,8 +25,10 @@ export class ApiError extends Error {
  * cancel are changes to Komora's own draft. Reporting «Сільпо не відповідає» for a
  * request that was never going to reach Silpo names the wrong party — the same class
  * of claim-more-than-the-data-supports the rest of this file exists to avoid. `read`
- * stays for ⇄, which really does search Silpo again. */
-export type Attempt = "draft" | "open" | "read" | "edit" | "write";
+ * stays for ⇄, which really does search Silpo again. `usual` opens «Звичні покупки»,
+ * which reads Komora's own database like `open` — but it is not a draft, so it cannot
+ * borrow `open`'s sentence about one. */
+export type Attempt = "draft" | "open" | "usual" | "read" | "edit" | "write";
 
 /** Whether a prose answer to `attempt` is news about the screen that asked, rather
  * than somewhere to go.
@@ -64,6 +66,7 @@ const NO_DRAFT =
 const NO_ANSWER = "Сільпо не відповідає. Чернетка на місці — спробуйте за хвилину.";
 const NO_REACH = "Комора не відповідає. Чернетка на місці — спробуйте за хвилину.";
 const NO_OPEN = "Не вдалося відкрити цю чернетку. Спробуйте, будь ласка, ще раз.";
+const NO_USUAL = "Не вдалося відкрити звичні покупки. Спробуйте, будь ласка, ще раз.";
 const SERVER = "Сталася помилка на сервері. Спробуйте, будь ласка, за кілька хвилин.";
 const UNKNOWN = "Щось пішло не так. Спробуйте, будь ласка, ще раз.";
 
@@ -77,6 +80,7 @@ export function describeError(error: unknown, attempt: Attempt): string {
   // Opening reads Komora's own database and never touches Silpo, so it cannot blame
   // Silpo for the failure the way the other two can.
   if (attempt === "open") return NO_OPEN;
+  if (attempt === "usual") return NO_USUAL;
   if (!(error instanceof ApiError)) return UNKNOWN;
   if (error.status === 0) {
     if (attempt === "draft") return NO_DRAFT;
@@ -133,4 +137,12 @@ export const api = {
     post(`baskets/${basketId}/lines/${position}/remove`),
   trimOptional: (basketId: number) => post(`baskets/${basketId}/trim`),
   cancel: (basketId: number) => post(`baskets/${basketId}/cancel`),
+  /** «Звичні покупки»: the habits the engine tracks for whoever opened the app. */
+  habits: () => get("habits"),
+  /** A basket from those habits, no model request; lands on the ordinary draft. */
+  habitsDraft: () => post("habits/draft"),
+  // A key can hold «:» (`lager:123`), so it is encoded; the backend looks it up for
+  // the authenticated sender only, so a guessed one mutes nothing of anyone else's.
+  mute: (productKey: string) => post(`habits/${encodeURIComponent(productKey)}/mute`),
+  unmute: (productKey: string) => post(`habits/${encodeURIComponent(productKey)}/unmute`),
 };
