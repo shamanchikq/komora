@@ -410,6 +410,8 @@ def render_habits(outcome: HabitsReady) -> str:
         blocks.append(f"   — {esc(habit.sentence(outcome.today))}")
         if not habit.reorderable:
             blocks.append("   (з прилавка — у кошик Сільпо не додається)")
+    if len(outcome.habits) > MAX_HABIT_BUTTONS:
+        blocks += ["", MORE_THAN_BUTTONS.format(n=MAX_HABIT_BUTTONS)]
     blocks += ["", freshness_text(outcome.fresh_at)]
     return "\n".join(blocks)
 
@@ -423,7 +425,11 @@ def render_nudge(outcome: NudgeReady) -> str:
 
 BUILD_HABITS_BUTTON = "Зібрати кошик"
 NOT_NOW_BUTTON = "Не зараз"
-MAX_HABIT_BUTTONS = 8
+MAX_HABIT_BUTTONS = 24
+"""One toggle per row of `/usual`, four to a keyboard row. It was eight on a single
+row, so a ninth habit was listed with no way to mute it from the chat."""
+HABIT_BUTTONS_PER_ROW = 4
+MORE_THAN_BUTTONS = "Кнопки є для перших {n}; решту можна вимкнути в Коморі або через «/mute»."
 
 
 def habit_buttons(habits: list[Habit], *, offer_draft: bool) -> tuple[Button, ...]:
@@ -436,7 +442,7 @@ def habit_buttons(habits: list[Habit], *, offer_draft: bool) -> tuple[Button, ..
         Button(
             f"{'🔊' if habit.muted else MUTED_MARK} {i}",
             data=f"{'unmute' if habit.muted else 'mute'}:{habit.product_key}",
-            same_row=i > 1,
+            same_row=(i - 1) % HABIT_BUTTONS_PER_ROW != 0,
         )
         for i, habit in enumerate(habits[:MAX_HABIT_BUTTONS], start=1)
     )

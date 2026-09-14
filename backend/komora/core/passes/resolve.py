@@ -194,7 +194,12 @@ def snap_quantity(
         # pays for. Where the request cannot be honoured exactly, err downwards: one
         # bottle short is a message, one bottle over is money.
         exact = capped / step_size
-        steps = max(1, round(exact) if weighted else math.floor(exact + 1e-9))
+        # A weighted good rounds to the NEAREST step, half-up, with the float slack a
+        # step like 0.2 needs: 0.3 / 0.2 is 1.4999999999999998, so `round` gave one step
+        # — «сир 300 г» became 0,2 кг on the 2026-09-14 walk, when 0,4 is as near — and
+        # Python's round-half-to-even would split the real ties both ways anyway.
+        nearest = math.floor(exact + 0.5 + 1e-9)
+        steps = max(1, nearest if weighted else math.floor(exact + 1e-9))
         capped = steps * step_size
         if stock is not None:
             capped = min(capped, float(stock))

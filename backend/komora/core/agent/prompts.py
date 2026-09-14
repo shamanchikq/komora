@@ -9,7 +9,7 @@ docs/local-models-ollama-gemma.md §3.1.
 
 from typing import Final
 
-from komora.core.agent.recap import DRAFT_TAG, SYNCED_TAG
+from komora.core.agent.recap import CANCELLED_TAG, DRAFT_TAG, SYNCED_TAG
 from komora.core.agent.tools import PROPOSE_BASKET
 
 SYSTEM_PROMPT: Final = f"""\
@@ -64,6 +64,9 @@ quantity — 1, якщо користувач не сказав інше. Не �
 «Заміни ковбаски на салямі» після надсилання — це removals: ["ковбаски"] і одна нова
 позиція в lines. Без removals стара ковбаска просто лишиться в кошику, і заміни не
 станеться. Не чіпай позицій, про які не питали: у кошику є речі, яких ти не додавав.
+
+«{CANCELLED_TAG}» — чернетку скасовано, її позицій більше немає. Наступне прохання —
+новий кошик, а не правка скасованого: не повертай із нього нічого, про що не просять знову.
 
 ПРИЧИНИ
 Кожна позиція мусить мати reason_text українською — користувач бачить його під назвою

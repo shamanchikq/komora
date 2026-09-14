@@ -21,6 +21,11 @@ DRAFT_TAG = "[чернетка]"
 SYNCED_TAG = "[надіслано в кошик Сільпо]"
 """The prompt names this tag: seeing it is how the model knows the products are
 already in the real cart and that an edit needs `removals` rather than new lines."""
+CANCELLED_TAG = "[скасовано]"
+"""A draft the user discarded. Without it the history still ended on that draft's
+`DRAFT_TAG`, so the next message was read as an edit of it: on the 2026-09-14 walk
+«прибери з кошика сир Мукко і булку», sent right after «Скасувати», came back with the
+cancelled cheese, tomatoes and milk beside the two removals."""
 
 MAX_ITEMS = 15
 """Twenty of these share the context window. A basket longer than this is already
@@ -76,3 +81,11 @@ def sync_recap(report: SyncReport) -> str:
     if report.remove_failed:
         parts.append(f"[не прибралося] {_listing([name for name, _ in report.remove_failed])}")
     return "\n".join(parts) or "[у кошику Сільпо нічого не змінилося]"
+
+
+def cancel_recap(title: str) -> str:
+    """The draft is gone and nothing reached Silpo — what the next turn must start from."""
+    return (
+        f"{CANCELLED_TAG} {_clip(title, 120)} — чернетку відкинуто, "
+        "у кошику Сільпо нічого не змінилося"
+    )

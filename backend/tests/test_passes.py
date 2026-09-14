@@ -76,6 +76,18 @@ class TestClampQuantity:
         cheese["weighted"] = True
         assert clamp_quantity(0.17, cheese) == 0.2
 
+    def test_a_weighted_tie_rounds_up_whatever_the_float_says(self) -> None:
+        """«сир 300 г» at a 0,2 kg step became 0,2 kg on the 2026-09-14 walk: 0.3 / 0.2 is
+        1.4999999999999998, and `round` would split real ties to even besides."""
+        cheese = product("x", 1, step=0.2, stock=None)
+        cheese["weighted"] = True
+        assert clamp_quantity(0.3, cheese) == 0.4
+        assert clamp_quantity(0.5, cheese) == 0.6
+        assert clamp_quantity(0.29, cheese) == 0.2
+        sliced = product("y", 1, step=0.25, stock=None)
+        sliced["weighted"] = True
+        assert clamp_quantity(0.3, sliced) == 0.25
+
 
 class TestCarrierBags:
     """A bag leads its name with the word; goods that merely come in one do not.

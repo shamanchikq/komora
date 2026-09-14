@@ -25,6 +25,7 @@ from komora.bot.handlers import (
     NO_HABITS_TO_BUILD,
     NOTHING_MUTED,
     NUDGE_KIND,
+    QUIET_HELP,
     SLOT_EXPIRED,
     UNKNOWN_HABIT,
     HabitServices,
@@ -37,6 +38,7 @@ from komora.bot.handlers import (
     on_linked,
     on_mute_list,
     on_push,
+    on_quiet,
     on_set_mute,
     on_start,
     on_usual,
@@ -129,6 +131,12 @@ class Deferred:
             await self.pending.pop(0)
             ran += 1
         return ran
+
+    def __del__(self) -> None:
+        # Work a test never drained is closed, not left for the garbage collector to
+        # report as «coroutine was never awaited» — a warning that would bury a real one.
+        for work in self.pending:
+            work.close()
 
 
 def build(
@@ -754,3 +762,80 @@ class TestRendering:
         empty = render(HabitsReady(habits=[], today=today), url)
         assert empty.buttons == ()
         assert render(HabitsReady(habits=[habit], today=today)).buttons[-1].url is None
+
+
+class TestQuietHours:
+    async def test_quiet_hours_are_shown_set_and_switched_off(self, sessions) -> None:  # type: ignore[no-untyped-def]
+        services, _, _ = build(sessions)
+        shown = await on_quiet(services, USER, "")
+        assert isinstance(shown, Spoke) and "22:00" in shown.text and "(типово)" in shown.text
+
+        chosen = await on_quiet(services, USER, "23-7")
+        assert isinstance(chosen, Spoke) and "з 23:00 до 07:00" in chosen.text
+        user = await services.users.get(USER)
+        assert user is not None and (user.quiet_from, user.quiet_to) == (23, 7)
+        assert in_quiet_hours(user, datetime(2026, 8, 1, 20, 30, tzinfo=UTC))  # 23:30 Kyiv
+        assert not in_quiet_hours(user, datetime(2026, 8, 1, 19, 30, tzinfo=UTC))  # 22:30
+
+        await on_quiet(services, USER, "off")
+        user = await services.users.get(USER)
+        assert user is not None and (user.quiet_from, user.quiet_to) == (0, 0)
+        assert not in_quiet_hours(user, datetime(2026, 8, 1, 0, tzinfo=UTC))  # 03:00 Kyiv
+        again = await on_quiet(services, USER, "")
+        assert isinstance(again, Spoke) and "Тихих годин немає" in again.text
+
+    async def test_nonsense_gets_the_help_and_changes_nothing(self, sessions) -> None:  # type: ignore[no-untyped-def]
+        services, _, _ = build(sessions)
+        for argument in ("25 7", "22", "a b", "22 22", "1 2 3", "-1 5", "9" * 30 + " 1"):
+            assert await on_quiet(services, USER, argument) == Spoke(QUIET_HELP), argument
+        user = await services.users.get(USER)
+        assert user is not None and user.quiet_from is None
+
+
+class TestJobBackoff:
+    async def test_a_dead_login_is_retried_twice_a_day_not_hourly(self, sessions) -> None:  # type: ignore[no-untyped-def]
+        from sqlalchemy import select
+
+        from komora.core.mcp.errors import NotAuthenticated
+        from komora.db.tables import HistoryImport
+
+        services, _, _ = build(sessions)
+        await linked(services)
+        stores = services.habits
+        assert stores is not None
+
+        @contextlib.asynccontextmanager
+        async def gone(telegram_id: int, *, wait_seconds: float = 2.0) -> AsyncIterator[FakeSilpo]:
+            raise NotAuthenticated("tokens revoked")
+            yield  # pragma: no cover
+
+        services = replace(services, habits=replace(stores, connect_background=gone))
+
+        async def outcomes() -> list[str]:
+            async with sessions() as session:
+                rows = await session.execute(select(HistoryImport.outcome))
+                return list(rows.scalars())
+
+        now = datetime(2026, 8, 1, 12, tzinfo=UTC)
+        for hour in range(6):
+            await refresh_if_stale(services, USER, now + timedelta(hours=hour))
+        assert await outcomes() == ["failed"]
+        await refresh_if_stale(services, USER, now + REFRESH_EVERY + timedelta(minutes=1))
+        assert await outcomes() == ["failed", "failed"]
+
+
+class TestUsualKeyboard:
+    def test_every_row_gets_a_toggle_four_to_a_keyboard_row(self) -> None:
+        from komora.bot.render import MAX_HABIT_BUTTONS, habit_buttons, render_habits
+
+        (base,) = compute_habits(
+            offline_purchases({"orders": weekly_receipts()}), since=date(2026, 6, 1)
+        )[:1]
+        many = [replace(base, product_key=f"p{i}", name=f"Товар {i}") for i in range(10)]
+        toggles = [b for b in habit_buttons(many, offer_draft=True) if b.data and "mute:" in b.data]
+        assert len(toggles) == 10
+        assert [b.same_row for b in toggles[:5]] == [False, True, True, True, False]
+
+        over = [replace(base, product_key=f"q{i}") for i in range(MAX_HABIT_BUTTONS + 1)]
+        text = render_habits(HabitsReady(habits=over, today=date(2026, 7, 27)))
+        assert f"Кнопки є для перших {MAX_HABIT_BUTTONS}" in text

@@ -20,6 +20,7 @@ Two rules are enforced here rather than trusted:
 import asyncio
 import logging
 import math
+import re
 from collections.abc import Awaitable, Callable, Coroutine
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
@@ -39,7 +40,7 @@ from komora.bot.outcomes import (
     Synced,
 )
 from komora.core.agent.loop import ForbiddenToolCall, run_agent
-from komora.core.agent.recap import draft_recap, sync_recap
+from komora.core.agent.recap import cancel_recap, draft_recap, sync_recap
 from komora.core.agent.tools import ToolSource
 from komora.core.alternatives import list_alternatives, next_alternative
 from komora.core.habits.draft import HABITS_INTENT, HABITS_TITLE, habit_lines
@@ -143,6 +144,10 @@ NOTHING_OPTIONAL = "У цій чернетці нема необовʼязков
 BUDGET_HELP = (
     "Тижневий бюджет допомагає бачити, коли кошик виходить за межі.\n"
     "«/budget 1500» — встановити, «/budget 0» — прибрати."
+)
+QUIET_HELP = (
+    "Тихі години — коли Комора нічого не надсилає сама, за київським часом.\n"
+    "«/quiet 22 8» — з 22:00 до 08:00, «/quiet off» — надсилати будь-коли."
 )
 NO_ALTERNATIVE = "Інших варіантів для «{name}» Сільпо не пропонує."
 TOO_LONG = (
@@ -323,6 +328,49 @@ async def on_budget(services: Services, telegram_id: int, argument: str) -> Outc
     return Spoke(f"Тижневий бюджет: {amount} ₴. Показуватиму, коли кошик виходить за межі.")
 
 
+QUIET_HOURS = re.compile(r"\s*(\d{1,2})(?::00)?\s*(?:[-–—]|\s)\s*(\d{1,2})(?::00)?\s*")
+QUIET_OFF = frozenset({"off", "вимкнути", "ні"})
+
+
+def quiet_text(user: User | None) -> str:
+    start, end = DEFAULT_QUIET_HOURS
+    if user is not None and user.quiet_from is not None and user.quiet_to is not None:
+        start, end = user.quiet_from, user.quiet_to
+        if start == end:
+            return "Тихих годин немає: нагадування можуть прийти будь-коли."
+        return f"Тихі години: з {start:02d}:00 до {end:02d}:00."
+    return f"Тихі години: з {start:02d}:00 до {end:02d}:00 (типово)."
+
+
+async def on_quiet(services: Services, telegram_id: int, argument: str) -> Outcome:
+    """«/quiet 22 8» — the hours in which nothing is sent unasked.
+
+    `users.quiet_from`/`quiet_to` existed from the habits migration, and `in_quiet_hours`
+    read them, but nothing could write them: the default 22–08 Kyiv was the only
+    choice. «off» is stored as an empty window (`start == end`), which
+    `in_quiet_hours` already reads as "never quiet"; two equal hours typed by hand are
+    refused instead, because «з 9 до 9» is more likely a typo than a wish.
+    """
+    await services.users.ensure(telegram_id)
+    argument = argument.strip()
+    if not argument:
+        return Spoke(f"{quiet_text(await services.users.get(telegram_id))}\n\n{QUIET_HELP}")
+    if argument.lower() in QUIET_OFF:
+        await services.users.set_quiet_hours(telegram_id, 0, 0)
+        return Spoke(quiet_text(await services.users.get(telegram_id)))
+    match = QUIET_HOURS.fullmatch(argument)
+    if match is None:
+        return Spoke(QUIET_HELP)
+    start, end = int(match.group(1)), int(match.group(2))
+    if not (0 <= start <= 23 and 0 <= end <= 23) or start == end:
+        return Spoke(QUIET_HELP)
+    await services.users.set_quiet_hours(telegram_id, start, end)
+    return Spoke(
+        f"{quiet_text(await services.users.get(telegram_id))} "
+        "У цей час Комора нічого не надсилає сама."
+    )
+
+
 async def on_text(services: Services, telegram_id: int, text: str) -> Outcome:
     """One user turn: history -> agent -> pipeline -> a draft to review."""
     await services.users.ensure(telegram_id)
@@ -475,6 +523,9 @@ async def on_cancel(services: Services, telegram_id: int, basket_id: int) -> Out
     if isinstance(gate, Spoke):
         return gate
     await services.baskets.set_status(basket_id, "discarded")
+    # What the model reads next turn: without it the history ends on this draft, and the
+    # next message is taken as an edit of a basket the user just threw away.
+    await services.conversations.append(telegram_id, "assistant", cancel_recap(gate.title))
     return Spoke(CANCELLED)
 
 
