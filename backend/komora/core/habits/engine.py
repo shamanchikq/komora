@@ -3,7 +3,8 @@
 The rules are spec §6 as Plan 3 settled them, on the catalog product id:
 
 * Same-day purchases of one product are one event. Across sources too: an online
-  delivery that also produced a receipt (Task 0 #5, still untested) must count once,
+  delivery that also produced a receipt (Plan 3 Task 0 #5, still unanswered — the one
+  account seen has no online order inside its receipt history's span) must count once,
   so the collapse runs after the sources are merged. That day's quantity is the
   **largest** a source reported, not the sum.
 * **≥ 4 events** before a product exists here at all.

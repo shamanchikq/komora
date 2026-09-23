@@ -17,6 +17,8 @@ from typing import Any, Literal
 Unit = Literal["g", "ml", "pcs"]
 
 _AMOUNT = re.compile(r"^\s*(\d+(?:[.,]\d+)?)\s*([^\d\s]+)\s*$")
+_MULTIPACK = re.compile(r"^\s*(\d+)\s*\*\s*(.+)$")
+_PER_PACK = "/уп"
 
 _UNITS: dict[str, tuple[Unit, float]] = {
     # to grams
@@ -36,8 +38,8 @@ _UNITS: dict[str, tuple[Unit, float]] = {
     "pcs": ("pcs", 1),
 }
 """Only forms actually seen or their obvious singular spellings. An unknown unit is a
-`None`, never a guess — «2*100г» and «<=0,5» (the details' bucket) both parse to
-nothing, which is correct: neither is one pack's content."""
+`None`, never a guess — «<=0,5» (the details' bucket) parses to nothing, which is
+correct: it is a range, not one pack's content."""
 
 
 @dataclass(frozen=True)
@@ -48,9 +50,28 @@ class PackSize:
 
 
 def parse_display_ratio(value: Any) -> PackSize | None:
-    """«900г» → 900 g; «0,5л» → 500 ml; «10 шт» → 10 pcs; anything else → `None`."""
+    """«900г» → 900 g; «0,5л» → 500 ml; «10 шт» → 10 pcs; anything else → `None`.
+
+    Three more forms were measured over 300 discounted products on 2026-09-14 (Plan 4
+    Task 0), and each one is the content of the unit Silpo sells at `price`:
+
+    - **A multipack**, «4*0,5л» — a four-pack of beer at 119,99 ₴, «2*100г» — two buns
+      at 42,99 ₴. The pack is the count times the item: 2 л, 200 г.
+    - **Pieces per pack**, «20шт/уп» — sanitary pads at 92,90 ₴ are one pack of 20.
+    - **A bare «шт»** — an avocado, a frying pan: one piece.
+    """
     if not isinstance(value, str):
         return None
+    if value.strip().casefold() == "шт":
+        return PackSize(amount=1, unit="pcs")
+    multipack = _MULTIPACK.match(value)
+    if multipack is not None:
+        count, item = int(multipack.group(1)), parse_display_ratio(multipack.group(2))
+        if item is None or count <= 0 or _MULTIPACK.match(multipack.group(2)):
+            return None
+        return PackSize(amount=count * item.amount, unit=item.unit)
+    if value.rstrip().casefold().endswith(_PER_PACK):
+        value = value.rstrip()[: -len(_PER_PACK)]
     match = _AMOUNT.match(value)
     if match is None:
         return None

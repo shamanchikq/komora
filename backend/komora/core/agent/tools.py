@@ -206,10 +206,26 @@ _SENTENCE = re.compile(r"(?<=[.!?])\s+|\n+")
 _PARAGRAPH = re.compile(r"\n\s*\n")
 _HEADING = re.compile(r"^([A-Z][A-Z0-9 /&()-]{2,40}):")
 
-MAX_DESCRIPTION: Final = 1600
+MAX_DESCRIPTION: Final = 2200
 """Long enough for the paragraphs Komora wants the model to have (article search,
-package size, weighted units); short enough that nine tools stay a stable, cacheable
-prefix. Cut at a paragraph, then at a sentence — never mid-word."""
+package size, weighted units, `get_products`' sort and price-filter caveats); short
+enough that nine tools stay a stable, cacheable prefix. Cut at a paragraph, then at a
+sentence — never mid-word.
+
+1600 was set against the August fixture. On the descriptions re-captured 2026-09-14 it
+cut PACKAGE SIZE and WEIGHTED PRODUCT UNITS off `find_products_batch` and PACKAGE SIZE
+off `get_products` — the paragraphs the cap existed to make room for."""
+
+UNUSED_HEADINGS: Final[frozenset[str]] = frozenset(
+    {"EMPTY ENTRIES", "SEARCH BY BARCODE", "RESULT COUNT", "STOCK ACCURACY"}
+)
+"""Paragraphs that are true and of no use to this model, dropped so the useful ones fit.
+
+Komora never sends a blank term (EMPTY ENTRIES), the model has no barcode to search
+by (SEARCH BY BARCODE), the resolve pass reads `totalFound` itself (RESULT COUNT), and
+STOCK ACCURACY is about `deliveryType`/`timeslotStart`/`timeslotEnd` — parameters the
+loop injects and `strip_injected` hides. Unlike `DROPPED_HEADINGS`, nothing here
+contradicts Komora; a heading not named in either list is kept."""
 
 DROPPED_HEADINGS: Final[frozenset[str]] = frozenset({"BUDGET"})
 """Paragraphs Silpo addresses to a generic agent and Komora's own prompt contradicts.
@@ -233,13 +249,19 @@ checked in `test_agent_loop`: a kept description that gains one of these fails."
 
 def _wanted(paragraph: str) -> bool:
     heading = _HEADING.match(paragraph)
-    if heading and heading.group(1).strip() in DROPPED_HEADINGS:
+    if heading and heading.group(1).strip() in DROPPED_HEADINGS | UNUSED_HEADINGS:
         return False
     lowered = paragraph.casefold()
     return not any(phrase in lowered for phrase in DROPPED_PHRASES)
 
 
 def _without_unreachable(paragraph: str, unreachable: Collection[str]) -> str:
+    # A tool named only inside a parenthesis is an aside, not the point: «step and
+    # quantity (in silpo_add_or_update_cart_products) are ALWAYS expressed in
+    # KILOGRAMS» is the one sentence the model needs about weighted goods, and dropping
+    # it whole for the aside lost it on the 2026-09-14 descriptions.
+    for name in unreachable:
+        paragraph = re.sub(rf"\s*\([^()]*{re.escape(name)}[^()]*\)", "", paragraph)
     kept = [
         sentence
         for sentence in _SENTENCE.split(paragraph)

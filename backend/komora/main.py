@@ -9,6 +9,7 @@ OAuth callback does, so uvicorn serves exactly one route while aiogram polls.
 
 import asyncio
 import contextlib
+import html
 import logging
 import sys
 
@@ -79,7 +80,9 @@ async def run() -> None:
     bot = make_bot(settings.telegram_bot_token)
 
     async def send_url(telegram_id: int, url: str) -> None:
-        await bot.send_message(telegram_id, f"{LINK_PROMPT}\n{url}")
+        # Escaped: the bot speaks HTML, and an authorization URL is a string of
+        # `&`-joined parameters. `&amp;` is one of the entities Telegram decodes.
+        await bot.send_message(telegram_id, f"{LINK_PROMPT}\n{html.escape(url, quote=False)}")
 
     linking: dict[int, asyncio.Task[None]] = {}
 

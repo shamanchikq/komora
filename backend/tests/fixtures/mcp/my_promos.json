@@ -1,0 +1,141 @@
+{
+  "success": true,
+  "summary": "Found 10 promos (select 1–5 to activate)",
+  "promos": [
+    {
+      "promoId": 288660,
+      "selected": false,
+      "beginDate": "2026-09-09",
+      "endDate": "2026-09-15",
+      "description": "за свіжу свинину",
+      "rewardText": "x25 балобонусів",
+      "rewardValue": 25,
+      "limitText": "• За наявності товару з пропозиції",
+      "warningText": null,
+      "addressListText": "<redacted>",
+      "image": "https://content.silpo.ua/promo/Frequency/select_147_sprint/60085655b9_480x480.jpg"
+    },
+    {
+      "promoId": 284537,
+      "selected": false,
+      "beginDate": "2026-09-09",
+      "endDate": "2026-09-15",
+      "description": "за шоколад у плитках «Світоч»™",
+      "rewardText": "x35 балобонусів",
+      "rewardValue": 35,
+      "limitText": "• За наявності товару з пропозиції",
+      "warningText": null,
+      "addressListText": "<redacted>",
+      "image": "https://content.silpo.ua/promo/Frequency/select_147_sprint/2491762671_480x480.jpg"
+    },
+    {
+      "promoId": 284650,
+      "selected": false,
+      "beginDate": "2026-09-09",
+      "endDate": "2026-09-15",
+      "description": "за свіжу капусту",
+      "rewardText": "x25 балобонусів",
+      "rewardValue": 25,
+      "limitText": "• За наявності товару з пропозиції",
+      "warningText": null,
+      "addressListText": "<redacted>",
+      "image": "https://content.silpo.ua/promo/Frequency/151_sprint/22d0ba45b0_480x480.jpg"
+    },
+    {
+      "promoId": 287345,
+      "selected": false,
+      "beginDate": "2026-09-09",
+      "endDate": "2026-09-15",
+      "description": "за напої «Лимонада» «Моршинська»™",
+      "rewardText": "x30 балобонусів",
+      "rewardValue": 30,
+      "limitText": "• За наявності товару з пропозиції",
+      "warningText": null,
+      "addressListText": "<redacted>",
+      "image": "https://content.silpo.ua/promo/Frequency/select/5b41c75966_480x480.jpg"
+    },
+    {
+      "promoId": 288606,
+      "selected": false,
+      "beginDate": "2026-09-09",
+      "endDate": "2026-09-15",
+      "description": "за сухарики Flint™",
+      "rewardText": "x50 балобонусів",
+      "rewardValue": 50,
+      "limitText": "• За наявності товару з пропозиції",
+      "warningText": null,
+      "addressListText": "<redacted>",
+      "image": "https://content.silpo.ua/promo/Frequency/129_sprint/3142b2591e_480x480.jpg"
+    },
+    {
+      "promoId": 284534,
+      "selected": false,
+      "beginDate": "2026-09-09",
+      "endDate": "2026-09-15",
+      "description": "за кетчупи, соуси, заправки та маринади «Торчин»™",
+      "rewardText": "x35 балобонусів",
+      "rewardValue": 35,
+      "limitText": "• За наявності товару з пропозиції",
+      "warningText": null,
+      "addressListText": "<redacted>",
+      "image": "https://content.silpo.ua/promo/Frequency/select_147_sprint/4b1d0af6ae_480x480.jpg"
+    },
+    {
+      "promoId": 285866,
+      "selected": false,
+      "beginDate": "2026-09-09",
+      "endDate": "2026-09-15",
+      "description": "за крупи, бобові та цукор «Ситий Двір»™",
+      "rewardText": "x35 балобонусів",
+      "rewardValue": 35,
+      "limitText": "• За наявності товару з пропозиції",
+      "warningText": null,
+      "addressListText": "<redacted>",
+      "image": "https://content.silpo.ua/promo/Frequency/162_sprint/0a2b02e659_480x480.jpg"
+    },
+    {
+      "promoId": 288671,
+      "selected": false,
+      "beginDate": "2026-09-09",
+      "endDate": "2026-09-15",
+      "description": "за рибу солену та слабосолену",
+      "rewardText": "x35 балобонусів",
+      "rewardValue": 35,
+      "limitText": "• За наявності товару з пропозиції",
+      "warningText": null,
+      "addressListText": "<redacted>",
+      "image": "https://content.silpo.ua/promo/Frequency/164_sprint/a5ae8460a6_480x480.jpg"
+    },
+    {
+      "promoId": 293097,
+      "selected": false,
+      "beginDate": "2026-09-09",
+      "endDate": "2026-09-15",
+      "description": "за варену ковбасу, сосиски, сардельки та шинку «Алан»™",
+      "rewardText": "x35 балобонусів",
+      "rewardValue": 35,
+      "limitText": "• Діє за наявності товару з пропозиції",
+      "warningText": null,
+      "addressListText": "<redacted>",
+      "image": "https://content.silpo.ua/promo/Frequency/153_sprint/ea7699d7a0_480x480.jpg"
+    },
+    {
+      "promoId": 302800,
+      "selected": false,
+      "beginDate": "2026-09-09",
+      "endDate": "2026-09-15",
+      "description": "за охолоджену червону рибу",
+      "rewardText": "x35 балобонусів",
+      "rewardValue": 35,
+      "limitText": "• За наявності товару з пропозиції",
+      "warningText": null,
+      "addressListText": "<redacted>",
+      "image": "https://content.silpo.ua/promo/Frequency/164_sprint/be6f6e9ddf_480x480.jpg"
+    }
+  ],
+  "meta": {
+    "total": 10,
+    "minSelect": 1,
+    "maxSelect": 5
+  }
+}

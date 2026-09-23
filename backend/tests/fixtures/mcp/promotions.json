@@ -1,0 +1,60 @@
+{
+  "success": true,
+  "summary": "Found 9 active promotions",
+  "promotions": [
+    {
+      "code": "only_online",
+      "title": "Тільки Онлайн",
+      "productCount": 1374,
+      "url": "https://silpo.ua/offers/only_online"
+    },
+    {
+      "code": "melkoopt",
+      "title": "Гуртом дешевше",
+      "productCount": 525,
+      "url": "https://silpo.ua/offers/melkoopt"
+    },
+    {
+      "code": "cinotyzhyky",
+      "title": "Цінотижики",
+      "productCount": 481,
+      "url": "https://silpo.ua/offers/cinotyzhyky"
+    },
+    {
+      "code": "znyzhkonyky",
+      "title": "Знижконики",
+      "productCount": 476,
+      "url": "https://silpo.ua/offers/znyzhkonyky"
+    },
+    {
+      "code": "additional",
+      "title": "Додаткові пропозиції",
+      "productCount": 284,
+      "url": "https://silpo.ua/offers/additional"
+    },
+    {
+      "code": "cinodidjiky",
+      "title": "Цінодіджики",
+      "productCount": 199,
+      "url": "https://silpo.ua/offers/cinodidjiky"
+    },
+    {
+      "code": "akciyi-vlasnogo-importu",
+      "title": "Акції Власного імпорту",
+      "productCount": 64,
+      "url": "https://silpo.ua/offers/akciyi-vlasnogo-importu"
+    },
+    {
+      "code": "back-to-school",
+      "title": "Back to School",
+      "productCount": 51,
+      "url": "https://silpo.ua/offers/back-to-school"
+    },
+    {
+      "code": "pakunok-shkoliara",
+      "title": "Пакунок школяра",
+      "productCount": 10,
+      "url": "https://silpo.ua/offers/pakunok-shkoliara"
+    }
+  ]
+}

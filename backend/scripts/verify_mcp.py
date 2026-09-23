@@ -190,12 +190,19 @@ async def main(probe_cart: bool, port: int) -> int:
 
             # --- A2: capture the real tool schemas ---
             tools = await session.list_tools()
+            # Annotations since 2026-09-14: `test_plan4` checks the read allowlist against
+            # `readOnlyHint`, and a capture without them fails that test loudly.
             declarations = [
                 {
                     "name": t.name,
                     "description": t.description,
                     "inputSchema": t.input_schema,
                     "outputSchema": t.output_schema,
+                    **(
+                        {"annotations": t.annotations.model_dump(by_alias=True, exclude_none=True)}
+                        if t.annotations
+                        else {}
+                    ),
                 }
                 for t in tools.tools
             ]

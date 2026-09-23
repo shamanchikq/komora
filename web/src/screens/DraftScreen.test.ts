@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Line } from "../types";
-import { packSize, qtyLabel } from "./DraftScreen";
+import { packSize, qtyLabel, wasPrice } from "./DraftScreen";
 
 function line(overrides: Partial<Line>): Line {
   return {
@@ -74,5 +74,18 @@ describe("packSize", () => {
     // a package — the row writes «₴/кг» there and must not also claim a 100 g pack.
     expect(packSize(line({ weighted: true, display_ratio: "100г", unit: "" }))).toBe("");
     expect(packSize(line({ weighted: true, display_ratio: "100г", unit: "кг" }))).toBe("кг");
+  });
+});
+
+describe("wasPrice", () => {
+  it("names the old price only when it is higher, as the chat does", () => {
+    expect(wasPrice(line({ unit_price: "39.99", old_price: "60.99" }))).toBe("було 60,99 ₴");
+    expect(wasPrice(line({ unit_price: "39.99", old_price: "39.99" }))).toBeNull();
+    expect(wasPrice(line({ unit_price: "39.99", old_price: null }))).toBeNull();
+  });
+
+  it("says per kilogram on a weighted good", () => {
+    const grapes = line({ weighted: true, unit_price: "69.90", old_price: "89.90" });
+    expect(wasPrice(grapes)).toBe("було 89,90 ₴/кг");
   });
 });

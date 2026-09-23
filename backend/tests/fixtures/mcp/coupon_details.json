@@ -1,0 +1,25 @@
+{
+  "success": true,
+  "coupon": {
+    "id": 584949024,
+    "active": false,
+    "state": "Активний",
+    "canBeAppliedToOrder": false,
+    "useWay": "Електронний",
+    "beginDate": "2026-09-10",
+    "endDate": "2026-09-16",
+    "endDateTime": "2026-09-16T23:59:59",
+    "usedCount": 0,
+    "description": "за молоко та вершки",
+    "limitText": "• Діє за наявності товару з пропозиції\r\n• Пропозиція не діє на самовивіз та доставку LOKO",
+    "warningText": null,
+    "rewardText": "x20 балобонусів",
+    "rewardValue": 20,
+    "image": "https://content.silpo.ua/promo/Larysa/Lora/backlogEcom/06767781f8_480x480.jpg",
+    "promoId": 297667,
+    "rewardUnit": "балобонусів",
+    "rewardSign": "x",
+    "rewardLimit": 150,
+    "progress": null
+  }
+}

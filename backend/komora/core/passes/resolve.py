@@ -160,10 +160,20 @@ def clamp_quantity(wanted: float, product: dict[str, Any]) -> float:
     weighted = bool(product.get("weighted"))
     if weighted and wanted == DEFAULT_QUANTITY:
         wanted = float(product.get("step") or 1)
+    return deliberate_quantity(wanted, product)
+
+
+def deliberate_quantity(wanted: float, product: dict[str, Any]) -> float:
+    """`snap_quantity` against a search hit, for an amount somebody actually stated.
+
+    «1 кг картоплі» written as a need, a habit whose receipts say a kilo, a line the
+    user already set to a kilo and is now swapping — each is exactly one kilogram, and
+    `clamp_quantity` read all three as the model's unqualified `1` and sold 100 g.
+    """
     return snap_quantity(
         wanted,
         step=_maybe_float(product.get("step")),
-        weighted=weighted,
+        weighted=bool(product.get("weighted")),
         stock=_maybe_float(product.get("stock")),
     )
 
@@ -236,8 +246,12 @@ def quantity_for(wanted: float, amount: Amount | None, product: dict[str, Any]) 
     «1,5 кг картоплі» against a 1 kg bag is two bags; against a weighted good it is
     1,5 kg; against a product whose `displayRatio` Silpo did not send, or sent in a
     form `parse_display_ratio` does not read, it is whatever `quantity` the model
-    chose — the pre-2026-09-14 behaviour, unchanged. Every path still goes through
-    `clamp_quantity` for the step and the stock.
+    chose — the pre-2026-09-14 behaviour, unchanged. Every path still lands on the
+    step grid and under the stock.
+
+    A converted need is a **stated** amount, so it skips `clamp_quantity`'s
+    "unqualified 1 means one step" rule: «1 кг картоплі» is one kilogram, and reading
+    it as the model's bare `1` put 100 g of potatoes into a meal plan.
     """
     if amount is not None:
         need = parse_need(amount.value, amount.unit)
@@ -245,16 +259,29 @@ def quantity_for(wanted: float, amount: Amount | None, product: dict[str, Any]) 
             if product.get("weighted"):
                 kilos = kilograms_for(need)
                 if kilos is not None:
-                    return clamp_quantity(kilos, product)
+                    return deliberate_quantity(kilos, product)
             else:
                 pack = parse_display_ratio(product.get("displayRatio"))
                 packs = packs_for(need, pack) if pack is not None else None
                 if packs is not None:
-                    return clamp_quantity(packs, product)
+                    return deliberate_quantity(packs, product)
     return clamp_quantity(wanted, product)
 
 
-def _line_from(
+def known_quantity(wanted: float | None, product: dict[str, Any]) -> float:
+    """A `KnownLine`'s quantity on the product it resolved to.
+
+    A habit's quantity is what the receipts say was bought, so it is taken as stated —
+    a kilo of potatoes every week is a kilo, not one step. `None` is a line nobody put
+    a number on («Додати» on a deal), which is the unqualified case `clamp_quantity`
+    exists for.
+    """
+    if wanted is None:
+        return clamp_quantity(DEFAULT_QUANTITY, product)
+    return deliberate_quantity(wanted, product)
+
+
+def line_from(
     product: dict[str, Any],
     *,
     description: str,
@@ -450,7 +477,7 @@ async def resolve_basket(
         available = next((p for p in candidates if in_stock(p)), None)
         if available is not None:
             lines.append(
-                _line_from(
+                line_from(
                     available,
                     description=draft.description,
                     category=draft.category,
@@ -468,7 +495,7 @@ async def resolve_basket(
             warnings.append(DEGRADED_REPLACEMENTS)
         if substitute is not None:
             lines.append(
-                _line_from(
+                line_from(
                     substitute,
                     description=draft.description,
                     category=draft.category,
@@ -482,7 +509,7 @@ async def resolve_basket(
         else:
             # Kept visible so the user sees what is missing; excluded from the total.
             lines.append(
-                _line_from(
+                line_from(
                     original,
                     description=draft.description,
                     category=draft.category,
@@ -540,11 +567,11 @@ async def resolve_known(
 
         if in_stock(pinned):
             resolved.append(
-                _line_from(
+                line_from(
                     pinned,
                     description=line.name,
                     category=None,
-                    qty=clamp_quantity(line.quantity, pinned),
+                    qty=known_quantity(line.quantity, pinned),
                     reason_kind=line.reason_kind,
                     reason_text=line.reason_text,
                     optional=line.optional,
@@ -557,11 +584,11 @@ async def resolve_known(
             warnings.append(DEGRADED_REPLACEMENTS)
         if substitute is not None:
             resolved.append(
-                _line_from(
+                line_from(
                     substitute,
                     description=line.name,
                     category=None,
-                    qty=clamp_quantity(line.quantity, substitute),
+                    qty=known_quantity(line.quantity, substitute),
                     reason_kind="sub",
                     reason_text="заміна — оригіналу немає в наявності",
                     optional=line.optional,
@@ -570,11 +597,11 @@ async def resolve_known(
             )
         else:
             resolved.append(
-                _line_from(
+                line_from(
                     pinned,
                     description=line.name,
                     category=None,
-                    qty=line.quantity,
+                    qty=line.quantity if line.quantity is not None else DEFAULT_QUANTITY,
                     reason_kind=line.reason_kind,
                     reason_text="немає в наявності",
                     optional=line.optional,

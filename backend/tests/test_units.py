@@ -32,13 +32,25 @@ class TestParseDisplayRatio:
             ("100г", 100, "g"),
             ("1.5кг", 1500, "g"),
             ("250 мл", 250, "ml"),
+            # Task 0, 2026-09-14: 13 of 300 discounted products, each priced as one unit
+            ("4*0,5л", 2000, "ml"),
+            ("4*0,33л", 1320, "ml"),
+            ("2*100г", 200, "g"),
+            ("10*23,9г", 239, "g"),
+            ("2*200мл", 400, "ml"),
+            ("20шт/уп", 20, "pcs"),
+            ("100шт/уп", 100, "pcs"),
+            ("шт", 1, "pcs"),
         ],
     )
     def test_observed_forms(self, raw: str, amount: float, unit: str) -> None:
-        assert parse_display_ratio(raw) == PackSize(amount=amount, unit=unit)  # type: ignore[arg-type]
+        parsed = parse_display_ratio(raw)
+        assert parsed is not None and parsed.unit == unit
+        assert parsed.amount == pytest.approx(amount)
 
     @pytest.mark.parametrize(
-        "raw", [None, "", "<=0,5", "2*100г", "г", "0г", "big", 900, "900 units"]
+        "raw",
+        [None, "", "<=0,5", "г", "0г", "big", 900, "900 units", "0*100г", "2*3*100г", "2*big"],
     )
     def test_anything_else_is_none_never_a_guess(self, raw: object) -> None:
         assert parse_display_ratio(raw) is None
@@ -86,6 +98,17 @@ class TestQuantityFor:
     def test_a_weighted_good_takes_the_need_in_kilograms(self) -> None:
         cheese = product("Сир", 400, weighted=True, step=0.1, display_ratio="100г")
         assert quantity_for(1, Amount(value=300, unit="г"), cheese) == 0.3
+
+    def test_a_stated_kilogram_is_a_kilogram(self) -> None:
+        """«1 кг картоплі» is stated, not the model's bare `1`: it went through
+        `clamp_quantity`'s one-step rule and a meal plan got 100 g of potatoes."""
+        potatoes = product("Картопля", 20, weighted=True, step=0.1, display_ratio="100г")
+        assert quantity_for(1, Amount(value=1, unit="кг"), potatoes) == 1.0
+        assert quantity_for(1, Amount(value=1000, unit="г"), potatoes) == 1.0
+
+    def test_one_stated_pack_is_one_pack(self) -> None:
+        bag = product("Картопля 2 кг", 60, display_ratio="2кг", stock=20)
+        assert quantity_for(3, Amount(value=2, unit="кг"), bag) == 1
 
     def test_no_amount_is_the_old_path_exactly(self) -> None:
         cheese = product("Сир", 400, weighted=True, step=0.1)

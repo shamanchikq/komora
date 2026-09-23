@@ -1,0 +1,108 @@
+{
+  "success": true,
+  "summary": "Found 17 product sets",
+  "sets": [
+    {
+      "slug": "klatsniznyzhky",
+      "title": "Тільки онлайн",
+      "description": null,
+      "link": "https://silpo.ua/sets/klatsniznyzhky"
+    },
+    {
+      "slug": "dlia-smachnoi-vecheri",
+      "title": "До смачного перегляду",
+      "description": null,
+      "link": "https://silpo.ua/sets/dlia-smachnoi-vecheri"
+    },
+    {
+      "slug": "smakuizmorshynska",
+      "title": "Смакуй з Моршинська",
+      "description": null,
+      "link": "https://silpo.ua/sets/smakuizmorshynska"
+    },
+    {
+      "slug": "pitsa-sushi-ta-burhery",
+      "title": "Піца, суші та бургери",
+      "description": null,
+      "link": "https://silpo.ua/sets/pitsa-sushi-ta-burhery"
+    },
+    {
+      "slug": "ferma",
+      "title": "Знижки від ТМ Ферма",
+      "description": null,
+      "link": "https://silpo.ua/sets/ferma"
+    },
+    {
+      "slug": "vyno-vivino",
+      "title": "Вино з рейтингом Vivino",
+      "description": null,
+      "link": "https://silpo.ua/sets/vyno-vivino"
+    },
+    {
+      "slug": "washandfree",
+      "title": "Знижки на Wash&Free",
+      "description": null,
+      "link": "https://silpo.ua/sets/washandfree"
+    },
+    {
+      "slug": "pepsi",
+      "title": "Чемні чи бешкетні",
+      "description": null,
+      "link": "https://silpo.ua/sets/pepsi"
+    },
+    {
+      "slug": "huggies-sales",
+      "title": "Знижки від ТМ Huggies",
+      "description": null,
+      "link": "https://silpo.ua/sets/huggies-sales"
+    },
+    {
+      "slug": "henkel-sale",
+      "title": "Знижки до -55% на улюблені бренди Henkel",
+      "description": null,
+      "link": "https://silpo.ua/sets/henkel-sale"
+    },
+    {
+      "slug": "zewa-sale",
+      "title": "Zewa - відчуття турботи",
+      "description": null,
+      "link": "https://silpo.ua/sets/zewa-sale"
+    },
+    {
+      "slug": "dlia-lehkykh-momentiv",
+      "title": "Для легких моментів",
+      "description": null,
+      "link": "https://silpo.ua/sets/dlia-lehkykh-momentiv"
+    },
+    {
+      "slug": "lvivske-310",
+      "title": "Львівське 310",
+      "description": null,
+      "link": "https://silpo.ua/sets/lvivske-310"
+    },
+    {
+      "slug": "tefal-sale",
+      "title": "20% повертаємо балобонусами",
+      "description": null,
+      "link": "https://silpo.ua/sets/tefal-sale"
+    },
+    {
+      "slug": "super-znyzhky-na-pobutovu-khimiiu",
+      "title": "Супер знижки на побутову хімію",
+      "description": null,
+      "link": "https://silpo.ua/sets/super-znyzhky-na-pobutovu-khimiiu"
+    },
+    {
+      "slug": "ygotynske",
+      "title": "Знижки від ТМ Яготинське",
+      "description": null,
+      "link": "https://silpo.ua/sets/ygotynske"
+    },
+    {
+      "slug": "ekskliuzyvnoonlain",
+      "title": "Ексклюзивні знижки онлайн",
+      "description": null,
+      "link": "https://silpo.ua/sets/ekskliuzyvnoonlain"
+    }
+  ]
+}

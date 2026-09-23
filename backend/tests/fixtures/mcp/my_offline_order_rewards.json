@@ -1,0 +1,91 @@
+{
+  "success": true,
+  "orders": [
+    {
+      "filId": 3398,
+      "filialName": "вул. Садова, буд. 2а",
+      "cityName": "Львів",
+      "createdAt": "2026-09-14T15:35:11",
+      "sumReg": 456,
+      "accruedBalaBonusesSum": 0.84,
+      "sumDiscount": 151.43,
+      "receiptUrl": "https://receipt.silpo.elkasa.com.ua/FIXTURE0002",
+      "chequeMagicName": "Рухливе насіння",
+      "chequePrediction": "Вам неочікувано пощастить.",
+      "rewards": [
+        {
+          "rewardGroupCodeName": "CN_REWARD_VOUCHERS",
+          "applyText": "Використані балобонуси",
+          "valueText": "1.41грн.",
+          "applyRewardAmount": 1.41,
+          "promoId": null
+        }
+      ],
+      "products": [
+        {
+          "lagerId": 838498,
+          "name": "Сир кисломолочний Молокія 9%",
+          "unit": "350г",
+          "quantity": 1,
+          "price": 69.99,
+          "image": "https://content.silpo.ua/sku/ecommerce/83/480x480wwm/838498_480x480wwm_fd2578c1-0f91-1d41-8177-09a3d0535ec7.png",
+          "catalogProduct": {
+            "id": "1ed07691-5af7-6958-ad2d-dd63763181f9",
+            "name": "Сир кисломолочний «Молокія» 9%",
+            "slug": "syr-kyslomolochnyi-molokiia-9-838498",
+            "price": 69.99,
+            "stock": 51,
+            "available": true,
+            "image": "https://images.silpo.ua/v2/products/500x500/webp/ee4e8614-c2b4-4c0d-9335-9a7c482bdf52.png",
+            "weighted": false,
+            "step": 1,
+            "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+            "branchId": "1ef75882-088d-6d58-8219-7bbaea7db06e"
+          }
+        },
+        {
+          "lagerId": 838497,
+          "name": "Сир кисломолочний Молокія 5%",
+          "unit": "350г",
+          "quantity": 1,
+          "price": 67.99,
+          "image": "https://content.silpo.ua/sku/ecommerce/83/480x480wwm/838497_480x480wwm_cf13971b-e40f-2a85-028f-55e0706fcbda.png",
+          "catalogProduct": {
+            "id": "1ed07691-5af7-65c0-88dd-dd63763181f9",
+            "name": "Сир кисломолочний «Молокія» 5%",
+            "slug": "syr-kyslomolochnyi-molokiia-5-838497",
+            "price": 67.99,
+            "stock": 177,
+            "available": true,
+            "image": "https://images.silpo.ua/v2/products/500x500/webp/abf34b80-c0a5-41f3-b110-848aaba0baea.png",
+            "weighted": false,
+            "step": 1,
+            "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+            "branchId": "1ef75882-088d-6d58-8219-7bbaea7db06e"
+          }
+        },
+        {
+          "lagerId": 838496,
+          "name": "Сир кисломолочний Молокія нежирний 0.2%",
+          "unit": "350г",
+          "quantity": 1,
+          "price": 64.99,
+          "image": "https://content.silpo.ua/sku/ecommerce/83/480x480wwm/838496_480x480wwm_23e271a4-b2f6-8fea-e65a-cd428f5fece0.png",
+          "catalogProduct": {
+            "id": "1ed07691-5af7-621e-9ab0-dd63763181f9",
+            "name": "Сир кисломолочний «Молокія» нежирний 0,2%",
+            "slug": "syr-kyslomolochnyi-molokiia-nezhyrnyi-0-2-838496",
+            "price": 64.99,
+            "stock": 130,
+            "available": true,
+            "image": "https://images.silpo.ua/v2/products/500x500/webp/f2b1dc6e-0814-4701-8cde-336fc41c6dad.png",
+            "weighted": false,
+            "step": 1,
+            "companyId": "1ec88c5d-a050-669c-8467-570a157f3e31",
+            "branchId": "1ef75882-088d-6d58-8219-7bbaea7db06e"
+          }
+        }
+      ]
+    }
+  ]
+}

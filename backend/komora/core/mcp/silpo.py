@@ -115,8 +115,8 @@ class SilpoSession:
     async def get_similar_products(
         self, slug: str, context: SearchContext, **filters: Any
     ) -> dict[str, Any]:
-        # Requires the whole slot since 2026-09-14; the August fixture says branch and
-        # slug alone, and a call shaped that way is `-32602` live.
+        # Requires the whole slot since 2026-09-14 (the August schema asked for branch
+        # and slug alone, and a call shaped that way is `-32602` live).
         return await self._call(
             "silpo_get_similar_products", {**context.as_tool_args(), "slug": slug, **filters}
         )
@@ -226,8 +226,8 @@ class SilpoSession:
 
 
 ONLINE_PAGE = 50
-"""The live ceiling for `silpo_get_my_online_orders` (`-32602 too_big` above it); the
-August fixture still says 100. Reference §9."""
+"""The live ceiling for `silpo_get_my_online_orders` (`-32602 too_big` above it). The
+August schema said 100; the 2026-09-14 re-capture declares 50. Reference §9."""
 OFFLINE_PAGE = 10
 """`silpo_get_my_offline_orders` declares `max: 10` and enforces it."""
 

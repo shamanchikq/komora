@@ -19,6 +19,7 @@ from datetime import date, datetime
 
 from komora.core.deals.models import Snapshot
 from komora.core.deals.scan import BranchDeal
+from komora.core.digest import DigestInput
 from komora.core.habits.engine import Habit
 from komora.core.models import ResolvedCart, ResolvedLine, SyncReport
 from komora.core.sync import SyncPreview
@@ -57,7 +58,10 @@ class Synced:
 
 @dataclass(frozen=True)
 class Spoke:
-    """Prose: an answer, a prompt, a refusal, a piece of state."""
+    """Prose: an answer, a prompt, a refusal, a piece of state.
+
+    Plain text, never markup — the model's own answer arrives here verbatim, and so do
+    product names. Each surface escapes it for itself (`render.to_reply`)."""
 
     text: str
     needs_link: bool = False
@@ -149,6 +153,20 @@ class DealsReady:
     toast: str | None = None
 
 
+@dataclass(frozen=True)
+class DigestReady:
+    """The Sunday digest (Plan 4 Task 4): the week's figures, not a sentence about them.
+
+    It used to be a `Spoke` whose text `core/digest.py` had already written as
+    Telegram HTML — the one outcome carrying markup, with product and coupon names
+    inside it unescaped, so «M&M's» in «Наступного тижня» made Telegram refuse the
+    whole message. The figures travel as data and `render.render_digest` writes them.
+    """
+
+    digest: DigestInput
+    today: date
+
+
 Outcome = (
     DraftReady
     | PreviewReady
@@ -159,6 +177,7 @@ Outcome = (
     | Ask
     | DealReady
     | DealsReady
+    | DigestReady
 )
 
 

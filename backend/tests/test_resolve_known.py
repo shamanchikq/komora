@@ -6,7 +6,7 @@ from komora.core.pipeline import build_known_cart
 from tests.fakes import CONTEXT, FakeSilpo, product
 
 
-def known(pid: str, name: str, *, article: int | None = None, qty: float = 1) -> KnownLine:
+def known(pid: str, name: str, *, article: int | None = None, qty: float | None = 1) -> KnownLine:
     return KnownLine(
         product_id=pid,
         name=name,
@@ -95,3 +95,20 @@ async def test_build_known_cart_runs_the_rest_of_the_pipeline() -> None:
     assert cart.estimated_savings == 20  # (52.90 - 42.90) × 2 via apply_savings
     assert any(w.startswith("over_budget:") for w in cart.warnings)
     assert learned == {}
+
+
+async def test_a_habits_kilogram_is_not_read_as_an_unqualified_one() -> None:
+    """A habit's quantity is what the receipts say was bought. A kilo of potatoes every
+    week went through the rule for the model's bare `1` and came back as one step."""
+    potatoes = hit("Картопля", "p", weighted=True, step=0.1)
+    silpo = FakeSilpo({"Картопля": [potatoes]})
+    cart, _ = await resolve_known([known("p", "Картопля", qty=1.0)], silpo, CONTEXT)
+    assert cart.lines[0].qty == 1.0
+
+
+async def test_no_quantity_is_one_step_of_a_weighted_good() -> None:
+    """«Додати» on a deal names no amount: one step, never a kilogram of cheese."""
+    cheese = hit("Сир Мужон", "c", weighted=True, step=0.1)
+    silpo = FakeSilpo({"Сир Мужон": [cheese]})
+    cart, _ = await resolve_known([known("c", "Сир Мужон", qty=None)], silpo, CONTEXT)
+    assert cart.lines[0].qty == 0.1

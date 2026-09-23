@@ -4,17 +4,19 @@ Everything here was **verified against the live server** (2026-08-10/11) or read
 the schemas captured in `backend/tests/fixtures/mcp/tools.json`. Nothing is inferred
 from tool names — four rounds of Task 7 went that way, and every guess was wrong.
 
-Server: `https://mcp.silpo.ua/mcp` · 39 tools in the fixture, **40 live since
-2026-09-14** (§10) · streamable HTTP · OAuth 2.1 + PKCE.
+Server: `https://mcp.silpo.ua/mcp` · **40 tools**, every one annotated (re-captured
+2026-09-14, §10) · streamable HTTP · OAuth 2.1 + PKCE.
 
 > **Re-capture after any Silpo change:** `uv run python scripts/verify_mcp.py`
-> (read-only). Add `--probe-cart` to re-verify the append semantics.
+> (read-only, logs in through a browser). Add `--probe-cart` to re-verify the append
+> semantics. For an account already linked to the bot,
+> `uv run python scripts/capture_task0.py --user <telegram_id> --out <dir outside the repo>`
+> re-captures `tools.json` and the Plan 4 fixtures and re-runs the §10.9 probes.
 >
-> **The fixture is a month behind the server.** Read live on 2026-09-14
-> (`scripts/capture_plan4.py`): one tool added, every tool annotated, 22 changed
-> schema or description. §10 lists what moved and which sections below it makes
-> stale; Plan 4's Task 0 re-captures. Until then, a field named only in §10 is live
-> and not yet in `tests/fixtures/mcp/tools.json`.
+> **The fixture caught up with the server on 2026-09-14** (Plan 4 Task 0): one tool
+> added, every tool annotated, 22 changed schema or description since the August
+> capture. §10 lists what moved; sections below that described the August shape say so
+> where they still matter.
 
 ---
 
@@ -69,7 +71,7 @@ Measured against the live catalogue, because none of it is in the docs:
 | `get_time_slots` | branch — but see §5.1, `start` is required in practice |
 | `get_my_coupons`, `get_my_food_restrictions` | nothing — empty object |
 
-**Extended 2026-09-14** (live; the fixture predates it — §10.2): `get_similar_products`
+**Extended 2026-09-14** (live, and in the fixture since Task 0 — §10.2): `get_similar_products`
 now requires branch + delivery type + **both** slot bounds too, and so do
 `get_categories_tree` and `get_my_offline_orders`. `get_my_favorites` wants the slot
 *start* only; `get_product_sets`, `get_popular_categories` and `get_category` want
@@ -127,9 +129,10 @@ Komora resolves an unqualified quantity on a weighted good to one `step`
 > **Superseded.** Every product shape — search hit, category browse, replacement,
 > details — now carries `displayRatio` (the content of one unit: «900г», «0,5л»,
 > «10 шт»; «100г» on a weighted good, whose `quantity` stays in kilograms) and
-> `displayPrice` (the price per that unit). See §10.3. The paragraphs below describe
-> the August shape, which the fixture still holds; the Coca-Cola example is kept because
-> the *name* still does not tell the sizes apart — the new field does.
+> `displayPrice` (the price per that unit). See §10.3; `find_products_batch_display.json`
+> and `products_on_promotion.json` hold the new shape. The paragraphs below describe the
+> August shape; the Coca-Cola example is kept because the *name* still does not tell the
+> sizes apart — the new field does.
 
 A search hit carries **no size, volume or weight field**, and the size is frequently not
 in the name either. Three different Coca-Cola Zero products come back as the identical
@@ -366,23 +369,20 @@ that matters — an earlier version of this document ran them together and was w
 
 | | `get_my_coupons` | `get_coupon_details` |
 |---|---|---|
-| fields | `id, active, useWay, beginDate, endDate, description, limitText, warningText, image` | the same **plus** `state, usedCount, rewardText, rewardValue` |
-| a discount value? | **never** — `additionalProperties: false` without one | yes, `rewardValue` |
+| fields | `id, active, useWay, beginDate, endDate, endDateTime, description, limitText, warningText, image, promoId, rewardText, rewardValue, rewardUnit, rewardSign, rewardLimit` | the same **plus** `state, usedCount, canBeAppliedToOrder, progress` |
+| a discount value? | yes since 2026-09-14 — `rewardText`/`rewardValue` («x20 балобонусів») | yes |
+| eligible to spend now? | no — `active` alone is not it | **`canBeAppliedToOrder`** — never `state`: a captured coupon reads «Активний» and is neither active nor applicable |
 | eligible products? | no | no |
 | cost | one call | one call **per coupon** (`businessCouponId`) |
 
-> **Stale since 2026-09-14** (§10.4): the **list** now carries `rewardText`,
-> `rewardValue`, `rewardUnit`, `rewardSign`, `rewardLimit`, `promoId` and
-> `endDateTime`, so the per-coupon enrichment `pipeline._coupons` does is no longer
-> needed for the value. Details add `canBeAppliedToOrder` and `progress`; eligibility
-> is `canBeAppliedToOrder`, never `active` or `state` alone. Eligible products: still
-> **no** — that half of this section stands.
+Fixtures: `my_coupons.json`, `coupon_details.json` (re-captured 2026-09-14). `progress`
+was `null` on all six coupons read; its shape is still unseen.
 
-So the list endpoint alone cannot tell you what a coupon is worth. On the account this
-was verified against, the only coupon's entire `description` was **«на онлайн чек»** —
-a fragment. Its value, `−10%`, existed only in `get_coupon_details`. Komora therefore
-enriches active coupons from the detail endpoint (capped, and degrading to the plain
-coupon on failure).
+**Before 2026-09-14** the list alone could not tell you what a coupon was worth: the
+only coupon on the August account had the entire `description` **«на онлайн чек»** — a
+fragment — and its value, `−10%`, existed only in `get_coupon_details`. Komora enriched
+active coupons from the detail endpoint for that reason; the enrichment stays as a
+fallback for a list entry with no `rewardText`.
 
 Neither endpoint publishes an **eligible-product list**; the conditions are Ukrainian
 prose in `limitText` — and real ones are multi-line bullets, so they cannot be dropped
@@ -407,14 +407,23 @@ All three are `{"success", "summary", <payload key>}`:
 | Tool | Payload key | Fixture |
 |---|---|---|
 | `get_my_coupons` | `coupons` | `my_coupons.json` |
+| `get_coupon_details` | `coupon` | `coupon_details.json` |
 | `get_my_food_restrictions` | `restrictions` | `my_food_restrictions.json` |
 | `get_time_slots` | `slots` (**not** `timeslots`) + `meta.total` | `time_slots.json` |
+| `get_promotions` | `promotions` | `promotions.json` |
+| `get_products` | `products` + `meta {limit, offset, total}` | `products_on_promotion.json`, `products_by_promotion.json` |
+| `get_product_sets` | `sets` | `product_sets.json` |
+| `get_my_promos` | `promos` + `meta {total, minSelect, maxSelect}` | `my_promos.json` |
+| `get_my_offline_orders` | `orders` (one receipt with `rewards[]`) | `my_offline_order_rewards.json` |
+| `find_products_batch` | `queries[]` + `meta.droppedCount` | `find_products_batch_display.json` |
 
 `summary` is human prose worth reading while debugging — *"Found 25 time slots
 (25 available)"*, *"No food restrictions set"*.
 
-One caveat remains: the account these came from has **no food restrictions set**, so a
-*populated* restrictions response has still never been seen. `core/pipeline.py:
+One caveat remains: the August account had **no food restrictions set**, and the only
+populated value seen since is `all-food` with `name: null` on an account whose holder
+cannot find a restriction setting in the Silpo app (§10.9) — so a real restrictions
+vocabulary has still never been seen. `core/pipeline.py:
 _listed` keeps accepting several plausible shapes for that reason.
 
 ## 7. OAuth
@@ -706,7 +715,7 @@ repositories; **nothing from the account is quoted here** — catalogue facts, s
 key names only. The private research spec has the rest. Every number is one branch on
 one afternoon: assert structure, never a count.
 
-### 10.1 The server moved; the fixture did not
+### 10.1 The server moved; the fixture followed on the same day (Plan 4 Task 0)
 
 | Change | Where it bites |
 |---|---|
@@ -719,13 +728,13 @@ one afternoon: assert structure, never a count.
 | `get_category` gained `visible`; its `path` items gained `id` | a `visible: false` category lists nothing — do not browse it |
 | `get_my_online_orders.limit` max **50** (schema now matches what §9 measured); `get_time_slots.deliveryTypes` enum is the full delivery list; `list_branches.limit` caps at 500 | none |
 | `find_products_batch` meta gained `droppedCount` — empty or whitespace terms are skipped, not errors | a batch of blanks is not a failure |
-| Descriptions grew three- to tenfold and are now an agent playbook (§10.6) | `agent/tools.describe` cuts at 400 characters — by accident, not design |
+| Descriptions grew three- to tenfold and are now an agent playbook (§10.6) | `agent/tools.describe` cut at 400 characters — by accident, not design; now kept by paragraph |
 | `calculation.loyalty` was **absent** on a SelfPickup cart, though the cart description still says to offer балабонуси from it | a bonuses feature must not assume the key exists |
 | Validation code `order.payment_types.disabled` (info) seen on a live cart | added to §5.1 as observed; meaning unknown |
 
-Files that pin the old fixture: `tests/test_agent_loop.py`, `tests/test_schema_map.py`,
-`tests/test_silpo_client.py`, `komora/core/llm/gemini/schema_map.py` (docstring counts
-39), `komora/core/mcp/silpo.py` (argument names).
+Re-captured into `tests/fixtures/mcp/tools.json` the same evening, annotations included
+(`scripts/capture_task0.py`). The tests expected to break did not, except one:
+`test_pipeline` pinned the August claim that a coupon carries no value field.
 
 ### 10.2 Which reads need the cart context — the full table
 
@@ -734,9 +743,11 @@ Files that pin the old fixture: `tests/test_agent_loop.py`, `tests/test_schema_m
 | `find_products_batch`, `get_products`, `get_product_details`, `get_promotions`, `get_categories_tree`, `get_my_offline_orders`, `get_similar_products` | `get_my_favorites` (slot start only) · `get_replacements` (branch, delivery, `companyId`) · `get_product_sets`, `get_popular_categories`, `get_category` (branch + delivery) · `get_categories` (branch) · `get_time_slots` (branch; `start` required in practice, §4.1) | `get_my_coupons`, `get_coupon_details`, `get_my_promos`, `get_promo_codes`, `get_loyalty_info`, `get_my_family`, `get_my_food_restrictions`, `get_my_profile`, `get_my_premium_subscription`, `get_my_certificates`, `get_my_delivery_addresses`, `get_my_online_orders`, `list_branches` |
 
 Anything scheduled that needs the left column inherits the receipts problem Plan 3
-solved: it runs **after a turn** that holds a context, not on a timer. **Not tested:**
-whether `get_promotions` / `get_products(mustHavePromotion)` answer against a *passed*
-slot the way search does (empty) or receipts do (fine). Plan 4 Task 0 asks.
+solved: it runs **after a turn** that holds a context, not on a timer. **Measured
+2026-09-14** (§10.9): against a slot three days passed, `get_promotions` still lists
+every promotion, but `get_products(mustHavePromotion)` and search both come back
+**empty** (`total: 0`). A deal scan on a stale context would read every tracked product
+as missing — it stays after-turn.
 
 The protocol surface is tools only: `resources/list`, `prompts/list` and
 `resources/templates/list` answer *Method not found*; `tools/list` is one page.
@@ -751,7 +762,13 @@ The protocol surface is tools only: `resources/list`, `prompts/list` and
 - `displayRatio` is the content of one unit («900г», «1000г», «150г», «0,5л», «3л»,
   «36г», «10 шт») — for a weighted good it is the **pricing** unit («100г») while
   `step` and `quantity` stay in kilograms. A string with a decimal comma and mixed
-  units; `null` is allowed by the schema (not observed). Parse defensively.
+  units; `null` is allowed by the schema. Parse defensively.
+- **Measured over 300 discounted products** (Task 0): `null` **0 times**; units г 201,
+  л 44, мл 21, кг 9, шт 6; every weighted good «100г». Thirteen take forms the first
+  parser did not read, each the content of the unit sold at `price`: a **multipack**
+  «4*0,5л» (a four-pack of beer at 119,99 ₴ — 2 л), «2*100г», «10*23,9г»; **pieces per
+  pack** «20шт/уп»; and a bare **«шт»** (an avocado, a frying pan — one piece).
+  `core/units.parse_display_ratio` reads all of them since.
 - `displayPrice` is the price per `displayRatio`. Equal to `price` on unit goods.
 - **`fromPrice` / `toPrice` filter on `displayPrice`, not `price`** — verified: a 40–60
   band returned weighted goods at 449–569 ₴/kg, every `displayPrice` inside the band.
@@ -760,10 +777,10 @@ The protocol surface is tools only: `resources/list`, `prompts/list` and
 - **`sortBy: price` orders by `displayPrice`** in the observed page — 395 ₴/kg items sat
   between 5.99 ₴ and 6.99 ₴ unit items. Never trust list order for a minimum or a
   ranking; compute it.
-- `specialPrices` — multi-buy pricing — appeared once in a hundred products:
-  `[{price: 128.52, count: 2, type: "from"}]`, "from 2 items, each at 128.52". Only
-  `type: "from"` has been seen. A real, conditional saving the savings pass does not
-  read; treat any other `type` as unknown.
+- `specialPrices` — multi-buy pricing — `[{price: 128.52, count: 2, type: "from"}]`,
+  "from 2 items, each at 128.52". On 20 of the 300 products measured in Task 0, and
+  **only `type: "from"`** on every one. A conditional saving: the savings pass notes it
+  and never lowers the total. Treat any other `type` as unknown.
 
 ### 10.4 Deals: what is exact and what is prose
 
@@ -773,7 +790,11 @@ url}` per promotion — marketing titles («Тільки Онлайн», «Гу�
 `get_products(mustHavePromotion=true, inStock=true)` returns the discounted range (a
 few thousand at one branch; 99 of a 100-product page carried `oldPrice`, discounts from
 10 % to 67 %). `get_product_sets` → `{slug, title, description}` curated sets, mostly
-brand campaigns; `get_products(set=…)` lists one. `get_popular_categories` answered
+brand campaigns; `get_products(set=…)` lists one. **Membership is not a discount**:
+«Пакунок школяра», browsed by its `code` in Task 0, listed two notebooks at 29,99 ₴
+with `oldPrice` 39,99 ₴ beside three pens and a tape with no `oldPrice` and no
+`specialPrices` — whatever that promotion's benefit is, the product payload does not
+carry it. `get_popular_categories` answered
 with **two** categories at this branch — not a screen. `oldPrice − price` remains the
 one exact saving.
 
@@ -789,16 +810,20 @@ hryvnias; conditions are prose with `\r\n•` bullets; three coupons that were n
 takes up to 30 terms and accepts a numeric article; a term that is an article returned
 exactly one product with that `externalProductId`, carrying `price` and `oldPrice`.
 Habits store the article (`purchases.external_product_id`), so "your usual cheese is
-33 % off" is an id intersection, never coupon prose. The description says an
-out-of-stock product may be missing from the result entirely (not observed): a miss
-reads as *unknown*, never as *no deal*.
+33 % off" is an id intersection, never coupon prose. **An out-of-stock product is
+missing from article search** — measured in Task 0: six products with `stock: 0,
+available: false` in a catalogue browse, searched by their exact articles, returned
+nothing, six times out of six. A miss reads as *unknown*, never as *no deal*.
 
 **Joins.** Receipt `lagerId` = product `externalProductId`, searchable as a term.
 Receipt `catalogProduct.id` = product `id`. Promotion `code` → `get_products`. Set
 `slug` → `get_products`. Category tree nodes carry `slug`, `children`, `total` and **no
 title** (join to `get_categories` for one; root 0 is «spetsialni-propozytsii» with
 synthetic child slugs — filter it before showing the tree). Coupon `promoId` →
-receipt `rewards[].promoId` — **observed `null` on every reward seen**, so unproven.
+receipt `rewards[].promoId` — **non-null on coupon and chips rewards** (`CN_REWARD_COUPONS`
+3 of 3, `CN_REWARD_CHIPS` 5 of 5), `null` on every spent-bonus reward
+(`CN_REWARD_VOUCHERS`, 15); none of the 22 receipts' ids matched a coupon or promo the
+account holds today, so the join is plausible and still unproven.
 
 ### 10.5 Receipts, loyalty and family — shapes for a digest
 
@@ -806,8 +831,9 @@ A receipt (§9) also carries `sumReg`, `sumDiscount`, `accruedBalaBonusesSum` an
 `rewards[]` (`rewardGroupCodeName`, `applyText`, `valueText`, `applyRewardAmount`,
 `promoId`) — «заощаджено за тиждень» can be read from what Silpo charged, where the
 spec's "saved via coupons" could not be computed at all. `sumReg` is undocumented;
-check it against the line sums before a digest relies on it. `chequePrediction` and
-`chequeMagicName` are present and unexplored.
+**checked in Task 0 against each receipt's own line sums: within 2 % on 21 of 22** —
+it is the receipt total. `chequePrediction` and `chequeMagicName` are present and
+unexplored (a whimsical name and a fortune, by the look of them).
 
 `get_loyalty_info` → `card` (a barcode — personal) and `balance {total, currency:
 "UAH", accounts: [{type: Regular | Moneybox}]}`. `get_time_slots` is the only place
@@ -825,10 +851,10 @@ carried `Енергетична цінність (кКал/кДЖ)` as the **str
 `Жири (г)`, `Вуглеводи (г)` as numbers; a ground coffee `Білки (г): 0` only; grapes
 nothing but country and seller. Not a basis for a "healthy" claim.
 
-### 10.6 The descriptions are a playbook — and Komora shows the model 400 characters of it
+### 10.6 The descriptions are a playbook — and Komora showed the model 400 characters of it
 
-`agent/tools.describe` drops sentences that name an unreachable tool and cuts the rest
-at 400 characters. Against the live list:
+**As read before Plan 4** — `agent/tools.describe` dropped sentences that name an
+unreachable tool and cut the rest at 400 characters. Against the live list:
 
 | Tool | Live → shown | Lost to the cut |
 |---|---|---|
@@ -842,9 +868,17 @@ budget limit as possible», which contradicts Komora's budget pass and would qui
 inflate baskets if the limit were ever raised — and it hides the article-search and
 package-size paragraphs Plan 4 wants the model to have. `get_products`' `inStock`,
 `sortBy`, `sortDirection`, `fromPrice` and `toPrice` parameter descriptions say "see
-tool description" about text the model never receives. Plan 4 Task 0 replaces the
-length cut with an explicit keep/drop of named paragraphs and a test that fails when a
-kept description gains an instruction Komora's prompt contradicts.
+tool description" about text the model never receives.
+
+**Since Plan 4** `describe` keeps paragraphs in Silpo's order up to 2 200 characters and
+drops two named kinds: `DROPPED_HEADINGS` (BUDGET — contradicts Komora) and
+`UNUSED_HEADINGS` (EMPTY ENTRIES, SEARCH BY BARCODE, RESULT COUNT, STOCK ACCURACY — true
+and of no use to this model). A parenthetical naming an unreachable tool is removed
+without its sentence, which is what keeps «step and quantity are ALWAYS expressed in
+KILOGRAMS». On the re-captured list `find_products_batch` shows SEARCH BY ARTICLE CODE,
+PACKAGE SIZE and the weighted-units sentence; `get_products` shows PRICE FILTERS, SORT
+ORDER and PACKAGE SIZE — so its "see tool description" pointers now resolve, and a test
+fails the day they stop (`tests/test_task0_fixtures.py`).
 
 ### 10.7 Sizes that matter to a model context
 
@@ -863,19 +897,48 @@ screen or a digest is assembled by Python from these reads, not handed to the mo
 
 ### 10.8 Still unverified — each needs a live look before code depends on it
 
-1. `get_promotions` / `mustHavePromotion` against a passed slot.
-2. `promoId` on a receipt reward for a coupon that actually paid out.
-3. `specialPrices` types other than `from`.
-4. A coupon with a non-null `progress`.
-5. What `all-food` means; a populated restrictions list with real slugs.
+Struck items were answered by Plan 4 Task 0 the same evening (§10.9).
+
+1. ~~`get_promotions` / `mustHavePromotion` against a passed slot.~~ Promotions list
+   survives; discounted products and search are empty.
+2. `promoId` on a receipt reward for a coupon that actually paid out — **partly**:
+   non-null on coupon and chips rewards, but no id joined to a coupon held today.
+3. `specialPrices` types other than `from` — none in 300 products; still possible.
+4. A coupon with a non-null `progress` — none in six.
+5. What `all-food` means; a populated restrictions list with real slugs — **open**: the
+   account holder cannot find the setting in the Silpo app.
 6. When `calculation.loyalty` is present.
-7. `displayRatio: null` frequency and its unit vocabulary beyond г/л/кг/шт.
-8. Whether an out-of-stock product disappears from article search.
+7. ~~`displayRatio: null` frequency and its unit vocabulary.~~ Null 0/300; multipacks.
+8. ~~Whether an out-of-stock product disappears from article search.~~ It does, 6/6.
 9. `create_shopping_cart` on an account with `exists: false`.
-10. The description's "four fixed sort groups" against a page holding out-of-stock items.
-11. Rate limits — none hit at 40 calls; a per-user deal scan multiplies that.
-12. Whether an online delivery also appears as a receipt (Plan 3's open question).
+10. ~~The "four fixed sort groups" against a page holding out-of-stock items.~~ The
+    last 300 of 3 347 with `inStock: false` were all out of stock, none in stock after.
+11. Rate limits — none hit at ~120 calls in three Task 0 runs; a per-user deal scan
+    multiplies that.
+12. Whether an online delivery also appears as a receipt — **open, and unanswerable on
+    this account**: receipt history, asked from the first online order's date, reached
+    back 82 days, and the last online order is 61 days older than the first receipt.
 
 Re-run: `uv run python scripts/capture_plan4.py --user <linked telegram_id> --out
 /tmp/plan4` — read-only, refuses an `--out` inside the repository, prints shapes and
-counts, never account values.
+counts, never account values. `scripts/capture_task0.py` takes the same arguments,
+writes the sanitised fixtures (`--no-fixtures` to skip) and runs the §10.9 probes.
+
+### 10.9 Task 0 answers — 2026-09-14, evening
+
+One account (the Plan 3 shopper), one SelfPickup branch, a slot for the next day; three
+runs of `scripts/capture_task0.py`, read-only, no error left in the last. Counts are
+that hour's.
+
+| Question | Answer | What it decides |
+|---|---|---|
+| Deal reads against a passed slot (§10.8.1) | `get_promotions` 9 → 9; `get_products(mustHavePromotion)` total 2 649 → **0**; search 30 hits → **0** | the deal scan stays on `_load_context`'s after-turn path; `habits_job.tick` does not snapshot |
+| `displayRatio` vocabulary (§10.8.7) | null 0/300; 13 multipack, per-pack and bare «шт» forms | `units.parse_display_ratio` reads them; pack maths is worth having |
+| `specialPrices` types (§10.8.3) | 20/300, all `from` | `multi_buy_note` reads `from` only, unchanged |
+| Out of stock in article search (§10.8.8) | missing, 6 of 6 | `deals.scan` reads a miss as unknown, unchanged |
+| Sort groups (§10.8.10) | out-of-stock goods fill the tail of an `inStock: false` browse | a ranking is computed in Python, unchanged |
+| Coupons | 6 in the list, all with value fields and `promoId`; `canBeAppliedToOrder` 3 true / 3 false; `progress` null on all | the details call is a fallback only |
+| `promoId` on rewards (§10.8.2) | coupon 3/3 and chips 5/5 non-null; spent bonuses 15/15 null; no join to today's coupons or promos | coupon matching stays out |
+| `sumReg` | within 2 % of the line sums on 21/22 receipts | the digest's receipt total is `sumReg` |
+| `all-food` (§10.8.5) | the only restriction reported; the holder finds no such setting in the app | D6's advisory stays as built: slugs verbatim, nothing filtered |
+| Delivery also a receipt (§10.8.12) | not observable: receipt history reaches back 82 days, the last online order is 61 days before it | the digest keeps two lines, never one sum |

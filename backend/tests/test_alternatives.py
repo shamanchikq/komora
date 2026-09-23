@@ -161,3 +161,49 @@ class TestAWrongCategoryIsEscapable:
         ordered = narrow([self.PARMIGIANO], self.CRAFT)
         assert ordered[0]["name"] == self.CRAFT[0]["name"]
         assert ordered[1]["name"] == self.PARMIGIANO["name"], "escape is one step away"
+
+
+class TestTheSwappedLineIsTheNewProduct:
+    """Only the name and the price used to change — `weighted`, `step`, `stock`, the
+    pack size and the multi-buy prices stayed the old product's."""
+
+    async def test_every_product_fact_comes_from_the_new_product(self) -> None:
+        weighted = product("Сир ваговий", 400, weighted=True, step=0.1, stock=5)
+        packed = product(
+            "Сир фасований 200 г",
+            90,
+            stock=3,
+            display_ratio="200г",
+            special_prices=[{"price": 80, "count": 2, "type": "from"}],
+        )
+        silpo = FakeSilpo({"сир": [weighted, packed]})
+        current = line(weighted, "сир").model_copy(
+            update={"weighted": True, "step": 0.1, "stock": 5.0, "qty": 0.3}
+        )
+        swapped = await next_alternative(current, silpo, CONTEXT)
+        assert swapped is not None and swapped.product_id == packed["id"]
+        assert swapped.weighted is False and swapped.step == 1 and swapped.stock == 3
+        assert swapped.display_ratio == "200г"
+        assert [s.count for s in swapped.special_prices] == [2]
+        assert swapped.qty == 1, "0,3 kg of the weighted one is not 0,3 of a pack"
+        assert swapped.reason_text == "для пасти" and swapped.description == "сир"
+        assert swapped.synced is False
+
+    async def test_a_settled_kilogram_survives_a_swap(self) -> None:
+        """A kilo the user set with the stepper is not the model's bare `1`."""
+        first = product("Картопля біла", 20, weighted=True, step=0.1, stock=100)
+        second = product("Картопля рожева", 22, weighted=True, step=0.1, stock=100)
+        silpo = FakeSilpo({"картопля": [first, second]})
+        current = line(first, "картопля").model_copy(
+            update={"weighted": True, "step": 0.1, "qty": 1.0}
+        )
+        swapped = await next_alternative(current, silpo, CONTEXT)
+        assert swapped is not None and swapped.qty == 1.0
+
+    async def test_pieces_onto_a_weighted_good_is_one_step(self) -> None:
+        packs = product("Сир фасований", 90)
+        loose = product("Сир ваговий", 400, weighted=True, step=0.1)
+        silpo = FakeSilpo({"сир": [packs, loose]})
+        current = line(packs, "сир").model_copy(update={"qty": 2.0})
+        swapped = await next_alternative(current, silpo, CONTEXT)
+        assert swapped is not None and swapped.qty == 0.1, "two packs are not two kilos"

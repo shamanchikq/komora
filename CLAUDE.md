@@ -341,9 +341,39 @@ it can read one. Restrictions are told to the model for the menu and flagged as
 unchecked on the cart; nothing filters a line. `agent/tools.describe` now keeps
 Silpo's descriptions paragraph by paragraph and drops the ones Komora contradicts
 («ALWAYS fill the cart as close to the budget limit»), with a test that fails if a
-kept description gains such a phrase. **Task 0's live half is not done:** the fixture
-is still August's, the four probes are open, and the checklist in
-[backend/README.md](backend/README.md#manual-checklist--plan-4) is unwalked.
+kept description gains such a phrase. **Task 0's live half ran the same evening**
+(`scripts/capture_task0.py`, reference §10.9): the fixtures are re-captured with
+annotations, a deal read against a passed slot is empty (so the scan stays after-turn),
+an out-of-stock product is missing from article search, and `displayRatio` has
+multipacks («4*0,5л») the parser now reads. Still open: `all-food`, delivery-as-receipt,
+and the checklist in [backend/README.md](backend/README.md#manual-checklist--plan-4),
+which is unwalked.
+
+A review of Plan 4 on top of Task 0, 2026-09-23, found seventeen defects, suite green.
+Three were one rule applied in the wrong place: `clamp_quantity` reads the model's bare
+`1` on a weighted good as one step, and it was also applied to amounts somebody had
+actually stated — a meal plan's «1 кг картоплі», a habit whose receipts say a kilo, a
+kilo set with the stepper and then swapped — so each became 100 g
+(`resolve.deliberate_quantity`, `known_quantity`). A swap also kept the **old**
+product's `weighted`, `step`, `stock`, pack size and multi-buy prices (`alternatives._apply`
+now builds the line with `resolve.line_from`), and a swap on a row a push had landed
+carried its `synced` flag onto the new product. **The model was reading a stale draft**:
+✕, ⇄, the stepper and «Додати» edit the stored basket and told the conversation nothing,
+so «додай ще хліб» after striking the milk brought the milk back — `on_text` now restates
+an edited draft first. The 8 000-character cut still fell mid-object after the product
+clip (twenty products are ~11 000), and a search result was never clipped at all
+(`loop.fit_for_model`). **A `Spoke` was sent raw under HTML parse mode**, so a model answer
+or a product name with «&» or «<» made Telegram refuse the message; the digest was the
+one outcome carrying markup, with names unescaped, and is now `DigestReady`, written in
+`render.py`. The rest: `/deals` scanned twice and then pushed an alert about the list it
+had just shown; a promotion the last scan could not see was shown as today's
+(`PriceSnapshotRepo.latest` takes a floor); «Додати» on a product already in the draft
+added a second line the cart would hold as one; two lines of one product landed as the
+last one's quantity (`sync._one_per_product` sums them); the digest ignored quiet hours
+(it now waits for the first hour that is not, until Monday noon) and its budget line
+added receipts to online orders, the one sum it says it never prints; an out-of-range
+headcount still made a basket an `event`; and the Mini App drew «було» for an old price
+no higher than the new one.
 
 Known gaps, all deliberate — the current list lives in
 [backend/README.md](backend/README.md#known-issues).

@@ -46,6 +46,15 @@ export function packSize(item: {
   return size.trim();
 }
 
+/** «було 60,99 ₴» — only when the old price is actually higher, and per kilogram on a
+ * weighted good. Mirrors `render.line_text`, which checks both; this drew any
+ * `old_price` at all, so a row could read «було» a price equal to the one it had, and
+ * a weighted row set a per-kilo old price beside nothing saying so. */
+export function wasPrice(line: Pick<Line, "old_price" | "unit_price" | "weighted">): string | null {
+  if (line.old_price === null || !(Number(line.old_price) > Number(line.unit_price))) return null;
+  return `було ${uah(line.old_price)}${line.weighted ? "/кг" : ""}`;
+}
+
 export function qtyLabel(line: Line): string {
   if (!line.weighted) return String(Number(line.qty));
   // `quantityText` already writes a weight the way both surfaces write one. This
@@ -69,6 +78,7 @@ function LineRow({ line, busy, onSwap, onSetQty, onRemove }: RowProps) {
   const atFloor = !excluded && (line.weighted ? line.qty <= (line.step ?? 0.1) + 1e-9 : line.qty <= 1);
   const substituted = line.substituted_from !== null;
   const size = packSize(line);
+  const was = wasPrice(line);
 
   return (
     <li className={excluded ? "row row-off" : "row"}>
@@ -95,9 +105,7 @@ function LineRow({ line, busy, onSwap, onSetQty, onRemove }: RowProps) {
               : size !== ""
                 ? `${size} · ${uah(line.unit_price)}`
                 : uah(line.unit_price)}
-            {line.old_price !== null && (
-              <s style={{ marginLeft: 6 }}>було {uah(line.old_price)}</s>
-            )}
+            {was !== null && <s style={{ marginLeft: 6 }}>{was}</s>}
           </span>
           <b className="line-sum">{uah(line.line_total)}</b>
         </div>
