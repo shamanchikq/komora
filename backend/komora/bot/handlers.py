@@ -33,6 +33,7 @@ from komora.bot.outcomes import (
     Ask,
     DealReady,
     DealsReady,
+    DigestReady,
     DraftReady,
     HabitsReady,
     NudgeReady,
@@ -43,7 +44,7 @@ from komora.bot.outcomes import (
     TrackedDeal,
 )
 from komora.core.agent.loop import ForbiddenToolCall, run_agent
-from komora.core.agent.recap import cancel_recap, draft_recap, sync_recap
+from komora.core.agent.recap import DRAFT_TAG, cancel_recap, draft_recap, sync_recap
 from komora.core.agent.tools import ToolSource
 from komora.core.alternatives import list_alternatives, next_alternative
 from komora.core.deals.models import Snapshot
@@ -56,7 +57,7 @@ from komora.core.deals.scan import (
     snapshot_tracked,
     usual_price,
 )
-from komora.core.digest import DigestInput, ExpiringCoupon, digest_text
+from komora.core.digest import DigestInput, ExpiringCoupon, has_news
 from komora.core.habits.draft import HABITS_INTENT, HABITS_TITLE, habit_lines
 from komora.core.habits.engine import Habit, compute_habits, due, due_to_buy
 from komora.core.habits.importer import ImportReport, import_history
@@ -207,6 +208,7 @@ DEALS_TITLE = "Акції"
 DEAL_REASON = "зі знижкою у Сільпо — {price} замість {old}"
 DEAL_ADDED_REASON = "додано з акцій"
 NOT_A_DEAL = "Цього товару вже нема в акціях або в наявності — нічого не додано."
+ALREADY_IN_DRAFT = "Вже є в чернетці — кількість можна змінити там"
 UNKNOWN_COMMAND = (
     "Такої команди в Комори нема. Ось що вона вміє:\n"
     "/start — підключити Сільпо · /basket — відкрита чернетка · /usual — звичні покупки\n"
@@ -427,6 +429,10 @@ async def on_text(services: Services, telegram_id: int, text: str) -> Outcome:
         Message(role="assistant" if row.role == "assistant" else "user", content=row.content)
         for row in await services.conversations.last_n(telegram_id, HISTORY_TURNS)
     ]
+    restated = await _restated_draft(services, telegram_id, history)
+    if restated is not None:
+        await services.conversations.append(telegram_id, "assistant", restated)
+        history.append(Message(role="assistant", content=restated))
     await services.conversations.append(telegram_id, "user", text)
 
     user = await services.users.get(telegram_id)
@@ -497,6 +503,39 @@ async def on_text(services: Services, telegram_id: int, text: str) -> Outcome:
         telegram_id, basket.title, basket.intent, cart
     )
     return DraftReady(title=basket.title, cart=cart, budget_cap=budget_cap, basket_id=basket_id)
+
+
+async def _restated_draft(
+    services: Services, telegram_id: int, history: Sequence[Message]
+) -> str | None:
+    """The open draft as it stands now, when the model last saw it otherwise.
+
+    A draft is recorded once, when it is built. Everything after that — ⇄, the
+    stepper, ✕, «Прибрати необовʼязкові», a picked alternative, «Додати» from the deals
+    screen — edits the stored basket and says nothing to the conversation. So after
+    removing the milk with ✕ and typing «додай ще хліб», the model re-listed the basket
+    it had been told about, milk included: the prompt asks it to repeat the WHOLE draft
+    on an edit, and the only draft it could see was the one before the edits. The same
+    shape as `CANCELLED_TAG`: what the model reads has to be what the user sees.
+
+    Nothing is returned when the last draft the model saw is already this one.
+    """
+    active = await services.baskets.get_active(telegram_id)
+    if active is None:
+        return None
+    cart = await services.baskets.load_cart(active.id)
+    if cart is None:
+        return None
+    current = draft_recap(active.title, cart)
+    seen = next(
+        (
+            m.content
+            for m in reversed(history)
+            if m.role == "assistant" and (m.content or "").startswith(DRAFT_TAG)
+        ),
+        None,
+    )
+    return None if seen == current else current
 
 
 PLAN_HINT = re.compile(
@@ -1107,6 +1146,10 @@ async def _load_context(
 
 
 PRICES_EVERY = timedelta(days=1)
+SNAPSHOT_FRESH = timedelta(days=1)
+"""How old a stored snapshot may be and still speak for today's shelf. A scan runs
+when the last one is `PRICES_EVERY` old, so the scan a stored list comes from fell on
+today or yesterday in Kyiv; anything older is a product that scan did not find."""
 PRICES_SOURCE = "prices"
 """The `history_imports` source a price scan records under — the same table, so a
 skip is a row and «/deals» can say when the tracked products were last re-priced."""
@@ -1142,6 +1185,14 @@ async def refresh_prices(services: Services, telegram_id: int, context: SearchCo
             else services.connect(telegram_id)
         )
         async with session as mcp:
+            # Asked again now that the session is ours. It was scheduled before the
+            # turn that holds the session had finished, and «/deals» is a turn that
+            # re-prices inline: without this the same products were searched twice in
+            # a minute, and the alert «Ваш звичний товар зараз дешевший» arrived right
+            # under the list the user had just asked for.
+            last = await stores.imports.last_ok(telegram_id, PRICES_SOURCE)
+            if last is not None and datetime.now(UTC) - last < PRICES_EVERY:
+                return
             snapshots = await scan_prices(services, telegram_id, mcp, context)
         alert = await deal_for(services, telegram_id, snapshots)
         if alert is not None:
@@ -1219,7 +1270,9 @@ async def _tracked_deals(
     if snapshots is None:
         if branch_id is None:
             return []
-        snapshots = await stores.prices.latest(telegram_id, branch_id)
+        snapshots = await stores.prices.latest(
+            telegram_id, branch_id, since=today_in_kyiv() - SNAPSHOT_FRESH
+        )
     out: list[TrackedDeal] = []
     for snapshot in deals_among(snapshots):
         habit = habits.get(snapshot.product_key)
@@ -1385,16 +1438,29 @@ async def on_add_deal(
     if resolved is None:
         return Spoke(NOT_A_DEAL, toast="Нема в наявності")
     if resolved.old_price is not None and resolved.old_price > resolved.unit_price:
+        # Per kilogram on both sides for a weighted good, as every other price pair is
+        # written: «69,90 ₴ замість 89,90 ₴» under «0,5 кг» reads as the price of the row.
+        per = "/кг" if resolved.weighted else ""
         resolved = resolved.model_copy(
             update={
                 "reason_text": DEAL_REASON.format(
-                    price=uah(resolved.unit_price), old=uah(resolved.old_price)
+                    price=uah(resolved.unit_price) + per, old=uah(resolved.old_price) + per
                 )
             }
         )
 
     active = await services.baskets.get_active(telegram_id)
     if active is not None:
+        current = await services.baskets.load_cart(active.id)
+        if current is not None and any(
+            ln.product_id == resolved.product_id and not ln.unavailable for ln in current.lines
+        ):
+            # A second line for the same product is not «more of it»: Silpo *sets* a
+            # quantity, so the cart would hold one line's worth while the draft counted
+            # both into its total. The quantity is the stepper's job.
+            return await _draft_ready(
+                services, telegram_id, active.id, active.title, current, toast=ALREADY_IN_DRAFT
+            )
         await services.baskets.append_item(active.id, resolved)
         return await _edited_outcome(
             services, telegram_id, active.id, active.title, toast=f"Додано {resolved.name}"[:200]
@@ -1437,11 +1503,27 @@ def digest_week(now: datetime) -> tuple[date, date]:
     return start, start + timedelta(days=7)
 
 
-def digest_due(user: User | None, now: datetime) -> bool:
+DIGEST_LATEST_HOUR = 12
+"""Kyiv, Monday: the last hour a week's digest may still go out.
+
+Quiet hours apply to the digest as to every other message Komora sends unasked (Plan 4
+D9), and a user whose quiet hours cover Sunday evening would otherwise never get the
+digest they asked for. So the window runs from Sunday 18:00 into Monday morning, and
+the first hour in it that is not quiet sends it — still about the week that ended."""
+
+
+def digest_due_week(user: User | None, now: datetime) -> tuple[date, date] | None:
+    """The week a digest is due for right now, or `None`: Sunday from 18:00 to Monday
+    noon, Kyiv, to a subscriber, outside their quiet hours."""
+    if user is None or not user.digest_weekly or in_quiet_hours(user, now):
+        return None
     kyiv = now.astimezone(KYIV)
-    return bool(
-        user is not None and user.digest_weekly and kyiv.weekday() == 6 and kyiv.hour >= DIGEST_HOUR
-    )
+    if kyiv.weekday() == 6 and kyiv.hour >= DIGEST_HOUR:
+        return digest_week(now)
+    if kyiv.weekday() == 0 and kyiv.hour < DIGEST_LATEST_HOUR:
+        start, _ = digest_week(now)
+        return start - timedelta(days=7), start
+    return None
 
 
 async def digest_for(
@@ -1450,14 +1532,16 @@ async def digest_for(
     *,
     now: datetime | None = None,
     mcp: SilpoClient | None = None,
-) -> Spoke | None:
-    """This week's digest from stored data, or nothing. `mcp` is optional and only
-    adds the expiring coupons; without it that section is simply absent."""
+    week: tuple[date, date] | None = None,
+) -> DigestReady | None:
+    """A week's digest from stored data, or nothing. `week` defaults to the one `now`
+    falls in. `mcp` is optional and only adds the expiring coupons; without it that
+    section is simply absent."""
     stores = services.habits
     if stores is None:
         return None
     now = now or datetime.now(UTC)
-    start, end = digest_week(now)
+    start, end = week or digest_week(now)
     start_at = datetime.combine(start, datetime.min.time(), tzinfo=KYIV).astimezone(UTC)
     end_at = datetime.combine(end, datetime.min.time(), tzinfo=KYIV).astimezone(UTC)
 
@@ -1494,20 +1578,17 @@ async def digest_for(
         except Exception:
             log.info("coupons unavailable for the digest of %s", telegram_id, exc_info=True)
 
-    text = digest_text(
-        DigestInput(
-            week_start=start,
-            week_end=end,
-            online_spent=online_spent,
-            online_lines=len(online),
-            receipts=receipts,
-            budget_cap=user.budget_weekly if user else None,
-            due_next_week=due_soon,
-            expiring=expiring,
-        ),
-        today,
+    digest = DigestInput(
+        week_start=start,
+        week_end=end,
+        online_spent=online_spent,
+        online_lines=len(online),
+        receipts=receipts,
+        budget_cap=user.budget_weekly if user else None,
+        due_next_week=due_soon,
+        expiring=expiring,
     )
-    return Spoke(text) if text else None
+    return DigestReady(digest=digest, today=today) if has_news(digest) else None
 
 
 def _date_of(value: Any) -> date | None:
@@ -1520,19 +1601,20 @@ def _date_of(value: Any) -> date | None:
 async def send_digest_if_due(
     services: Services, telegram_id: int, *, now: datetime, mcp: SilpoClient | None = None
 ) -> bool:
-    """Sunday evening, once per ISO week, only to a subscriber. Returns whether sent."""
+    """Sunday evening (or the first hour after it that is not quiet), once per ISO week,
+    only to a subscriber. Returns whether sent."""
     stores = services.habits
     if stores is None:
         return False
     user = await services.users.get(telegram_id)
-    if not digest_due(user, now):
+    due_week = digest_due_week(user, now)
+    if due_week is None:
         return False
-    week = (
-        f"{now.astimezone(KYIV).isocalendar().year}-W{now.astimezone(KYIV).isocalendar().week:02d}"
-    )
+    iso = due_week[0].isocalendar()
+    week = f"{iso.year}-W{iso.week:02d}"
     if await stores.notifications.last_sent(telegram_id, DIGEST_KIND, week) is not None:
         return False
-    digest = await digest_for(services, telegram_id, now=now, mcp=mcp)
+    digest = await digest_for(services, telegram_id, now=now, mcp=mcp, week=due_week)
     if digest is None:
         return False
     await stores.notifications.record(telegram_id, DIGEST_KIND, [week], at=now)

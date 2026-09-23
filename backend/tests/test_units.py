@@ -99,6 +99,17 @@ class TestQuantityFor:
         cheese = product("Сир", 400, weighted=True, step=0.1, display_ratio="100г")
         assert quantity_for(1, Amount(value=300, unit="г"), cheese) == 0.3
 
+    def test_a_stated_kilogram_is_a_kilogram(self) -> None:
+        """«1 кг картоплі» is stated, not the model's bare `1`: it went through
+        `clamp_quantity`'s one-step rule and a meal plan got 100 g of potatoes."""
+        potatoes = product("Картопля", 20, weighted=True, step=0.1, display_ratio="100г")
+        assert quantity_for(1, Amount(value=1, unit="кг"), potatoes) == 1.0
+        assert quantity_for(1, Amount(value=1000, unit="г"), potatoes) == 1.0
+
+    def test_one_stated_pack_is_one_pack(self) -> None:
+        bag = product("Картопля 2 кг", 60, display_ratio="2кг", stock=20)
+        assert quantity_for(3, Amount(value=2, unit="кг"), bag) == 1
+
     def test_no_amount_is_the_old_path_exactly(self) -> None:
         cheese = product("Сир", 400, weighted=True, step=0.1)
         assert quantity_for(1, None, cheese) == 0.1  # unqualified weighted → one step

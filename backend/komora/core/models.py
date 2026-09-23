@@ -104,8 +104,9 @@ class DraftBasket(BaseModel):
     surfaces and handed to the verification pass as the basket's purpose. Never a
     line: a dish is not a product."""
     guests: int | None = None
-    """An event's headcount (J4), echoed in the title. The model scales quantities
-    itself; Komora stores the number and claims nothing from it."""
+    """An event's headcount (J4). The model scales quantities itself; Komora reads the
+    number only to call the basket an event (`agent.loop.intent_of`) and claims nothing
+    from it — it is not stored and not shown."""
     removals: list[Prose] = Field(default_factory=list)
     """What the user asked to take back out, in their own words — «ковбаски пепероні».
 
@@ -161,7 +162,10 @@ class KnownLine(BaseModel):
 
     product_id: str
     name: Prose
-    quantity: float = 1
+    quantity: float | None = None
+    """A stated amount — a habit's is what the receipts say was bought — kept as is,
+    kilograms included. `None` means nobody gave one («Додати» on a deal): one step of
+    a weighted good, one piece of anything else (`resolve.known_quantity`)."""
     external_product_id: int | None = None
     reason_kind: ReasonKind = "habit"
     reason_text: Prose

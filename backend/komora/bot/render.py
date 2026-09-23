@@ -15,7 +15,7 @@ Output is Telegram HTML, so every value that came from Silpo or the model goes t
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from html import escape
 
@@ -23,6 +23,7 @@ from komora.bot.outcomes import (
     Ask,
     DealReady,
     DealsReady,
+    DigestReady,
     DraftReady,
     HabitsReady,
     NudgeReady,
@@ -32,13 +33,14 @@ from komora.bot.outcomes import (
     Synced,
     TrackedDeal,
 )
+from komora.core.digest import DigestInput, budget_standing, has_news
 from komora.core.habits.engine import Habit
 from komora.core.habits.purchases import KYIV
 from komora.core.models import MenuItem, ResolvedCart, ResolvedLine, SyncReport
 from komora.core.money import CURRENCY, uah
 from komora.core.passes.budget import OVER_BUDGET, optional_lines_total
 from komora.core.sync import SyncPreview
-from komora.core.text import pl
+from komora.core.text import days, pl
 
 money = uah
 """Re-exported: the same rule the savings notes are written with."""
@@ -533,6 +535,74 @@ def render_deals(outcome: DealsReady) -> str:
     return "\n".join(blocks)
 
 
+DIGEST_TITLE = "Підсумок тижня"
+MAX_DUE_NAMED = 5
+
+
+def digest_text(digest: DigestInput, today: date) -> str | None:
+    """The Sunday message, or `None` when there is nothing true to say (`has_news`).
+
+    Built here rather than in `core/digest.py`, which used to return it as Telegram
+    HTML with habit and coupon names unescaped — one «&» in a product name and
+    Telegram refused the whole message, after the week had been recorded as sent.
+    """
+    if not has_news(digest):
+        return None
+    receipt_total = sum((r.total for r in digest.receipts), Decimal("0"))
+    receipt_discount = sum((r.discount for r in digest.receipts), Decimal("0"))
+    bonuses = sum((r.bonuses_accrued for r in digest.receipts), Decimal("0"))
+    last_day = digest.week_end - timedelta(days=1)
+    blocks = [f"<b>{DIGEST_TITLE}</b> · {digest.week_start:%d.%m}–{last_day:%d.%m}", ""]
+
+    if digest.receipts or digest.online_lines > 0:
+        blocks.append("<b>Витрачено</b>")
+        if digest.receipts:
+            n = len(digest.receipts)
+            receipts = pl(n, "чек", "чеки", "чеків")
+            blocks.append(f"• у магазині: {money(receipt_total)} за {n} {receipts}")
+        if digest.online_lines > 0:
+            blocks.append(f"• онлайн: {money(digest.online_spent)} за замовленнями")
+        if digest.receipts and digest.online_lines > 0:
+            blocks.append("Дві суми окремо: чи є доставка також у чеках, Комора ще не знає.")
+        standing = budget_standing(digest)
+        if standing is not None:
+            cap = f"Бюджет {digest.budget_cap} {CURRENCY}"
+            at_least = "" if standing.exact else " щонайменше"
+            if standing.over is not None:
+                blocks.append(f"{cap} — перевищено{at_least} на {money(standing.over)}")
+            elif standing.left is not None:
+                blocks.append(f"{cap} — лишилося{at_least} {money(standing.left)}")
+            else:
+                blocks.append(f"{cap} — чи перевищено, залежить від того, чи доставка є в чеках.")
+        if receipt_discount > 0 or bonuses > 0:
+            blocks.append("")
+            blocks.append("<b>Заощаджено</b> — за даними чеків")
+            if receipt_discount > 0:
+                blocks.append(f"• знижки в чеках: {money(receipt_discount)}")
+            if bonuses > 0:
+                blocks.append(f"• нараховано балабонусів: {bonuses:.0f}")
+
+    if digest.due_next_week:
+        blocks += ["", "<b>Наступного тижня, схоже, знадобиться</b>"]
+        for habit in digest.due_next_week[:MAX_DUE_NAMED]:
+            blocks.append(f"• {esc(habit.name)} — кожні ~{days(round(habit.median_gap_days))}")
+        rest = len(digest.due_next_week) - MAX_DUE_NAMED
+        if rest > 0:
+            blocks.append(f"…і ще {rest}")
+
+    if digest.expiring:
+        blocks += ["", "<b>Купон згорає</b>"]
+        for coupon in digest.expiring:
+            blocks.append(f"• {esc(coupon.text)} — до {coupon.ends_on:%d.%m}")
+
+    blocks += ["", "«/digest off» — більше не надсилати."]
+    return "\n".join(blocks)
+
+
+def render_digest(outcome: DigestReady) -> str:
+    return digest_text(outcome.digest, outcome.today) or ""
+
+
 DEALS_HEADING = "Акції"
 DEALS_START = "deals"
 """The launch payload that opens the deals screen. No value: the lists are the
@@ -708,8 +778,12 @@ def to_reply(outcome: Outcome, mini_app_url: str | None = None) -> Reply:
             return Reply(render_sync_report(outcome.report), buttons=tuple(actions))
 
         case Spoke():
+            # Plain prose, so escaped here like every other value in a message. It
+            # was sent as-is under HTML parse mode, and the model's own answers land
+            # here: «M&M's», «до < 500 ₴» — Telegram refused the message and the user
+            # got «Сталася неочікувана помилка» instead of the answer.
             offer = (Button(LINK_BUTTON, data="link"),) if outcome.needs_link else ()
-            return Reply(outcome.text, buttons=offer, toast=outcome.toast)
+            return Reply(esc(outcome.text), buttons=offer, toast=outcome.toast)
 
         case HabitsReady():
             usable = [h for h in outcome.habits if h.reorderable and not h.muted]
@@ -741,7 +815,7 @@ def to_reply(outcome: Outcome, mini_app_url: str | None = None) -> Reply:
 
         case Ask():
             return Reply(
-                outcome.text,
+                esc(outcome.text),
                 buttons=(
                     Button(outcome.yes_label, data=outcome.yes),
                     Button(outcome.no_label, data=outcome.no),
@@ -771,6 +845,9 @@ def to_reply(outcome: Outcome, mini_app_url: str | None = None) -> Reply:
                     *_open_deals(mini_app_url),
                 ),
             )
+
+        case DigestReady():
+            return Reply(render_digest(outcome))
 
         case DealsReady():
             build_all: tuple[Button, ...] = (

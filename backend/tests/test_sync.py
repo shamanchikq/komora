@@ -252,6 +252,19 @@ class TestIdempotency:
         products = (await mcp.get_shopping_cart_by_id("x"))["cart"]["shipments"][0]["products"]
         assert products[0]["quantity"] == 3, "3, not 4"
 
+    async def test_two_lines_of_one_product_land_as_their_sum(self) -> None:
+        """«молоко» and «молоко 2,5%» can resolve to one product, and the draft prices
+        both. Two writes of a *set* quantity left the cart holding the second alone,
+        under a report that called both added."""
+        mcp = FakeSilpo()
+        first = line("Молоко", "40", qty=1)
+        second = line("Молоко", "40", qty=2, reason_text="для кави")
+        report = await execute_sync(cart(first, second), mcp)
+        assert report.ok is True
+        assert [(p["productId"], p["quantity"]) for p in mcp._cart] == [("id-Молоко", 3)]
+        again = await execute_sync(cart(first, second), mcp)
+        assert again.ok and [p["quantity"] for p in mcp._cart] == [3], "a retry sets, not adds"
+
 
 class TestDrift:
     async def test_price_change_beyond_the_threshold_is_flagged(self) -> None:

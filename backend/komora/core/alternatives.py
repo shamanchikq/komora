@@ -9,7 +9,6 @@ Cycling wraps: the last alternative leads back to the first, so a user who taps 
 the one they wanted comes round again rather than getting stuck.
 """
 
-from decimal import Decimal
 from typing import Any
 
 from komora.core.mcp.protocol import SilpoClient
@@ -17,10 +16,13 @@ from komora.core.models import ResolvedLine, SearchContext
 from komora.core.passes.categories import CategoryIndex
 from komora.core.passes.resolve import (
     CATEGORY_PAGE,
+    DEFAULT_QUANTITY,
     clamp_quantity,
+    deliberate_quantity,
     fallback_terms,
     flatten_search,
     in_stock,
+    line_from,
     narrow,
     usable,
 )
@@ -122,25 +124,48 @@ def _swapped(line: ResolvedLine, candidates: list[dict[str, Any]]) -> ResolvedLi
     return _apply(line, chosen)
 
 
+def _requantified(line: ResolvedLine, chosen: dict[str, Any]) -> float:
+    """The line's quantity, carried onto another product.
+
+    Same unit on both sides — kilograms to kilograms, pieces to pieces — and the
+    amount is one somebody already settled: resolution turned the model's bare `1`
+    into a step long before a swap. Re-running `clamp_quantity` on it read a kilo of
+    potatoes the user had set with the stepper as that bare `1`, and swapped in 100 g.
+
+    Across units the number means nothing on the other side, so the new product gets
+    what an unqualified request gets: two packs of cheese are not two kilograms of
+    the weighted one.
+    """
+    if line.weighted == bool(chosen.get("weighted")):
+        return deliberate_quantity(line.qty, chosen)
+    if chosen.get("weighted"):
+        return clamp_quantity(DEFAULT_QUANTITY, chosen)
+    return clamp_quantity(line.qty, chosen)
+
+
 def _apply(line: ResolvedLine, chosen: dict[str, Any]) -> ResolvedLine:
-    """This line, holding that product. Everything the user chose about the line —
-    quantity, reason, description, category — survives; only the product changes."""
-    old = chosen.get("oldPrice")
-    return line.model_copy(
-        update={
-            "product_id": str(chosen["id"]),
-            "company_id": str(chosen["companyId"]),
-            "branch_id": str(chosen.get("branchId", "")),
-            "name": str(chosen.get("name", "")),
-            "unit": str(chosen.get("ratio") or ""),
-            "unit_price": Decimal(str(chosen.get("price", 0))),
-            "old_price": Decimal(str(old)) if old else None,
-            "qty": clamp_quantity(line.qty, chosen),
-            "unavailable": False,
-            # A chosen product has not been swapped in for an out-of-stock original;
-            # keeping the old marker would caption it «Заміна замість …» wrongly.
-            "substituted_from": None,
-        }
+    """This line, holding that product. What the user chose about the line — its
+    quantity, reason, description, category, whether it is optional — survives; every
+    fact about the *product* is the new product's.
+
+    Only the price and the name used to change. `weighted`, `step`, `stock`, the pack
+    size and the multi-buy prices stayed the old product's, so a weighted cheese
+    swapped for a packaged one kept its «₴/кг» row, its 0,1 kg stepper and the old
+    product's stock as a ceiling, and a note offered the old product's «від 2 шт» price
+    under the new one's name.
+
+    `substituted_from` is dropped: a chosen product was not swapped in for an
+    out-of-stock original, and keeping the marker would caption it «Заміна замість …»
+    wrongly. `synced` is dropped too — the new product is not in the Silpo cart.
+    """
+    return line_from(
+        chosen,
+        description=line.description,
+        category=line.category,
+        qty=_requantified(line, chosen),
+        reason_kind=line.reason_kind,
+        reason_text=line.reason_text,
+        optional=line.optional,
     )
 
 

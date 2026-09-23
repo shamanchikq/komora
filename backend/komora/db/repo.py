@@ -423,6 +423,23 @@ class BasketRepo:
             item = await self._visible_item(session, basket_id, position)
             if item is None:
                 return False
+            if item.synced:
+                # A push already put THIS product in the Silpo cart, and a swap on the
+                # draft does not take it out. Rewriting the row in place carried the
+                # flag onto the new product — «✓ вже в кошику Сільпо» under something
+                # that was never sent, a nudge silenced for it, and the product really
+                # in the cart gone from `synced_lines`, so «прибери …» could no longer
+                # name it. The old row is struck off the draft the way ✕ strikes one,
+                # keeping its flag; the new product takes its place, unsent.
+                item.removed = True
+                replacement = _item_of(basket_id, item.position, line)
+                replacement.description = item.description
+                replacement.category = item.category
+                replacement.reason_kind = item.reason_kind
+                replacement.reason_text = item.reason_text
+                replacement.optional = item.optional
+                session.add(replacement)
+                return True
             item.product_id = line.product_id
             item.company_id = line.company_id
             item.branch_id = line.branch_id
@@ -904,12 +921,22 @@ class PriceSnapshotRepo:
                 row.captured_at = snap.captured_at
             return len(snapshots)
 
-    async def latest(self, user_id: int, branch_id: str) -> list[Snapshot]:
-        """The newest snapshot per product at this branch."""
+    async def latest(self, user_id: int, branch_id: str, *, since: date) -> list[Snapshot]:
+        """The newest snapshot per product at this branch, from `since` on.
+
+        `since` is not optional because the newest row is not the same claim as a
+        current one. A product the last scan did not find — out of stock drops out of
+        article search — keeps its older row, and without a floor a promotion that
+        ended three weeks ago read as today's under «Ціни перевірено сьогодні».
+        """
         async with self._sessions() as session:
             newest = (
                 select(PriceSnapshot.product_key, func.max(PriceSnapshot.day).label("day"))
-                .where(PriceSnapshot.user_id == user_id, PriceSnapshot.branch_id == branch_id)
+                .where(
+                    PriceSnapshot.user_id == user_id,
+                    PriceSnapshot.branch_id == branch_id,
+                    PriceSnapshot.day >= since,
+                )
                 .group_by(PriceSnapshot.product_key)
                 .subquery()
             )

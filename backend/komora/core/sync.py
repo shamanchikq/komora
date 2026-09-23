@@ -185,6 +185,26 @@ def _removable(cart: ResolvedCart, sendable: list[ResolvedLine]) -> list[CartRem
     return [removal for removal in cart.removals if removal.product_id not in adding]
 
 
+def _one_per_product(lines: list[ResolvedLine]) -> list[ResolvedLine]:
+    """The lines as the cart will hold them: one per product, quantities summed.
+
+    Two draft lines can resolve to one product — «молоко» and «молоко 2,5%», or a ⇄
+    onto something already in the basket — and the draft counts both into its total.
+    Sent as two writes, the second *set* the quantity the first had asked for, so the
+    cart held one line's worth under a report that called both added. Summed, the
+    cart holds what the draft priced, and a retry still sets the same number.
+    """
+    merged: dict[str, ResolvedLine] = {}
+    for line in lines:
+        first = merged.get(line.product_id)
+        merged[line.product_id] = (
+            line
+            if first is None
+            else first.model_copy(update={"qty": round(first.qty + line.qty, 3)})
+        )
+    return list(merged.values())
+
+
 def _payload(line: ResolvedLine) -> dict[str, Any]:
     """Exactly the four fields `silpo_add_or_update_cart_products` declares.
 
@@ -304,12 +324,13 @@ async def execute_sync(cart: ResolvedCart, mcp: SilpoClient) -> SyncReport:
 
     cart_id = await _cart_id(mcp)
     errors: dict[str, str] = {}
+    writes = _one_per_product(sendable)
 
-    if sendable:
+    if writes:
         try:
-            await mcp.add_or_update_cart_products(cart_id, [_payload(line) for line in sendable])
+            await mcp.add_or_update_cart_products(cart_id, [_payload(line) for line in writes])
         except Exception:
-            for line in sendable:
+            for line in writes:
                 try:
                     await mcp.add_or_update_cart_products(cart_id, [_payload(line)])
                 except Exception as exc:
@@ -318,9 +339,7 @@ async def execute_sync(cart: ResolvedCart, mcp: SilpoClient) -> SyncReport:
     # Ground truth: what is in the cart now, not what the write call claimed — and at
     # what quantity, because a product the user already had is in the cart either way.
     landed = _quantities_in(await mcp.get_shopping_cart_by_id(cart_id))
-    # Last wins, exactly as Silpo applies them: two draft lines can resolve to one
-    # product, and the second write sets the quantity the first one asked for.
-    wanted = {line.product_id: line.qty for line in sendable}
+    wanted = {line.product_id: line.qty for line in writes}
     applied = {
         product_id
         for product_id, quantity in wanted.items()

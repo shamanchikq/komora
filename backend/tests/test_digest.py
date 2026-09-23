@@ -1,5 +1,6 @@
 """The Sunday digest (Plan 4 Task 4): stored data only, opt-in, once a week."""
 
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
@@ -15,8 +16,9 @@ from komora.bot.handlers import (
     refresh_history,
     send_digest_if_due,
 )
-from komora.bot.outcomes import Spoke
-from komora.core.digest import DigestInput, ExpiringCoupon, digest_text
+from komora.bot.outcomes import DigestReady, Spoke
+from komora.bot.render import digest_text, render_digest, to_reply
+from komora.core.digest import DigestInput, ExpiringCoupon
 from komora.core.habits.purchases import ReceiptTotals, receipt_totals
 from komora.db.repo import ReceiptRepo, UserRepo
 from tests.fakes import FakeSilpo, product
@@ -130,6 +132,33 @@ class TestDigestText:
         assert under and "лишилося 400,00 ₴" in under
         assert over and "перевищено на 100,00 ₴" in over
 
+    def test_both_sources_never_add_up_against_the_budget(self) -> None:
+        """Receipts + online is the combined number this digest refuses to print —
+        so the budget line claims only what holds whether or not a delivery is also a
+        receipt."""
+        both = {"receipts": [totals(WEEK_START, "300")], "online_spent": Decimal("250")}
+        under = digest_text(digest_input(**both, online_lines=1, budget_cap=600), WEEK_START)
+        over = digest_text(digest_input(**both, online_lines=1, budget_cap=200), WEEK_START)
+        unsure = digest_text(digest_input(**both, online_lines=1, budget_cap=400), WEEK_START)
+        assert under and "лишилося щонайменше 50,00 ₴" in under
+        assert over and "перевищено щонайменше на 100,00 ₴" in over
+        assert unsure and "залежить від того, чи доставка є в чеках" in unsure
+        assert "550" not in (under + over + unsure)
+
+    def test_names_are_escaped_for_telegram(self) -> None:
+        """The digest is Telegram HTML; a product called «M&M's» made Telegram refuse
+        the whole message when the name went in raw."""
+        text = digest_text(
+            digest_input(
+                due_next_week=[replace(habit(), name="Драже M&M's <арахіс>")],
+                expiring=[ExpiringCoupon(text="−5% & більше", ends_on=WEEK_START)],
+            ),
+            WEEK_START,
+        )
+        assert text is not None
+        assert "M&amp;M's &lt;арахіс&gt;" in text and "−5% &amp; більше" in text
+        assert "<b>Підсумок тижня</b>" in text
+
     def test_habits_and_coupons_without_any_spend(self) -> None:
         text = digest_text(
             digest_input(
@@ -170,10 +199,11 @@ class TestDigestHandlers:
         stores = services.habits
         assert stores is not None
         await stores.habits.replace(USER, [habit()])
-        spoke = await digest_for(services, USER, now=SUNDAY_EVENING)
-        assert spoke is not None
-        assert "150,00 ₴ за 1 чек" in spoke.text and "знижки в чеках: 12,00 ₴" in spoke.text
-        assert "Молоко Галичина" in spoke.text
+        digest = await digest_for(services, USER, now=SUNDAY_EVENING)
+        assert digest is not None
+        text = render_digest(digest)
+        assert "150,00 ₴ за 1 чек" in text and "знижки в чеках: 12,00 ₴" in text
+        assert "Молоко Галичина" in text
 
     async def test_expiring_coupons_only_with_a_session(self, sessions: async_sessionmaker) -> None:
         silpo = FakeSilpo(
@@ -193,8 +223,8 @@ class TestDigestHandlers:
         await ReceiptRepo(sessions).upsert(USER, [totals(WEEK_START, "10")])
         without = await digest_for(services, USER, now=SUNDAY_EVENING)
         with_session = await digest_for(services, USER, now=SUNDAY_EVENING, mcp=silpo)
-        assert without and "згорає" not in without.text
-        assert with_session and "−10% чек — до 23.09" in with_session.text
+        assert without and "згорає" not in render_digest(without)
+        assert with_session and "−10% чек — до 23.09" in render_digest(with_session)
 
     async def test_sent_once_on_sunday_evening_to_subscribers_only(
         self, sessions: async_sessionmaker
@@ -212,6 +242,38 @@ class TestDigestHandlers:
         assert await stores.notifications.last_sent(USER, DIGEST_KIND, "2026-W38") == SUNDAY_EVENING
         assert len(notify.sent) == 1
 
+    async def test_quiet_hours_hold_it_until_monday_morning(
+        self, sessions: async_sessionmaker
+    ) -> None:
+        """Plan 4 D9: nothing unasked inside quiet hours — and a quiet Sunday evening
+        moves the digest to the first hour that is not, instead of losing the week."""
+        services, _, notify = build(sessions)
+        await linked(services, USER)
+        await ReceiptRepo(sessions).upsert(USER, [totals(WEEK_START, "10")])
+        await services.users.set_digest(USER, True)
+        await services.users.set_quiet_hours(USER, 17, 9)
+        assert not await send_digest_if_due(services, USER, now=SUNDAY_EVENING)
+        monday_7 = SUNDAY_EVENING + timedelta(hours=12)  # 07:00 Kyiv, still quiet
+        monday_9 = SUNDAY_EVENING + timedelta(hours=14)  # 09:00 Kyiv
+        monday_noon = SUNDAY_EVENING + timedelta(hours=17)
+        assert not await send_digest_if_due(services, USER, now=monday_7)
+        assert await send_digest_if_due(services, USER, now=monday_9)
+        assert not await send_digest_if_due(services, USER, now=monday_noon)
+        [(_, sent)] = notify.sent
+        assert isinstance(sent, DigestReady)
+        assert sent.digest.week_start == WEEK_START, "the week that ended, not the new one"
+        stores = services.habits
+        assert stores is not None
+        assert await stores.notifications.last_sent(USER, DIGEST_KIND, "2026-W38") == monday_9
+
+    async def test_rendered_for_the_chat(self, sessions: async_sessionmaker) -> None:
+        services, _, _ = build(sessions)
+        await linked(services, USER)
+        await ReceiptRepo(sessions).upsert(USER, [totals(WEEK_START, "10")])
+        digest = await digest_for(services, USER, now=SUNDAY_EVENING)
+        assert digest is not None
+        assert to_reply(digest).text == render_digest(digest)
+
     async def test_the_job_tick_carries_it(self, sessions: async_sessionmaker) -> None:
         silpo = FakeSilpo({"815253": [product("Молоко Галичина", 42.9, product_id=MILK)]})
         services, _, notify = build(sessions, silpo=silpo)
@@ -219,4 +281,7 @@ class TestDigestHandlers:
         await services.users.set_digest(USER, True)
         await ReceiptRepo(sessions).upsert(USER, [totals(WEEK_START, "10")])
         await tick(services, now=SUNDAY_EVENING)
-        assert any(isinstance(o, Spoke) and "Підсумок тижня" in o.text for _, o in notify.sent)
+        assert any(
+            isinstance(o, DigestReady) and "Підсумок тижня" in render_digest(o)
+            for _, o in notify.sent
+        )

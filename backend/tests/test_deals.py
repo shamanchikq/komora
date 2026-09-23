@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from komora.api.app import create_app
 from komora.api.minapp import serialise
 from komora.bot.handlers import (
+    ALREADY_IN_DRAFT,
     NOT_A_DEAL,
     PRICES_SOURCE,
     Services,
@@ -25,6 +26,7 @@ from komora.bot.handlers import (
     on_habits_draft,
     refresh_history,
     scan_prices,
+    today_in_kyiv,
 )
 from komora.bot.outcomes import DealReady, DealsReady, DraftReady, Spoke
 from komora.bot.render import to_reply
@@ -199,10 +201,13 @@ class TestAfterTurnScan:
         await on_habits_draft(services, USER)  # any turn that reads the cart
         assert await deferred(services).drain() >= 1
         assert await stores.imports.last_ok(USER, PRICES_SOURCE) is not None
-        assert [s.product_key for s in await stores.prices.latest(USER, CONTEXT.branch_id)] == [
+        assert [
+            s.product_key
+            for s in await stores.prices.latest(USER, CONTEXT.branch_id, since=date.min)
+        ] == [
             MILK,
             BREAD,
-        ] or len(await stores.prices.latest(USER, CONTEXT.branch_id)) >= 1
+        ] or len(await stores.prices.latest(USER, CONTEXT.branch_id, since=date.min)) >= 1
 
     async def test_not_twice_in_a_day(self, sessions: async_sessionmaker) -> None:
         services, silpo, _ = build(sessions)
@@ -398,6 +403,45 @@ class TestDealsScreen:
         assert isinstance(outcome, DraftReady)
         assert [ln.product_id for ln in outcome.cart.lines] == [MILK]
 
+    async def test_asking_for_deals_scans_once_and_sends_no_alert_after(
+        self, sessions: async_sessionmaker
+    ) -> None:
+        """«/deals» re-prices inline, and its own `_load_context` had already scheduled
+        the after-turn scan: the products were searched twice in a minute, and the
+        alert about the product on the list arrived right under the list."""
+        services, silpo, notify = build(sessions, silpo=deals_fake())
+        await linked(services, USER)
+        await services.users.set_quiet_hours(USER, 0, 0)  # an alert would be allowed now
+        stores = services.habits
+        assert stores is not None
+        await stores.imports.record(USER, "offline", "ok", "", at=datetime.now(UTC))
+        await _tracked(services, habit())
+        outcome = await on_deals(services, USER)
+        assert isinstance(outcome, DealsReady)
+        assert [d.habit.product_key for d in outcome.mine] == [MILK]
+        await deferred(services).drain()
+        assert silpo.search_calls.count(["815253"]) == 1
+        assert not [o for _, o in notify.sent if isinstance(o, DealReady)]
+
+    async def test_a_promotion_the_last_scan_did_not_see_is_not_shown(
+        self, sessions: async_sessionmaker
+    ) -> None:
+        """The newest snapshot is not a current one. A product the last scan could not
+        find keeps its old row, and a promotion from three weeks ago read as today's."""
+        services, _, _ = build(sessions, silpo=deals_fake())
+        await linked(services, USER)
+        await _tracked(services, habit())
+        stores = services.habits
+        assert stores is not None and stores.prices is not None
+        await stores.prices.upsert(USER, [snap(day=today_in_kyiv() - timedelta(days=20))])
+        now = datetime.now(UTC)
+        await stores.imports.record(USER, PRICES_SOURCE, "ok", "unknown: milk", at=now)
+        await stores.imports.record(USER, "offline", "ok", "", at=now)
+        outcome = await on_deals(services, USER)
+        assert isinstance(outcome, DealsReady) and outcome.mine == []
+        fresh = await stores.prices.latest(USER, CONTEXT.branch_id, since=today_in_kyiv())
+        assert fresh == []
+
 
 class TestAddDeal:
     async def test_into_a_new_draft_with_the_exact_saving_as_the_reason(
@@ -429,6 +473,38 @@ class TestAddDeal:
         assert [ln.product_id for ln in outcome.cart.lines] == [MILK, "cheese"]
         assert outcome.cart.total == Decimal("90")
         assert outcome.toast == "Додано Сир Мужон"
+
+    async def test_a_product_already_in_the_draft_is_not_added_twice(
+        self, sessions: async_sessionmaker
+    ) -> None:
+        """Silpo sets a quantity: two lines of one product land as one line's worth,
+        while the draft counted both into its total."""
+        silpo = FakeSilpo(
+            {"1": [product("Сир Мужон", 50, old_price=100, product_id="cheese", external_id=1)]}
+        )
+        services, _, _ = build(sessions, silpo=silpo)
+        await linked(services, USER)
+        basket_id = await services.baskets.create_from_cart(
+            USER, "Кошик", "stated", _cart_with("cheese")
+        )
+        outcome = await on_add_deal(services, USER, "cheese", "Сир Мужон", 1)
+        assert isinstance(outcome, DraftReady) and outcome.basket_id == basket_id
+        assert [ln.product_id for ln in outcome.cart.lines] == ["cheese"]
+        assert outcome.toast == ALREADY_IN_DRAFT
+
+    async def test_a_weighted_deal_is_one_step_priced_per_kilogram(
+        self, sessions: async_sessionmaker
+    ) -> None:
+        grapes = product(
+            "Виноград", 69.9, old_price=89.9, weighted=True, step=0.5, product_id="g", external_id=7
+        )
+        services, _, _ = build(sessions, silpo=FakeSilpo({"7": [grapes]}))
+        await linked(services, USER)
+        outcome = await on_add_deal(services, USER, "g", "Виноград", 7)
+        assert isinstance(outcome, DraftReady)
+        [line] = outcome.cart.lines
+        assert line.qty == 0.5, "nobody asked for a kilogram"
+        assert line.reason_text == "зі знижкою у Сільпо — 69,90 ₴/кг замість 89,90 ₴/кг"
 
     async def test_an_invented_id_adds_nothing(self, sessions: async_sessionmaker) -> None:
         silpo = FakeSilpo(

@@ -4,6 +4,9 @@ Every number is read from what Silpo actually charged — receipt totals and the
 `sumDiscount`, delivered orders' lines — never inferred from a coupon. Two sources are
 shown as two lines until it is known whether a delivery also appears as a receipt
 (Plan 3's open question); adding them before that could count a purchase twice.
+
+This module holds the figures and the rules about what they support; the wording is
+`bot/render.render_digest`, like every other message.
 """
 
 from dataclasses import dataclass, field
@@ -12,8 +15,6 @@ from decimal import Decimal
 
 from komora.core.habits.engine import Habit
 from komora.core.habits.purchases import ReceiptTotals
-from komora.core.money import CURRENCY, uah
-from komora.core.text import days
 
 
 @dataclass(frozen=True)
@@ -35,74 +36,42 @@ class DigestInput:
     expiring: list[ExpiringCoupon] = field(default_factory=list)
 
 
-DIGEST_TITLE = "Підсумок тижня"
-MAX_DUE_NAMED = 5
-
-
-def digest_text(digest: DigestInput, today: date) -> str | None:
-    """The message, or `None` when there is nothing true to say.
-
-    An empty digest is not sent: «витрачено 0 ₴, заощаджено 0 ₴» about a week Komora
-    simply did not see would be a claim about the fridge.
-    """
-    receipt_total = sum((r.total for r in digest.receipts), Decimal("0"))
-    receipt_discount = sum((r.discount for r in digest.receipts), Decimal("0"))
-    bonuses = sum((r.bonuses_accrued for r in digest.receipts), Decimal("0"))
+def has_news(digest: DigestInput) -> bool:
+    """Whether there is anything true to say. An empty digest is not sent: «витрачено
+    0 ₴, заощаджено 0 ₴» about a week Komora simply did not see would be a claim about
+    the fridge."""
     saw_spend = bool(digest.receipts) or digest.online_lines > 0
-    if not saw_spend and not digest.due_next_week and not digest.expiring:
+    return saw_spend or bool(digest.due_next_week) or bool(digest.expiring)
+
+
+@dataclass(frozen=True)
+class BudgetStanding:
+    """The week's spend against the weekly cap, as far as the data can say it.
+
+    `exact` is false when both sources were seen: whether a delivery also appears as a
+    receipt is unknown, so the true spend lies between the larger of the two and their
+    sum. Only what holds at both ends is claimed — «перевищено щонайменше на …» when
+    even the lower figure is over, «лишилося щонайменше …» when even the sum is
+    under, and nothing in between. Adding the two, which the budget line did, was the
+    one combined number this digest says it never prints.
+    """
+
+    over: Decimal | None
+    left: Decimal | None
+    exact: bool
+
+
+def budget_standing(digest: DigestInput) -> BudgetStanding | None:
+    if digest.budget_cap is None:
         return None
-
-    blocks = [f"<b>{DIGEST_TITLE}</b> · {digest.week_start:%d.%m}–{_last_day(digest):%d.%m}", ""]
-
-    if saw_spend:
-        blocks.append("<b>Витрачено</b>")
-        if digest.receipts:
-            n = len(digest.receipts)
-            blocks.append(f"• у магазині: {uah(receipt_total)} за {n} {_receipts(n)}")
-        if digest.online_lines > 0:
-            blocks.append(f"• онлайн: {uah(digest.online_spent)} за замовленнями")
-        if digest.receipts and digest.online_lines > 0:
-            blocks.append("Дві суми окремо: чи є доставка також у чеках, Комора ще не знає.")
-        if digest.budget_cap is not None:
-            spent = receipt_total + digest.online_spent
-            left = Decimal(digest.budget_cap) - spent
-            blocks.append(
-                f"Бюджет {digest.budget_cap} {CURRENCY} — лишилося {uah(left)}"
-                if left >= 0
-                else f"Бюджет {digest.budget_cap} {CURRENCY} — перевищено на {uah(-left)}"
-            )
-        if receipt_discount > 0 or bonuses > 0:
-            blocks.append("")
-            blocks.append("<b>Заощаджено</b> — за даними чеків")
-            if receipt_discount > 0:
-                blocks.append(f"• знижки в чеках: {uah(receipt_discount)}")
-            if bonuses > 0:
-                blocks.append(f"• нараховано балабонусів: {bonuses:.0f}")
-
-    if digest.due_next_week:
-        blocks += ["", "<b>Наступного тижня, схоже, знадобиться</b>"]
-        for habit in digest.due_next_week[:MAX_DUE_NAMED]:
-            blocks.append(f"• {habit.name} — кожні ~{days(round(habit.median_gap_days))}")
-        rest = len(digest.due_next_week) - MAX_DUE_NAMED
-        if rest > 0:
-            blocks.append(f"…і ще {rest}")
-
-    if digest.expiring:
-        blocks += ["", "<b>Купон згорає</b>"]
-        for coupon in digest.expiring:
-            blocks.append(f"• {coupon.text} — до {coupon.ends_on:%d.%m}")
-
-    blocks += ["", "«/digest off» — більше не надсилати."]
-    return "\n".join(blocks)
-
-
-def _last_day(digest: DigestInput) -> date:
-    from datetime import timedelta
-
-    return digest.week_end - timedelta(days=1)
-
-
-def _receipts(n: int) -> str:
-    from komora.core.text import pl
-
-    return pl(n, "чек", "чеки", "чеків")
+    cap = Decimal(digest.budget_cap)
+    receipts = sum((r.total for r in digest.receipts), Decimal("0"))
+    online = digest.online_spent if digest.online_lines > 0 else Decimal("0")
+    both = bool(digest.receipts) and digest.online_lines > 0
+    low = max(receipts, online) if both else receipts + online
+    high = receipts + online
+    if low > cap:
+        return BudgetStanding(over=low - cap, left=None, exact=not both)
+    if high <= cap:
+        return BudgetStanding(over=None, left=cap - high, exact=not both)
+    return BudgetStanding(over=None, left=None, exact=False)

@@ -33,7 +33,7 @@ from komora.bot.handlers import (
 )
 from komora.bot.outcomes import DraftReady, PreviewReady, Spoke, Synced
 from komora.bot.render import to_reply
-from komora.core.agent.recap import CANCELLED_TAG
+from komora.core.agent.recap import CANCELLED_TAG, DRAFT_TAG
 from komora.core.agent.tools import PROPOSE_BASKET
 from komora.core.llm.protocol import LLMResponse, ToolCall
 from komora.core.mcp.errors import McpUnavailable, NotAuthenticated
@@ -875,6 +875,85 @@ class TestStrikingARowOffTheDraftLeavesTheCartAlone:
         assert outcome.basket_id is not None
         await on_callback(services, USER, f"push:{outcome.basket_id}")
         assert "id-Молоко Яготинське 2,6%" not in {p["productId"] for p in mcp._cart}
+
+
+class TestSwappingALandedLine:
+    """⇄ on a row a push already landed. The row was rewritten in place, so its
+    `synced` flag moved onto the new product: «✓ вже в кошику Сільпо» under something
+    never sent, and the product really in the cart gone from `synced_lines`."""
+
+    async def _landed_then_swapped(self, sessions):  # type: ignore[no-untyped-def]
+        catalogue = {
+            **CATALOGUE,
+            "молоко": [
+                product("Молоко Яготинське 2,6%", 42.90),
+                product("Молоко Галичина 2,5%", 44.90),
+            ],
+        }
+        mcp = FakeSilpo(catalogue, swallow={"id-Хліб Київський"})
+        services, _, _ = services_for(sessions, mcp=mcp)
+        draft = await on_text(services, USER, "купи молоко і хліб")
+        assert isinstance(draft, DraftReady) and draft.basket_id is not None
+        await on_callback(services, USER, f"push:{draft.basket_id}")
+        swapped = await on_callback(services, USER, f"swap:{draft.basket_id}:0")
+        assert isinstance(swapped, DraftReady)
+        return services, swapped
+
+    async def test_the_new_product_is_not_called_sent(self, sessions) -> None:
+        _, swapped = await self._landed_then_swapped(sessions)
+        assert [(ln.name, ln.synced) for ln in swapped.cart.lines] == [
+            ("Молоко Галичина 2,5%", False),
+            ("Хліб Київський", False),
+        ]
+
+    async def test_the_product_in_the_cart_is_still_komoras_to_remove(self, sessions) -> None:
+        services, _ = await self._landed_then_swapped(sessions)
+        assert [ln.name for ln in await services.baskets.synced_lines(USER)] == [
+            "Молоко Яготинське 2,6%"
+        ]
+
+
+class TestTheModelSeesTheDraftAsItWasLeft:
+    """Edits after drafting — ✕, ⇄, the stepper — changed the stored basket and told the
+    conversation nothing, so the next typed edit re-listed the pre-edit basket: the
+    prompt asks for the WHOLE draft again, and the milk the user struck came back."""
+
+    @staticmethod
+    def _drafts_seen(llm: ScriptedLLM) -> list[str]:
+        return [
+            m.content
+            for m in llm.calls[-1]["messages"]
+            if m.role == "assistant" and (m.content or "").startswith(DRAFT_TAG)
+        ]
+
+    async def test_an_edited_draft_is_restated_before_the_next_turn(self, sessions) -> None:
+        services, _, _ = services_for(sessions)
+        draft = await on_text(services, USER, "купи молоко і хліб")
+        assert isinstance(draft, DraftReady) and draft.basket_id is not None
+        await on_remove_line(services, USER, draft.basket_id, 0)
+
+        await on_text(services, USER, "а ще сир")
+        latest = self._drafts_seen(services.llm)[-1]  # type: ignore[arg-type]
+        assert "Хліб Київський" in latest and "Молоко" not in latest
+
+    async def test_an_untouched_draft_is_not_repeated(self, sessions) -> None:
+        services, _, _ = services_for(sessions)
+        await on_text(services, USER, "купи молоко і хліб")
+        await on_text(services, USER, "а ще сир")
+        assert len(self._drafts_seen(services.llm)) == 1  # type: ignore[arg-type]
+
+
+class TestProseIsEscapedForTelegram:
+    """A `Spoke` is plain text, and the bot speaks HTML: a model answer mentioning
+    «M&M's» or «< 500 ₴» made Telegram refuse the message outright."""
+
+    async def test_a_model_answer_with_markup_characters_survives(self, sessions) -> None:
+        llm = ScriptedLLM(LLMResponse(text="Є M&M's по 45 ₴ — це < 500 ₴"))
+        services, _, _ = services_for(sessions, llm=llm)
+        outcome = await on_text(services, USER, "які цукерки є до 500 ₴?")
+        assert isinstance(outcome, Spoke)
+        assert outcome.text == "Є M&M's по 45 ₴ — це < 500 ₴", "the outcome stays plain"
+        assert to_reply(outcome).text == "Є M&amp;M's по 45 ₴ — це &lt; 500 ₴"
 
 
 class TestBudgetBounds:

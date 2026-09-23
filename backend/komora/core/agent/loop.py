@@ -19,7 +19,7 @@ import json
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Final
 
 from pydantic import ValidationError
 
@@ -85,7 +85,8 @@ async def run_agent(
 
         if call.name == PROPOSE_BASKET:
             try:
-                basket = DraftBasket.model_validate({**call.args, "intent": intent_of(call.args)})
+                basket = DraftBasket.model_validate({**call.args, "intent": "stated"})
+                basket = basket.model_copy(update={"intent": intent_of(basket)})
             except ValidationError as exc:
                 basket_failures += 1
                 if basket_failures > MAX_BASKET_RETRIES:
@@ -121,17 +122,21 @@ async def run_agent(
     return AgentOutcome(reply=_TOO_LONG)
 
 
-def intent_of(args: dict[str, Any]) -> str:
-    """What kind of basket the model proposed, from the fields it filled.
+def intent_of(basket: DraftBasket) -> str:
+    """What kind of basket the model proposed, from the fields that survived validation.
 
     One `propose_basket` serves every intent (Plan 4 D5/D7): a menu makes it a meal
     plan, a headcount makes it an event, and neither makes it the stated basket Plan 1
     shipped. The intent is stored with the draft and shown nowhere; it exists so a
     later reader can tell the three apart.
+
+    Read off the validated basket, not the raw arguments: a headcount of 0 or 5000 is
+    dropped by `DraftBasket` as no event at all, and the raw `guests` still called the
+    basket one.
     """
-    if args.get("guests"):
+    if basket.guests:
         return "event"
-    if args.get("menu"):
+    if basket.menu:
         return "mealplan"
     return "stated"
 
@@ -172,21 +177,79 @@ async def _dispatch(mcp: SilpoClient, call: ToolCall, context: SearchContext) ->
     else:
         result = await method(**args)
 
-    return json.dumps(clip_products(result), ensure_ascii=False, default=str)[:8000]
+    return fit_for_model(result)
+
+
+MAX_TOOL_RESULT = 8000
+"""Characters of one tool result the model is shown."""
+
+UNREAD_FIELDS: Final = frozenset({"image", "companyId", "branchId"})
+"""Product fields no tool the model holds can use: a picture URL, and the two ids only
+a cart write needs. A third of every product's characters — ~200 of ~540."""
 
 
 def clip_products(result: Any, limit: int = MAX_LISTED_PRODUCTS) -> Any:
-    """Shorten a product list before it is serialised, and say so.
+    """Shorten every product list in a result to `limit`, and say how many went.
 
-    A browse of a hundred products is ~55 000 characters; the 8 000-character cut
-    below used to fall mid-object, so the model read half a product and a broken
-    string. The first `limit` products stay whole and `omitted` counts the rest —
-    the model can ask for a narrower filter, and it never sees a product it cannot
-    read.
+    Both shapes: a browse's top-level `products`, and a search's `queries[].products`
+    — the search is the one the model reaches for, thirty products per term by
+    default, and it was never clipped at all.
     """
     if not isinstance(result, dict):
         return result
+    out = dict(result)
     products = result.get("products")
-    if not isinstance(products, list) or len(products) <= limit:
+    if isinstance(products, list) and len(products) > limit:
+        out["products"] = products[:limit]
+        out["omitted"] = len(products) - limit
+    groups = result.get("queries")
+    if isinstance(groups, list):
+        out["queries"] = [clip_products(group, limit) for group in groups]
+    return out
+
+
+def _slim(result: Any) -> Any:
+    if isinstance(result, list):
+        return [_slim(item) for item in result]
+    if not isinstance(result, dict):
         return result
-    return {**result, "products": products[:limit], "omitted": len(products) - limit}
+    return {k: _slim(v) for k, v in result.items() if k not in UNREAD_FIELDS}
+
+
+def _longest_list(result: Any) -> int:
+    if not isinstance(result, dict):
+        return 0
+    lengths = [len(result["products"])] if isinstance(result.get("products"), list) else [0]
+    for group in result.get("queries") or []:
+        lengths.append(_longest_list(group))
+    return max(lengths)
+
+
+def fit_for_model(result: Any, budget: int = MAX_TOOL_RESULT) -> str:
+    """A tool result as JSON the model can read to the end.
+
+    The first clip counted products and then cut the JSON at 8 000 characters anyway:
+    twenty products of a browse are ~11 000, so the cut still fell mid-object, and a
+    search — thirty products per term — was cut after a dozen. Now the unreadable
+    fields go first (`UNREAD_FIELDS`), then products come off the end of every list
+    until the whole payload fits, each list saying how many it lost. Only a result
+    with no product list to shorten can still be cut, as the last resort it was.
+    """
+    slim = _slim(result)
+
+    def dump(value: Any) -> str:
+        return json.dumps(value, ensure_ascii=False, default=str)
+
+    text = dump(clip_products(slim))
+    if len(text) <= budget:
+        return text
+    low, high = 0, min(_longest_list(slim), MAX_LISTED_PRODUCTS)
+    best: str | None = None
+    while low <= high:
+        keep = (low + high) // 2
+        trial = dump(clip_products(slim, keep))
+        if len(trial) <= budget:
+            best, low = trial, keep + 1
+        else:
+            high = keep - 1
+    return best if best is not None else text[:budget]

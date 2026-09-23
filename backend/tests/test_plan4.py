@@ -19,7 +19,13 @@ from komora.bot.handlers import (
 )
 from komora.bot.outcomes import DraftReady, Spoke
 from komora.bot.render import to_reply
-from komora.core.agent.loop import clip_products, intent_of, run_agent
+from komora.core.agent.loop import (
+    MAX_TOOL_RESULT,
+    clip_products,
+    fit_for_model,
+    intent_of,
+    run_agent,
+)
 from komora.core.agent.prompts import SYSTEM_PROMPT
 from komora.core.agent.tools import (
     DROPPED_PHRASES,
@@ -38,7 +44,8 @@ from komora.core.pipeline import _coupons, purpose_of
 from tests.fakes import CONTEXT, FakeSilpo, product
 from tests.test_handlers import ScriptedLLM, services_for
 
-FIXTURE = pathlib.Path(__file__).parent / "fixtures" / "mcp" / "tools.json"
+FIXTURES = pathlib.Path(__file__).parent / "fixtures" / "mcp"
+FIXTURE = FIXTURES / "tools.json"
 ALL_TOOLS = json.loads(FIXTURE.read_text(encoding="utf-8"))
 NAMES = {t["name"] for t in ALL_TOOLS}
 UNREACHABLE = NAMES - set(READ_TOOLS)
@@ -115,6 +122,24 @@ class TestWhatTheModelIsShown:
         assert clip_products({"products": [1]}, limit=20) == {"products": [1]}
         assert clip_products("Error", limit=20) == "Error"
 
+    def test_a_clipped_result_still_parses_to_the_end(self) -> None:
+        """Twenty whole products of a browse are ~11 000 characters, and the result was
+        cut at 8 000 after clipping — mid-object again. A search, thirty products per
+        term, was never clipped at all."""
+        browse = json.loads((FIXTURES / "products_on_promotion.json").read_text("utf-8"))
+        search = {
+            "queries": [{"query": "сир", "products": browse["products"][:20] * 2, "totalFound": 40}]
+        }
+        for payload in (browse, {**browse, "products": browse["products"] * 5}, search):
+            text = fit_for_model(payload)
+            assert len(text) <= MAX_TOOL_RESULT
+            parsed = json.loads(text)  # the whole point: it is still JSON
+            products = parsed.get("products") or parsed["queries"][0]["products"]
+            assert products and all("image" not in p and "companyId" not in p for p in products)
+            assert all("name" in p and "price" in p and "slug" in p for p in products)
+        clipped = json.loads(fit_for_model(search))["queries"][0]
+        assert clipped["omitted"] == 40 - len(clipped["products"])
+
     async def test_similar_products_gets_the_context_and_the_slug(self) -> None:
         silpo = FakeSilpo({}, similar={"moloko": [product("Схоже молоко", 40)]})
 
@@ -155,9 +180,15 @@ class TestProposeBasketGrowth:
             assert "укра" in json.dumps(field, ensure_ascii=False).lower()
 
     def test_the_intent_follows_the_fields(self) -> None:
-        assert intent_of({"title": "x"}) == "stated"
-        assert intent_of({"menu": [{"day": "пн", "dish": "борщ"}]}) == "mealplan"
-        assert intent_of({"guests": 10, "menu": []}) == "event"
+        def basket(**fields: object) -> DraftBasket:
+            return DraftBasket.model_validate({"title": "x", "intent": "?", "lines": [], **fields})
+
+        assert intent_of(basket()) == "stated"
+        assert intent_of(basket(menu=[{"day": "пн", "dish": "борщ"}])) == "mealplan"
+        assert intent_of(basket(guests=10, menu=[])) == "event"
+        # A headcount the model got wrong is no event: validation drops it, and the
+        # intent used to be read from the raw arguments before it did.
+        assert intent_of(basket(guests=5000)) == "stated"
 
     def test_a_menu_round_trips_and_is_never_a_line(self) -> None:
         basket = DraftBasket.model_validate(
